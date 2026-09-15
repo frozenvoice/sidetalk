@@ -1,0 +1,71 @@
+using System.Text;
+
+namespace Sidetalk.Core;
+
+public sealed record PolicyResult(bool Owned, bool Safe, IReadOnlyList<string> Issues);
+
+/// <summary>Conservative allowlist: an unfamiliar effective setting is a reason to stop, never to weaken isolation.</summary>
+public static class IsolationPolicy
+{
+    public const string Revision = "1";
+    public static Dictionary<string, string[]> Expected(BoxProfile profile)
+    {
+        ProfileStore.ValidateIdentity(profile);
+        var hidden = new[] {
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kakao")
+        }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var path in hidden.Append(profile.StoragePath))
+            if (string.IsNullOrWhiteSpace(path) || path.IndexOfAny(['\r', '\n', '%', '*', '?', ',']) >= 0 || !Path.IsPathFullyQualified(path))
+                throw new InvalidDataException("안전하게 표현할 수 없는 사용자 데이터 경로입니다.");
+        return new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Enabled"] = ["y"],
+            ["BoxNameTitle"] = ["y"],
+            ["BorderColor"] = ["#21685B,ttl,4"],
+            ["FileRootPath"] = [profile.StoragePath],
+            ["ConfigLevel"] = ["10"],
+            ["AutoDelete"] = ["n"],
+            ["AutoRecover"] = ["n"],
+            ["NeverDelete"] = ["y"],
+            ["DropAdminRights"] = ["y"],
+            ["WriteFilePath"] = hidden,
+            ["WriteKeyPath"] = [@"HKEY_CURRENT_USER", @"HKEY_LOCAL_MACHINE\SOFTWARE\Kakao", @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Kakao"],
+            ["BoxInfo"] = [$"SIDETALK:{profile.OwnerToken}:policy={Revision}"]
+        };
+    }
+
+    // SandMan display metadata is allowed; resource access, triggers and unknown settings are not.
+    private static readonly HashSet<string> PresentationOnly = new(StringComparer.OrdinalIgnoreCase) { "BoxAlias", "BoxIcon", "BoxColor" };
+    private static readonly HashSet<string> GlobalUiOnly = new(StringComparer.OrdinalIgnoreCase) { "DefaultBox", "FileRootPath", "EditPassword", "EditAdminOnly", "ForceDisableAdminOnly", "NotifyStartRunAccessDenied", "AlertBeforeStart", "SbieCtrl_HideMessage", "SbieCtrl_EnableLogonStart", "SbieCtrl_EnableAutoStart", "SbieCtrl_EnableStopWarning", "SbieCtrl_EnableDeleteWarning", "SbieCtrl_WindowCoords", "SbieCtrl_BoxExpandedView", "SbieCtrl_UserName", "SbieCtrl_NextUpdateCheck", "BoxGrouping" };
+
+    public static PolicyResult Validate(BoxProfile profile, IReadOnlyDictionary<string, string[]> box, IReadOnlyDictionary<string, string[]> globals)
+    {
+        var issues = new List<string>();
+        var expected = Expected(profile);
+        var owned = Equal(box, "BoxInfo", expected["BoxInfo"]) && Equal(box, "FileRootPath", [profile.StoragePath]);
+        if (!owned) issues.Add("전용 환경의 소유 표식 또는 저장 경로가 일치하지 않습니다.");
+        foreach (var pair in expected)
+            if (!Equal(box, pair.Key, pair.Value)) issues.Add($"필수 설정 불일치: {pair.Key}");
+        foreach (var key in box.Keys)
+            if (!expected.ContainsKey(key) && !PresentationOnly.Contains(key)) issues.Add($"검토되지 않은 환경 설정: {key}");
+        foreach (var key in globals.Keys)
+            if (!GlobalUiOnly.Contains(key)) issues.Add($"상속되는 전역 설정은 검토가 필요합니다: {key}");
+        return new(owned, issues.Count == 0, issues);
+    }
+    private static bool Equal(IReadOnlyDictionary<string, string[]> config, string key, string[] expected) =>
+        config.TryGetValue(key, out var actual) && actual.Length == expected.Length &&
+        actual.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).SequenceEqual(expected.OrderBy(x => x, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+
+    public static string ToIni(BoxProfile profile)
+    {
+        var settings = Expected(profile);
+        var builder = new StringBuilder("# SIDETALK 전용 새 환경. 기존 설정 전체를 교체하지 마세요.\r\n# BoxInfo는 SIDETALK의 소유 표식입니다. 변경하지 마세요.\r\n");
+        builder.AppendLine($"[{profile.BoxName}]");
+        foreach (var pair in settings)
+            foreach (var value in pair.Value) builder.AppendLine($"{pair.Key}={value}");
+        return builder.ToString();
+    }
+}
