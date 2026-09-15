@@ -7,14 +7,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
     dotnet run --project tests/Sidetalk.Tests/Sidetalk.Tests.csproj -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Safety tests failed.' }
+    dotnet build src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj -c Release --nologo
+    if ($LASTEXITCODE -ne 0) { throw 'Isolation probe build failed.' }
     $flavor = if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }
     $output = Join-Path $repo ('artifacts/publish/win-x64-' + $flavor + '-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss'))
     $bundled = if ($SelfContained) { 'true' } else { 'false' }
     dotnet publish src/Sidetalk.App/Sidetalk.App.csproj -c Release -r win-x64 --self-contained $bundled -o $output --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
+    $probeOutput = Join-Path $output 'tools/IsolationProbe'
+    dotnet publish src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj -c Release -r win-x64 --self-contained $bundled -o $probeOutput --nologo
+    if ($LASTEXITCODE -ne 0) { throw 'Isolation probe publish failed.' }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $output
     Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $output -Recurse -Force
-    $zip = Join-Path $repo ('artifacts/SIDETALK-0.1.1-win-x64-' + $(if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }) + '.zip')
+    $zip = Join-Path $repo ('artifacts/SIDETALK-0.1.2-win-x64-' + $(if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }) + '.zip')
     Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip -Force
     Get-FileHash -LiteralPath $zip -Algorithm SHA256
     Write-Output ('App: ' + (Join-Path $output 'Sidetalk.exe'))

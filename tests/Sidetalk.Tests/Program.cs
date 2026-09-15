@@ -5,8 +5,15 @@ namespace Sidetalk.Tests;
 
 internal static class Program
 {
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Length > 0)
+        {
+            if (args.Length == 3 && args[0] == "--sandboxie-readonly")
+                return NativeConfigurationProbe.Run(args[1], args[2]);
+            Console.Error.WriteLine("Usage: --sandboxie-readonly <installation-directory> <new-report.json>");
+            return 2;
+        }
         var tests = new (string Name, Action Run)[]
         {
             ("ProfileStore creates and reloads the same profile", ProfileStoreCreatesAndReloads),
@@ -21,12 +28,13 @@ internal static class Program
             ("BuiltinTemplates fingerprints ignore ordering", BuiltinTemplatesFingerprintIgnoresOrdering),
             ("BuiltinTemplates fingerprints detect mutations", BuiltinTemplatesFingerprintDetectsMutations),
             ("RuntimeVerifier matches only the approved component versions", RuntimeVerifierMatchesApprovedVersions),
+            ("RuntimeVerifier accepts only the official mixed driver matrix", RuntimeVerifierMatchesDriverMatrix),
             ("Sandboxie commands produce exact launch and stop arguments", SandboxieCommandsProduceExactArguments),
             ("Sandboxie commands reject non-SIDETALK paths and box names", SandboxieCommandsRejectInvalidInputs)
         };
 
         var failures = 0;
-        var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).ToArray();
+        var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).Concat(ServiceIdentityTests.Cases).ToArray();
         foreach (var test in allTests)
         {
             try
@@ -238,6 +246,16 @@ internal static class Program
         Assert.NotEqual(BuiltinTemplates.Fingerprint(original), BuiltinTemplates.Fingerprint(changed));
     }
 
+    private static void RuntimeVerifierMatchesDriverMatrix()
+    {
+        Assert.True(RuntimeVerifier.MatchesComponentVersion("5.73.2", driver: true));
+        Assert.True(RuntimeVerifier.MatchesComponentVersion("5.73.2.0", driver: true));
+        Assert.True(RuntimeVerifier.MatchesComponentVersion("5.73.4", driver: false));
+        Assert.False(RuntimeVerifier.MatchesComponentVersion("5.73.4", driver: true));
+        Assert.False(RuntimeVerifier.MatchesComponentVersion("5.73.2", driver: false));
+        Assert.False(RuntimeVerifier.MatchesComponentVersion("5.73.2.1", driver: true));
+        Assert.False(RuntimeVerifier.MatchesComponentVersion("5.73.20", driver: true));
+    }
     private static void RuntimeVerifierMatchesApprovedVersions()
     {
         var cases = new[]

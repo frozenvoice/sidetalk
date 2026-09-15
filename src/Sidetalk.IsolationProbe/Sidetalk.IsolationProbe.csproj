@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>Sidetalk.IsolationProbe</AssemblyName>
+    <RootNamespace>Sidetalk.IsolationProbe</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sidetalk.Core\Sidetalk.Core.csproj" />
+  </ItemGroup>
+</Project>

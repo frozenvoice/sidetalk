@@ -31,6 +31,7 @@ public sealed class SidetalkController : ISidetalkController
         var kakao = DependencyDetector.Kakao();
         var sandboxie = DependencyDetector.Sandboxie();
         BoxProfile? profile = null;
+        RuntimeVerifier.ServiceVerification? serviceIdentity = null;
         try
         {
             profile = store.Load();
@@ -45,7 +46,8 @@ public sealed class SidetalkController : ISidetalkController
                 return Snapshot(Readiness.Blocked, "Sandboxie 버전 검토가 필요해요", "이 빌드는 Sandboxie Plus 1.18.4의 API·설정을 기준으로 작성되었습니다. 설치 버전은 아직 검토되지 않았습니다.");
             if (profile is null)
                 return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정에서 설정 파일을 내보내고 내용을 확인하세요. 다른 샌드박스는 가져오지 않습니다.");
-            using var api = OpenApi(sandboxie);
+            using var api = OpenApi(sandboxie, out var checkedService);
+            serviceIdentity = checkedService;
             var configReader = new SandboxieConfigurationReader(api.Query);
             var config = configReader.ReadConfiguration(profile.BoxName);
             if (config.ExplicitBox.Count == 0)
@@ -56,7 +58,7 @@ public sealed class SidetalkController : ISidetalkController
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Snapshot(Readiness.Blocked, "저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
             var (lifecycle, processes) = commandLifecycle.InspectProcesses(() => api.Processes(profile));
-            var checks = new[] { "전용 환경 소유 정보와 실제 저장 경로 일치", "사용자 파일·레지스트리 숨김 규칙 확인", "자동 삭제·복구 비활성 설정 확인", "전역 설정·템플릿의 미검토 예외 없음", "실제 데이터 분리·로그인·송수신·알림은 사용자 검증 필요" };
+            var checks = new[] { "전용 환경 소유 정보와 실제 저장 경로 일치", "사용자 파일·레지스트리 숨김 규칙 확인", "자동 삭제·복구 비활성 설정 확인", "전역 설정·템플릿의 미검토 예외 없음", serviceIdentity.LiveImagePathVerified ? "서비스 실행 이미지 경로 확인" : "서비스 SCM·서명 검증 (실행 이미지 경로 직접 확인 불가)", "실제 데이터 분리·로그인·송수신·알림은 사용자 검증 필요" };
             if (lifecycle.IsPending)
                 return Snapshot(Readiness.Unknown, "명령 결과를 확인하고 있어요", lifecycle.Message, [], processes);
             if (lifecycle.Outcome == CommandLifecycleOutcome.LaunchFailed)
@@ -73,13 +75,13 @@ public sealed class SidetalkController : ISidetalkController
 
         AppSnapshot Snapshot(Readiness state, string title, string detail, IReadOnlyList<string>? checks = null, IReadOnlyList<BoxProcess>? processes = null, bool canLaunch = false, bool canStop = false) =>
             new(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
-                processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop, DateTimeOffset.Now);
+                processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop, DateTimeOffset.Now, serviceIdentity);
     }
-    private static SandboxieApi OpenApi(DependencyInfo sandboxie)
+    private static SandboxieApi OpenApi(DependencyInfo sandboxie, out RuntimeVerifier.ServiceVerification serviceIdentity)
     {
         if (!sandboxie.Available || sandboxie.Path is null) throw new InvalidOperationException("Sandboxie Plus 설치와 서명을 확인하세요.");
         var folder = Path.GetDirectoryName(sandboxie.Path)!;
-        RuntimeVerifier.RequireInstallation(folder);
+        serviceIdentity = RuntimeVerifier.RequireInstallation(folder);
         return new(folder);
     }
 
@@ -153,7 +155,7 @@ public sealed class SidetalkController : ISidetalkController
     {
         var snapshot = await InspectAsync();
         ProfileStore.RejectReparseAncestors(path);
-        var report = new { SidetalkVersion = "0.1.1", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { SidetalkVersion = "0.1.2", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, AccountLogin = "미검증", SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증", MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true);
         await JsonSerializer.SerializeAsync(stream, report, Json);

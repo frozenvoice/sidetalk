@@ -25,8 +25,8 @@ public sealed class SandboxieApi : IDisposable
         {
             var driverVersion = new StringBuilder(16);
             RequireSuccess(Export<GetVersion>("SbieApi_GetVersion")(driverVersion), "활성 드라이버 버전 조회");
-            if (!RuntimeVerifier.MatchesVersion(driverVersion.ToString(), RuntimeVerifier.CoreVersion))
-                throw new InvalidDataException("활성 드라이버 버전이 검토 기준 5.73.4와 다릅니다.");
+            if (!RuntimeVerifier.MatchesVersion(driverVersion.ToString(), RuntimeVerifier.DriverVersion))
+                throw new InvalidDataException("활성 드라이버 버전이 공식 1.18.4 설치본의 검토 기준 5.73.2와 다릅니다.");
             queryConf = Export<QueryConf>("SbieApi_QueryConf");
             enumProcesses = Export<EnumProcesses>("SbieApi_EnumProcessEx");
             queryProcess = Export<QueryProcess>("SbieApi_QueryProcess");

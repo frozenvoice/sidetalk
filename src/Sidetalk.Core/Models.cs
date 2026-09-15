@@ -6,7 +6,7 @@ public sealed record AppSnapshot(
     Readiness State, string Title, string Detail, string BoxName, string StoragePath,
     DependencyInfo Kakao, DependencyInfo Sandboxie, IReadOnlyList<int> BoxProcessIds,
     IReadOnlyList<string> Checks, bool CanLaunch, bool CanStop,
-    DateTimeOffset CheckedAt);
+    DateTimeOffset CheckedAt, RuntimeVerifier.ServiceVerification? ServiceIdentity = null);
 
 public interface ISidetalkController : IDisposable
 {
