@@ -7,7 +7,7 @@ public sealed record PolicyResult(bool Owned, bool Safe, IReadOnlyList<string> I
 /// <summary>Conservative allowlist: an unfamiliar effective setting is a reason to stop, never to weaken isolation.</summary>
 public static class IsolationPolicy
 {
-    public const string Revision = "1";
+    public const string Revision = "2";
     public static Dictionary<string, string[]> Expected(BoxProfile profile)
     {
         ProfileStore.ValidateIdentity(profile);
@@ -31,6 +31,10 @@ public static class IsolationPolicy
             ["AutoRecover"] = ["n"],
             ["NeverDelete"] = ["y"],
             ["DropAdminRights"] = ["y"],
+            // The official OpenWinInetCache template exposes host COM/IPC. Close those
+            // same endpoints in this box; never edit the inherited global template.
+            ["ClosedClsid"] = ["{0358B920-0AC7-461F-98F4-58E32CD89148}"],
+            ["ClosedIpcPath"] = [@"\RPC Control\webcache_*", @"*\BaseNamedObjects\windows_webcache_counters_*"],
             ["WriteFilePath"] = hidden,
             ["WriteKeyPath"] = [@"HKEY_CURRENT_USER", @"HKEY_LOCAL_MACHINE\SOFTWARE\Kakao", @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Kakao"],
             ["BoxInfo"] = [$"SIDETALK:{profile.OwnerToken}:policy={Revision}"]
@@ -54,6 +58,16 @@ public static class IsolationPolicy
         foreach (var key in globals.Keys)
             if (!GlobalUiOnly.Contains(key)) issues.Add($"상속되는 전역 설정은 검토가 필요합니다: {key}");
         return new(owned, issues.Count == 0, issues);
+    }
+    public static PolicyResult Validate(BoxProfile profile, ConfigurationLayers config)
+    {
+        var explicitResult = Validate(profile, config.ExplicitBox, config.ExplicitGlobals);
+        var issues = explicitResult.Issues.ToList();
+        if (!SandboxieConfigurationReader.Same(config.ExplicitBox, config.EffectiveBox))
+            issues.Add("전용 환경에 검토되지 않은 템플릿 규칙이 추가되었습니다.");
+        if (!SandboxieConfigurationReader.Same(BuiltinTemplates.ExpectedGlobals(config.ExplicitGlobals), config.EffectiveGlobals))
+            issues.Add("전역 템플릿 확장이 공식 1.18.4 기본 규칙과 다릅니다.");
+        return new(explicitResult.Owned, issues.Count == 0, issues);
     }
     private static bool Equal(IReadOnlyDictionary<string, string[]> config, string key, string[] expected) =>
         config.TryGetValue(key, out var actual) && actual.Length == expected.Length &&

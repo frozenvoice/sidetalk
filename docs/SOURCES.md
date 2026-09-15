@@ -13,3 +13,9 @@
 - [v1.18.4 drv/process_api.c](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/drv/process_api.c): EnumProcessEx count 포인터가 있으면 PID는 index 0부터; legacy null 포인터 형식과 구별.
 
 문서와 소스 검토는 현재 PC의 런타임 격리, 계정 정책, 로그인·송수신 성공을 증명하지 않습니다. 실제 설치/API 호출 결과와 실환경 기록표가 추가로 필요합니다.
+
+- [v1.18.4 Templates.ini](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/install/Templates.ini): 자동 병합되는 DefaultTemplates 및 검증 기준 원본. 추출 범위·SHA-256·오프라인 재생성 방법은 [자료 안내](third-party-sandboxie.md) 참조.
+
+- [v1.18.4 Start.exe](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/apps/start/start.cpp): /terminate 내부 결과가 종료 코드에 반영되지 않는 경로, /wait 없는 실행 수명. [ProcessServer.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/core/svc/ProcessServer.cpp): 생성 후 박스 소속 지정과 재개, KillAll 재시도 동작. 따라서 SIDETALK가 명령 종료 이후 별도로 박스 프로세스를 확인해야 합니다.
+
+- [v1.18.4 com.c](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/dll/com.c#L601-L610), [ipc.c](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/dll/ipc.c#L1491-L1502): 호스트 WebCache의 ClosedClsid·ClosedIpcPath 차단 규칙 검토 근거. SIDETALK 전용 섹션에만 추가하며 실제 IPC 격리는 별도 확인 필요.

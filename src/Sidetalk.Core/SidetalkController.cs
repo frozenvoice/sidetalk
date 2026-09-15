@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -10,10 +9,16 @@ public sealed class SidetalkController : ISidetalkController
 {
     private readonly ProfileStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
-    private string? pendingAction;
+    private readonly ISidetalkCommandRunner commandRunner;
+    private readonly CommandLifecycle commandLifecycle = new();
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
-    public SidetalkController() : this(new ProfileStore()) { }
-    public SidetalkController(ProfileStore store) => this.store = store;
+    public SidetalkController() : this(new ProfileStore(), new ProcessCommandRunner()) { }
+    public SidetalkController(ProfileStore store) : this(store, new ProcessCommandRunner()) { }
+    public SidetalkController(ProfileStore store, ISidetalkCommandRunner commandRunner)
+    {
+        this.store = store;
+        this.commandRunner = commandRunner ?? throw new ArgumentNullException(nameof(commandRunner));
+    }
 
     public async Task<AppSnapshot> InspectAsync()
     {
@@ -41,23 +46,27 @@ public sealed class SidetalkController : ISidetalkController
             if (profile is null)
                 return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정에서 설정 파일을 내보내고 내용을 확인하세요. 다른 샌드박스는 가져오지 않습니다.");
             using var api = OpenApi(sandboxie);
-            BuiltinTemplates.Verify(api);
-            var config = api.ReadSection(profile.BoxName);
-            if (config.Count == 0)
+            var configReader = new SandboxieConfigurationReader(api.Query);
+            var config = configReader.ReadConfiguration(profile.BoxName);
+            if (config.ExplicitBox.Count == 0)
                 return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "내보낸 전용 환경 설정을 Sandboxie Plus에 추가한 뒤 새로고침하세요.");
-            var policy = IsolationPolicy.Validate(profile, config, api.ReadSection("GlobalSettings"));
+            var policy = IsolationPolicy.Validate(profile, config);
             if (!policy.Safe)
                 return Snapshot(Readiness.Blocked, "격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 다른 샌드박스나 전역 설정은 변경하지 마세요.", policy.Issues);
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Snapshot(Readiness.Blocked, "저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
-            var processes = api.Processes(profile);
-            if (pendingAction == "launch" && processes.Any(p => p.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase))) pendingAction = null;
-            if (pendingAction == "stop" && processes.Count == 0) pendingAction = null;
-            if (pendingAction is not null)
-                return Snapshot(Readiness.Unknown, "명령 결과를 확인하고 있어요", "응답을 확정하지 못했습니다. 새로고침으로 상태를 확인하세요. 명령을 중복 실행하지 않습니다.", [], processes);
+            var (lifecycle, processes) = commandLifecycle.InspectProcesses(() => api.Processes(profile));
             var checks = new[] { "전용 환경 소유 정보와 실제 저장 경로 일치", "사용자 파일·레지스트리 숨김 규칙 확인", "자동 삭제·복구 비활성 설정 확인", "전역 설정·템플릿의 미검토 예외 없음", "실제 데이터 분리·로그인·송수신·알림은 사용자 검증 필요" };
+            if (lifecycle.IsPending)
+                return Snapshot(Readiness.Unknown, "명령 결과를 확인하고 있어요", lifecycle.Message, [], processes);
+            if (lifecycle.Outcome == CommandLifecycleOutcome.LaunchFailed)
+                return Snapshot(Readiness.Ready, "보조 카카오톡을 실행하지 못했어요", lifecycle.Message, checks, processes, canLaunch: true);
+            if (lifecycle.Outcome == CommandLifecycleOutcome.StopSucceeded)
+                return Snapshot(Readiness.Ready, "보조 카카오톡이 종료되었어요", lifecycle.Message, checks, processes, canLaunch: true);
+            if (lifecycle.Outcome == CommandLifecycleOutcome.StopFailed && processes.Count == 0)
+                return Snapshot(Readiness.Ready, "전용 환경이 비어 있어요", lifecycle.Message, checks, processes, canLaunch: true);
             if (processes.Count > 0)
-                return Snapshot(Readiness.Running, processes.Any(p => p.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase)) ? "보조 프로세스 실행 중" : "전용 환경 프로세스 실행 중", "프로세스 실행이 확인되었습니다. 로그인 상태는 공식 카카오톡 창에서 확인하세요.", checks, processes, canStop: true);
+                return Snapshot(Readiness.Running, processes.Any(p => p.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase)) ? "보조 프로세스 실행 중" : "전용 환경 프로세스 실행 중", lifecycle.Action is not null ? lifecycle.Message : "프로세스 실행이 확인되었습니다. 로그인 상태는 공식 카카오톡 창에서 확인하세요.", checks, processes, canStop: true);
             return Snapshot(Readiness.Ready, "보조 카카오톡 실행 준비", "구성 검사가 통과했습니다. 첫 로그인 전에 데이터 분리 검증 절차를 진행하세요.", checks, [], canLaunch: true);
         }
         catch (Exception ex) { return Snapshot(Readiness.Unknown, "상태를 확인할 수 없어요", ex.Message); }
@@ -110,23 +119,30 @@ public sealed class SidetalkController : ISidetalkController
             var verified = await Task.Run(Inspect);
             if (!(launch ? verified.CanLaunch : verified.CanStop)) throw new InvalidOperationException(verified.Detail);
             var command = launch ? SandboxieCommands.Launch(startExe, profile.BoxName, snapshot.Kakao.Path!) : SandboxieCommands.Stop(startExe, profile.BoxName);
-            pendingAction = launch ? "launch" : "stop";
-            Process? process;
-            try { process = Process.Start(command); }
-            catch { pendingAction = null; throw; }
-            if (process is null) { pendingAction = null; throw new InvalidOperationException("Sandboxie 명령을 시작하지 못했습니다."); }
-            using (process)
+            var handle = commandRunner.Start(command);
+            commandLifecycle.Begin(launch ? SidetalkCommandAction.Launch : SidetalkCommandAction.Stop, handle);
+            CommandWaitOutcome waitOutcome;
+            try
             {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-                try { await process.WaitForExitAsync(timeout.Token); }
-                catch (OperationCanceledException) { throw new InvalidOperationException("Sandboxie 명령 응답 시간이 초과되었습니다. 상태를 다시 확인하세요. 프로세스를 강제로 종료하지 않았습니다."); }
-                if (process.ExitCode != 0) { pendingAction = null; throw new InvalidOperationException($"Sandboxie 명령이 오류 {process.ExitCode}를 반환했습니다. 상태를 다시 확인하세요."); }
+                waitOutcome = await commandLifecycle.WaitForExitAsync(TimeSpan.FromSeconds(12));
             }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException($"Sandboxie 명령의 종료 상태를 확인하지 못했습니다. 새로고침으로 다시 확인하세요. 프로세스를 강제로 종료하지 않았습니다. ({error.Message})", error);
+            }
+            if (waitOutcome != CommandWaitOutcome.Completed)
+                throw new InvalidOperationException("Sandboxie 명령 응답 시간이 초과되었거나 종료 상태를 확인하지 못했습니다. 새로고침으로 다시 확인하세요. 프로세스를 강제로 종료하지 않았습니다.");
+
             for (var attempt = 0; attempt < 12; attempt++)
             {
                 var observed = await Task.Run(Inspect);
-                if (pendingAction is null) return;
                 if (observed.State is Readiness.Blocked or Readiness.MissingDependency) throw new InvalidOperationException(observed.Detail);
+                if (!commandLifecycle.IsPending)
+                {
+                    if (commandLifecycle.LastResult.Outcome is CommandLifecycleOutcome.LaunchObserved or CommandLifecycleOutcome.StopSucceeded)
+                        return;
+                    throw new InvalidOperationException(commandLifecycle.LastResult.Message);
+                }
                 await Task.Delay(500);
             }
             throw new InvalidOperationException("명령은 전달했지만 프로세스 상태를 확정하지 못했습니다. 로그인 성공으로 판단하지 마세요.");
@@ -137,11 +153,15 @@ public sealed class SidetalkController : ISidetalkController
     {
         var snapshot = await InspectAsync();
         ProfileStore.RejectReparseAncestors(path);
-        var report = new { SidetalkVersion = "0.1.0", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { SidetalkVersion = "0.1.1", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, AccountLogin = "미검증", SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증", MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true);
         await JsonSerializer.SerializeAsync(stream, report, Json);
         return path;
     }
-    public void Dispose() { /* Closing SIDETALK never terminates any process or deletes any data. */ }
+    public void Dispose()
+    {
+        commandLifecycle.Dispose();
+        /* Closing SIDETALK never terminates any process or deletes any data. */
+    }
 }

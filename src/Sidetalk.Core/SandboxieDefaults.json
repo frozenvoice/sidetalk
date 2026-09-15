@@ -1,0 +1,751 @@
+{
+  "DefaultTemplates": {
+    "Template": [
+      "RpcPortBindings",
+      "SpecialImages",
+      "COM",
+      "WindowsExplorer",
+      "ThirdPartyIsolation",
+      "BlockSoftwareUpdaters",
+      "BlockWinRM",
+      "OpenWinInetCache",
+      "CredentialUIBroker",
+      "MSI_Lite"
+    ]
+  },
+  "Template_RpcPortBindings": {
+    "Tmpl.Title": [
+      "#4296"
+    ],
+    "Tmpl.Class": [
+      "Misc"
+    ],
+    "RpcPortBinding": [
+      "kernel32.dll,'0497b57d-2e66-424f-a0c6-157cd5d41700@ncalrpc:',Resolve=AppInfo,TimeOut=y",
+      "apisethost.appexecutionalias.dll,'0497b57d-2e66-424f-a0c6-157cd5d41700@ncalrpc:',Resolve=AppInfo,TimeOut=n",
+      "WinHttp.dll,'ncalrpc:',Resolve=WPAD,TimeOut=y",
+      "resourcepolicyclient.dll,{00000000-0000-0000-0000-000000000000},Resolve=GamePort",
+      "nlansp_c.dll,'ncalrpc:',Resolve=NetworkProfiles,TimeOut=y",
+      "wdmaud2.drv,ncalrpc:,IpcPort=MidiSrvClientRpc"
+    ],
+    "RpcPortBindingIfId": [
+      "AppInfo,{0497b57d-2e66-424f-a0c6-157cd5d41700}",
+      "GamePort,{88ABCBC3-34EA-76AE-8215-767520655A23}",
+      "NetworkProfiles,{3F787932-3452-4363-8651-6EA97BB373BB}"
+    ],
+    "UseRpcMgmtSetComTimeout": [
+      "WINNSI.DLL,n"
+    ],
+    "RpcPortBindingSvc": [
+      "WPAD,WinHttpAutoProxySvc"
+    ],
+    "RpcPortFilter": [
+      "WPAD,2,AutoProxySaveProxyCredentials",
+      "WPAD,3,AutoProxyStoreSavedProxyCredentialsForClient",
+      "WPAD,4,AutoProxyDeleteSavedProxyCredentials",
+      "WPAD,7,WinHttpWriteProxySettings",
+      "WPAD,8,WinHttpSetProxySettingsPerUser",
+      "WPAD,10,WinHttpConnectionSetPolicyEntries",
+      "WPAD,11,WinHttpConnectionDeletePolicyEntries"
+    ]
+  },
+  "Template_SpecialImages": {
+    "SpecialImage": [
+      "chrome,chrome.exe",
+      "chrome,msedge.exe",
+      "chrome,msedgewebview2.exe",
+      "chrome,iron.exe",
+      "chrome,dragon.exe",
+      "chrome,opera.exe",
+      "chrome,neon.exe",
+      "chrome,maxthon.exe",
+      "chrome,vivaldi.exe",
+      "chrome,brave.exe",
+      "chrome,browser.exe",
+      "chrome,osiris.exe",
+      "chrome,slimjet.exe",
+      "chrome,BitBrowser Global.exe",
+      "firefox,firefox.exe",
+      "firefox,waterfox.exe",
+      "firefox,palemoon.exe",
+      "firefox,basilisk.exe",
+      "firefox,seamonkey.exe",
+      "firefox,k-meleon.exe",
+      "firefox,librewolf.exe",
+      "firefox,thunderbird.exe",
+      "mail,winmail.exe",
+      "mail,IncMail.exe",
+      "mail,eudora.exe",
+      "mail,thebat32.exe",
+      "mail,thebat64.exe",
+      "mail,Foxmail.exe",
+      "mail,Mailbird.exe",
+      "mail,MailClient.exe",
+      "mail,postbox.exe",
+      "mail,Inky.exe",
+      "browser,PuffinSecureBrowser.exe",
+      "chrome,wechat.exe",
+      "chrome,slack.exe",
+      "chrome,spotify.exe",
+      "chrome,Amazon Music.exe",
+      "chrome,steam.exe",
+      "chrome,FreeTube.exe",
+      "chrome,aDrive.exe",
+      "chrome,Signal.exe",
+      "chrome,Actual.exe",
+      "chrome,Beeper.exe"
+    ],
+    "PreferExternalManifest": [
+      "spotify.exe,y"
+    ],
+    "CustomChromiumFlags": [
+      "--disable-features=PrintCompositorLPAC"
+    ]
+  },
+  "Template_COM": {
+    "ClosedClsid": [
+      "{4991D34B-80A1-4291-83B6-3328366B9097}",
+      "{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"
+    ]
+  },
+  "Template_WindowsExplorer": {
+    "ClosedClsid": [
+      "{C2F03A33-21F5-47FA-B4BB-156362A2F239}",
+      "{470C0EBD-5D73-4D58-9CED-E91E22E23282}"
+    ],
+    "FakeAdminRights": [
+      "explorer.exe,n"
+    ],
+    "BreakoutDocumentProcess": [
+      "explorer.exe,y"
+    ]
+  },
+  "Template_ThirdPartyIsolation": {
+    "ClosedFilePath": [
+      "vmnetcfg.exe,\\Device\\VMnetUserif"
+    ]
+  },
+  "Template_BlockSoftwareUpdaters": {
+    "SoftwareUpdater": [
+      "firefox.exe,*\\mozilla firefox\\updater.exe",
+      "firefox.exe,*\\Firefox Nightly\\updater.exe",
+      "firefox.exe,*\\Firefox Developer Edition\\updater.exe",
+      "firefox.exe,*\\mozilla*\\updates\\*updater.exe",
+      "waterfox.exe,*\\Waterfox\\updater.exe",
+      "palemoon.exe,*\\Pale Moon\\updater.exe",
+      "seamonkey.exe,*\\SeaMonkey\\updater.exe",
+      "GoogleUpdate.exe,*\\google\\update\\*chrome_installer.exe",
+      "msedge.exe,*\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe",
+      "msedge.exe,*\\Microsoft\\EdgeUpdate\\*MicrosoftEdgeUpdateBroker.exe",
+      "vivaldi.exe,*\\Vivaldi\\Application\\update_notifier.exe",
+      "brave.exe,*\\BraveSoftware\\Update\\BraveUpdate.exe",
+      "brave.exe,*\\BraveSoftware\\Update\\*BraveUpdateBroker.exe",
+      "opera.exe,*\\Opera\\*opera_autoupdate.exe",
+      "launcher.exe,*\\Opera\\*opera_autoupdate.exe",
+      "yandex.exe,*\\Yandex\\YandexBrowser\\Application\\*service_update.exe",
+      "maxthon.exe,*\\Maxthon\\Application\\*mxupdater.exe",
+      "dragon.exe,*\\Comodo\\Dragon\\dragon_updater.exe",
+      "osiris.exe,*\\Osiris\\update.exe",
+      "app_launcher.exe,*\\Osiris\\update.exe",
+      "slimjet.exe,*\\Slimjet\\updater.exe",
+      "thunderbird.exe,*\\mozilla*\\updates\\*updater.exe"
+    ]
+  },
+  "Template_BlockWinRM": {
+    "ClosedFilePath": [
+      "|%SystemRoot%\\Sys*\\wsmsvc.dll",
+      "|%SystemRoot%\\Sys*\\wsmauto.dll",
+      "|%SystemRoot%\\Sys*\\winrs.exe"
+    ]
+  },
+  "Template_OpenWinInetCache": {
+    "OpenClsid": [
+      "{0358B920-0AC7-461F-98F4-58E32CD89148}"
+    ],
+    "OpenIpcPath": [
+      "\\RPC Control\\webcache_*",
+      "*\\BaseNamedObjects\\windows_webcache_counters_*"
+    ]
+  },
+  "Template_CredentialUIBroker": {
+    "FakeAdminRights": [
+      "CredentialUIBroker.exe,n"
+    ]
+  },
+  "Template_MSI_Lite": {
+    "ClosedFilePath": [
+      "msiexec.exe,*\\ie4uinit.exe"
+    ]
+  },
+  "TemplateDefaultPaths": {
+    "OpenKeyPath": [
+      "\\REGISTRY\\A\\*"
+    ],
+    "OpenFilePath": [
+      "\\Device\\NamedPipe\\",
+      "\\Device\\MailSlot\\",
+      "\\Device\\NamedPipe\\ProtectedPrefix\\LocalService\\FTHPIPE",
+      "\\Device\\NamedPipe\\spoolss",
+      "\\Device\\NamedPipe\\spooler*",
+      "%DefaultSpoolDirectory%\\*",
+      "%DefaultSpoolDirectory2%\\*",
+      "\\Device\\NamedPipe\\*_doPDF*",
+      "\\Device\\NamedPipe\\AudioSrv",
+      "\\Device\\NamedPipe\\Adobe LM Service*",
+      "\\Device\\NamedPipe\\XTIERRPCPIPE"
+    ],
+    "ClosedFilePath": [
+      "\\Device\\LanmanRedirector",
+      "\\Device\\Mup",
+      "\\Device\\ImDiskCtl"
+    ],
+    "OpenIpcPath": [
+      "\\Windows\\ApiPort",
+      "\\Sessions\\*\\Windows\\ApiPort",
+      "\\Sessions\\*\\Windows\\SharedSection",
+      "\\Windows\\SharedSection",
+      "\\Sessions\\*\\BaseNamedObjects\\CrSharedMem_*",
+      "\\ThemeApiPort",
+      "\\KnownDlls\\*",
+      "\\KnownDlls32\\*",
+      "\\KnownDllsChpe32\\*",
+      "\\NLS\\*",
+      "*\\BaseNamedObjects*\\ShimCacheMutex",
+      "*\\BaseNamedObjects*\\ShimSharedMemory",
+      "*\\BaseNamedObjects*\\SHIMLIB_LOG_MUTEX",
+      "*\\BaseNamedObjects*\\msgina: ReturnToWelcome",
+      "\\Security\\LSA_AUTHENTICATION_INITIALIZED",
+      "\\LsaAuthenticationPort",
+      "\\NlsCacheMutant",
+      "\\KernelObjects\\*",
+      "\\NLAPublicPort",
+      "\\RPC Control\\nlaapi",
+      "\\RPC Control\\tapsrvlpc",
+      "\\RPC Control\\senssvc",
+      "\\RPC Control\\samss lpc",
+      "*\\BaseNamedObjects*\\SENS Information Cache",
+      "*\\BaseNamedObjects*\\TabletHardwarePresent",
+      "*\\BaseNamedObjects*\\userenv: * Group Policy has been applied",
+      "*\\BaseNamedObjects*\\TermSrvReadyEvent",
+      "\\RPC Control\\dhcpcsvc",
+      "\\RPC Control\\dhcpcsvc6",
+      "\\RPC Control\\DNSResolver",
+      "\\RPC Control\\RasmanRpc",
+      "*\\BaseNamedObjects*\\WininetStartupMutex",
+      "*\\BaseNamedObjects*\\WininetConnectionMutex",
+      "*\\BaseNamedObjects*\\WininetProxyRegistryMutex",
+      "*\\BaseNamedObjects*\\RasPbFile",
+      "*\\BaseNamedObjects*\\CTF.*",
+      "*\\BaseNamedObjects*\\MSCTF.*",
+      "*\\BaseNamedObjects*\\MSUIM.*",
+      "*\\BaseNamedObjects*\\CtfmonInstMutex*",
+      "*\\BaseNamedObjects*\\CiceroSharedMemDefault*",
+      "*\\BaseNamedObjects*\\CicLoadWinStaWinSta*",
+      "*\\BaseNamedObjects*\\DBWinMutex",
+      "*\\BaseNamedObjects*\\DBWIN_BUFFER",
+      "*\\BaseNamedObjects*\\DBWIN_BUFFER_READY",
+      "*\\BaseNamedObjects*\\DBWIN_DATA_READY",
+      "\\RPC Control\\AudioSrv",
+      "*\\BaseNamedObjects*\\mmGlobalPnpInfo",
+      "*\\BaseNamedObjects*\\Guard*mmGlobalPnpInfoGuard",
+      "*\\BaseNamedObjects*\\MidiMapper_modLongMessage_RefCnt",
+      "*\\BaseNamedObjects*\\MidiMapper_Configure",
+      "*\\BaseNamedObjects*\\SsiMidiDllCs",
+      "*\\BaseNamedObjects*\\StaccatoSynthCore11Mutex",
+      "*\\BaseNamedObjects*\\WDMAUD_Callbacks",
+      "*\\BaseNamedObjects*\\DirectSound*",
+      "*\\BaseNamedObjects*\\AMResourceMutex*",
+      "*\\BaseNamedObjects*\\AMResourceMapping*",
+      "*\\BaseNamedObjects*\\VideoRenderer",
+      "*\\BaseNamedObjects*\\VIDEOMEMORY",
+      "*\\BaseNamedObjects*\\mxrapi",
+      "*\\BaseNamedObjects*\\mixercallback",
+      "*\\BaseNamedObjects*\\hardwaremixercallback",
+      "*\\BaseNamedObjects*\\DINPUTWINMM",
+      "*\\BaseNamedObjects*\\DDrawDriverObjectListMutex",
+      "*\\BaseNamedObjects*\\__DDrawExclMode__",
+      "*\\BaseNamedObjects*\\__DDrawCheckExclMode__",
+      "*\\BaseNamedObjects*\\DDrawWindowListMutex",
+      "*\\BaseNamedObjects*\\DDrawCheckFullscreenSemaphore",
+      "*\\BaseNamedObjects*\\D3D9CheckFullscreenSemaphore",
+      "*\\BaseNamedObjects*\\WinMMConsoleAudioEvent",
+      "\\MmcssApiPort",
+      "\\RPC Control\\AudioClientRpc",
+      "\\RPC Control\\MidiSrvClientRpc",
+      "*\\BaseNamedObjects*\\SYSTEM_AUDIO_STREAM_*",
+      "\\UxSmsApiPort",
+      "*\\BaseNamedObjects*\\Dwm-*-ApiPort-*",
+      "*\\BaseNamedObjects*\\DwmDxBltEvent*",
+      "*\\BaseNamedObjects*\\AudioEngineDuplicateHandleApiPort*",
+      "\\RPC Control\\NCWTSAudioServer",
+      "\\RPC Control\\spoolss",
+      "*\\BaseNamedObjects*\\EPSON-PrgMtr-*",
+      "*\\BaseNamedObjects*\\RouterPreInitEvent",
+      "\\RPC Control\\SbieSvcPort",
+      "*\\BaseNamedObjects*\\Sandboxie_StartMenu_WorkArea_*",
+      "\\...\\*",
+      "\\RPC Control\\SLCTransportEndpoint-*",
+      "\\RPC Control\\wpcsvc",
+      "*\\BaseNamedObjects*\\BFE_Notify_Event_*",
+      "*\\BaseNamedObjects*\\WinSpl64To32Mutex*_0",
+      "\\RPC Control\\splwow64_*_0",
+      "\\RPC Control\\umpdproxy_*_0",
+      "\\ConsoleEvent-0x*",
+      "*\\BaseNamedObjects*\\ConsoleEvent-0x*",
+      "\\RPC Control\\console-0x*-lpc-handle",
+      "\\RPC Control\\ConsoleEvent-0x*",
+      "\\RPC Control\\ConsoleLPC-0x*",
+      "\\RPC Control\\lsapolicylookup",
+      "\\RPC Control\\lsasspirpc",
+      "\\RPC Control\\LSARPC_ENDPOINT",
+      "\\RPC Control\\umpo",
+      "*\\BaseNamedObjects*\\FlipEx*",
+      "*\\BaseNamedObjects*\\FontCachePort",
+      "*\\BaseNamedObjects*\\FntCache-*",
+      "\\Windows\\Theme*",
+      "\\Sessions\\*\\Windows\\Theme*",
+      "\\Sessions\\*\\Windows\\DwmApiPort",
+      "*\\BaseNamedObjects*\\DWM_DX_FULLSCREEN_TRANSITION_EVENT",
+      "*\\BaseNamedObjects*\\WinSpl64To32Mutex*_2000",
+      "\\RPC Control\\splwow64_*_2000",
+      "\\RPC Control\\umpdproxy_*_2000",
+      "*\\BaseNamedObjects*\\CoreMessagingRegistrar",
+      "*\\BaseNamedObjects\\[CoreUI]-*",
+      "*\\BaseNamedObjects\\SM*:WilStaging_*",
+      "\\{BEC19D6F-D7B2-41A8-860C-8787BB964F2D}",
+      "*\\BaseNamedObjects*\\ATITRAY_SMEM",
+      "*\\BaseNamedObjects*\\ATITRAY_OSDM",
+      "*\\BaseNamedObjects*\\AMCreateListenSock*",
+      "*\\BaseNamedObjects*\\AMIPC_*",
+      "*\\BaseNamedObjects*\\devldr32",
+      "*\\BaseNamedObjects*\\ThreatfireApiHookIpc2Map",
+      "*\\BaseNamedObjects*\\00MemoryShareKeyloggerHunter",
+      "*\\BaseNamedObjects*\\WacomNewFrontAppEventName",
+      "*\\BaseNamedObjects*\\WacomTouchingAppNameMutexName"
+    ],
+    "ReadIpcPath": [
+      "\\??\\pipe\\*",
+      "$:explorer.exe"
+    ],
+    "OpenWinClass": [
+      "Shell_TrayWnd",
+      "TrayNotifyWnd",
+      "SystemTray_Main",
+      "Connections Tray",
+      "MS_WebcheckMonitor",
+      "PrintTray_Notify_WndClass",
+      "CicLoaderWndClass",
+      "CicMarshalWndClass",
+      "Credential Dialog Xaml Host",
+      "Sandbox:*:ConsoleWindowClass",
+      "MSTaskSwWClass",
+      "MicrosoftWindowsTooltip",
+      "CTouchPadSynchronizer",
+      "Type32_Main_Window",
+      "TForm_AshampooFirewall",
+      "WinVNC desktop sink",
+      "Afx:400000:0",
+      "NVIDIA TwinView Window",
+      "SWFlash_PlaceHolderX",
+      "MdiClass",
+      "Logitech Wingman Internal Message Router",
+      "devldr",
+      "vmware.exe,MKSEmbedded"
+    ]
+  },
+  "TemplateNetworkPaths": {
+    "OpenFilePath": [
+      "\\Device\\NamedPipe\\ROUTER",
+      "\\Device\\NamedPipe\\ShimViewer",
+      "\\Device\\Afd",
+      "\\Device\\Afd\\Endpoint",
+      "\\Device\\Afd\\AsyncConnectHlp",
+      "\\Device\\Afd\\AsyncSelectHlp",
+      "\\Device\\Afd\\ROUTER",
+      "\\Device\\Afd\\Mio",
+      "\\Device\\WS2IFSL",
+      "\\Device\\WS2IFSL\\NifsPvd",
+      "\\Device\\WS2IFSL\\NifsSct",
+      "\\Device\\Tcp",
+      "\\Device\\Tcp6",
+      "\\Device\\Ip",
+      "\\Device\\Ip6",
+      "\\Device\\Udp",
+      "\\Device\\Udp6",
+      "\\Device\\RawIp",
+      "\\Device\\RawIp6",
+      "\\Device\\NetBT_Tcpip_*",
+      "\\Device\\Http\\*",
+      "\\Device\\Nsi"
+    ],
+    "ClosedFilePath": [
+      "\\Device\\afd*",
+      "\\Device\\ip",
+      "\\Device\\ip6",
+      "\\Device\\udp",
+      "\\Device\\udp6",
+      "\\Device\\tcp",
+      "\\Device\\tcp6",
+      "\\Device\\http\\*",
+      "\\Device\\rawip",
+      "\\Device\\rawip6",
+      "\\Device\\nsi"
+    ]
+  },
+  "TemplateSModPaths": {
+    "ClosedFilePath": [
+      "\\Device\\*"
+    ],
+    "NormalFilePath": [
+      "\\Device\\NamedPipe\\*",
+      "\\Device\\CNG",
+      "\\Device\\ConDrv\\*",
+      "\\Device\\DeviceApi*",
+      "\\Device\\DfsClient",
+      "\\Device\\KsecDD",
+      "\\Device\\MountPointManager",
+      "\\Device\\Ndis",
+      "\\Device\\PcwDrv",
+      "\\Device\\Null",
+      "\\Device\\BootDevice\\Windows\\*",
+      "\\Device\\BootPartition\\Windows\\*",
+      "\\Device\\SrpDevice",
+      "\\Device\\MMCSS\\MmThread",
+      "\\Device\\NvAdminDevice"
+    ]
+  },
+  "TemplatePModPaths": {
+    "WriteKeyPath": [
+      "\\REGISTRY\\USER\\*"
+    ],
+    "NormalFilePath": [
+      "%SystemRoot%\\*",
+      "%SbieHome%\\*",
+      "%ProgramFiles%\\*",
+      "%ProgramFiles% (x86)\\*",
+      "%ProgramData%\\Microsoft\\*",
+      "?:\\$Recycle.Bin\\*"
+    ],
+    "WriteFilePath": [
+      "?:\\$Recycle.Bin\\**\\*"
+    ],
+    "NormalKeyPath": [
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Classes\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ApplicationAssociationToasts\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\FileAssociations\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\*",
+      "HKEY_CURRENT_USER\\AppEvents\\*",
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\DirectX\\UserGpuPreferences\\*",
+      "HKEY_CURRENT_USER\\Environment\\*",
+      "\\registry\\user\\**\\Software\\Microsoft\\SystemCertificates\\Root\\ProtectedRoots"
+    ]
+  },
+  "TemplateDefaultFolders": {
+    "DefaultFolder": [
+      "%SystemRoot%",
+      "%TEMP%",
+      "%ProgramFiles%",
+      "%ProgramFiles(x86)%",
+      "%CommonProgramFiles%",
+      "%CommonProgramFiles(x86)%",
+      "%USERPROFILE%",
+      "%Desktop%",
+      "%Personal%",
+      "%{374DE290-123F-4565-9164-39C4925E467B}%",
+      "%Favorites%",
+      "%{BFB9D5E0-C6A9-404C-B2B2-AE6DB6AF4968}%",
+      "%My Music%",
+      "%My Pictures%",
+      "%{4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}%",
+      "%My Video%",
+      "%PUBLIC%",
+      "%PUBLIC%\\Desktop",
+      "%PUBLIC%\\Documents",
+      "%PUBLIC%\\Downloads",
+      "%PUBLIC%\\Music",
+      "%PUBLIC%\\Pictures",
+      "%PUBLIC%\\Videos",
+      "%LOCALAPPDATA%",
+      "%LOCALAPPDATA%\\Microsoft",
+      "%LOCALAPPDATA%\\Microsoft\\InputPersonalization",
+      "%LOCALAPPDATA%\\Microsoft\\Windows",
+      "%LOCALAPPDATA%\\Microsoft\\Windows Sidebar",
+      "%LOCALAPPDATA%\\Microsoft\\WindowsApps",
+      "%LOCALAPPDATA%\\Microsoft\\InputPersonalization\\TrainedDataStore",
+      "%LOCALAPPDATA%\\Microsoft\\Windows Sidebar\\Gadgets",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\CloudStore",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\GameExplorer",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\History",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCookies",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\Shell",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\WinX",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\WinX\\Group1",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\WinX\\Group2",
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\WinX\\Group3",
+      "%LOCALAPPDATA%\\Temp",
+      "%APPDATA%",
+      "%APPDATA%\\Microsoft",
+      "%APPDATA%\\Microsoft\\Internet Explorer\\Quick Launch",
+      "%APPDATA%\\Microsoft\\Windows",
+      "%APPDATA%\\Microsoft\\Windows\\CloudStore",
+      "%APPDATA%\\Microsoft\\Windows\\Network Shortcuts",
+      "%APPDATA%\\Microsoft\\Windows\\Printer Shortcuts",
+      "%APPDATA%\\Microsoft\\Windows\\Recent",
+      "%APPDATA%\\Microsoft\\Windows\\SendTo",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+      "%APPDATA%\\Microsoft\\Windows\\Templates",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Accessibility",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Accessories",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Maintenance",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\System Tools",
+      "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows PowerShell",
+      "%ProgramData%",
+      "%ProgramData%\\Microsoft",
+      "%ProgramData%\\Microsoft\\Windows",
+      "%ProgramData%\\Microsoft\\Windows\\GameExplorer",
+      "%ProgramData%\\Microsoft\\Windows\\LfSvc",
+      "%ProgramData%\\Microsoft\\Windows\\Models",
+      "%ProgramData%\\Microsoft\\Windows\\OneSettings",
+      "%ProgramData%\\Microsoft\\Windows\\PackagedEventProviders",
+      "%ProgramData%\\Microsoft\\Windows\\Power Efficiency Diagnostics",
+      "%ProgramData%\\Microsoft\\Windows\\Ringtones",
+      "%ProgramData%\\Microsoft\\Windows\\Templates",
+      "%ProgramData%\\Microsoft\\Windows\\wfp",
+      "%ProgramData%\\Microsoft\\Windows\\AppRepository",
+      "%ProgramData%\\Microsoft\\Windows\\AppRepository\\Families",
+      "%ProgramData%\\Microsoft\\Windows\\AppRepository\\Packages",
+      "%ProgramData%\\Microsoft\\Windows\\ClipSVC",
+      "%ProgramData%\\Microsoft\\Windows\\ClipSVC\\Archive",
+      "%ProgramData%\\Microsoft\\Windows\\ClipSVC\\GenuineTicket",
+      "%ProgramData%\\Microsoft\\Windows\\ClipSVC\\Import",
+      "%ProgramData%\\Microsoft\\Windows\\ClipSVC\\Install",
+      "%ProgramData%\\Microsoft\\Windows\\DeviceMetadataStore",
+      "%ProgramData%\\Microsoft\\Windows\\DeviceMetadataStore\\en-US",
+      "%ProgramData%\\Microsoft\\Windows\\Parental Controls",
+      "%ProgramData%\\Microsoft\\Windows\\Parental Controls\\settings",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Accessibility",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Accessories",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Administrative Tools",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Maintenance",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\System Tools",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Windows PowerShell",
+      "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Accessories\\System Tools",
+      "%ProgramData%\\Microsoft\\Windows\\WER",
+      "%ProgramData%\\Microsoft\\Windows\\WER\\ReportArchive",
+      "%ProgramData%\\Microsoft\\Windows\\WER\\ReportQueue",
+      "%ProgramData%\\Microsoft\\Windows\\WER\\Temp",
+      "%ProgramData%\\Microsoft\\Windows NT",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSScan",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\ActivityLog",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\Common Coverpages",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\Inbox",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\Queue",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\SentItems",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\VirtualInbox",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\Common Coverpages\\en-US",
+      "%ProgramData%\\Microsoft\\Windows NT\\MSFax\\VirtualInbox\\en-US",
+      "%ProgramData%\\Microsoft\\DeviceSync",
+      "%ProgramData%\\Microsoft\\MapData",
+      "%ProgramData%\\Microsoft\\MF",
+      "%ProgramData%\\Microsoft\\SmsRouter",
+      "%ProgramData%\\Microsoft\\Spectrum",
+      "%ProgramData%\\Microsoft\\Speech_OneCore",
+      "%ProgramData%\\Microsoft\\Storage Health",
+      "%ProgramData%\\Microsoft\\User Account Pictures",
+      "%ProgramData%\\Microsoft\\Vault",
+      "%ProgramData%\\Microsoft\\WDF",
+      "%ProgramData%\\Microsoft\\AppV",
+      "%ProgramData%\\Microsoft\\AppV\\Setup",
+      "%ProgramData%\\Microsoft\\Crypto",
+      "%ProgramData%\\Microsoft\\Crypto\\DSS",
+      "%ProgramData%\\Microsoft\\Crypto\\Keys",
+      "%ProgramData%\\Microsoft\\Crypto\\PCPKSP",
+      "%ProgramData%\\Microsoft\\Crypto\\RSA",
+      "%ProgramData%\\Microsoft\\Crypto\\DSS\\MachineKeys",
+      "%ProgramData%\\Microsoft\\Crypto\\PCPKSP\\WindowsAIK",
+      "%ProgramData%\\Microsoft\\Crypto\\RSA\\MachineKeys",
+      "%ProgramData%\\Microsoft\\Diagnosis",
+      "%ProgramData%\\Microsoft\\Diagnosis\\Siufloc",
+      "%ProgramData%\\Microsoft\\DRM",
+      "%ProgramData%\\Microsoft\\DRM\\Server",
+      "%ProgramData%\\Microsoft\\NetFramework",
+      "%ProgramData%\\Microsoft\\NetFramework\\BreadcrumbStore",
+      "%ProgramData%\\Microsoft\\Network",
+      "%ProgramData%\\Microsoft\\Network\\Connections",
+      "%ProgramData%\\Microsoft\\Network\\Downloader",
+      "%ProgramData%\\Microsoft\\Provisioning",
+      "%ProgramData%\\Microsoft\\Provisioning\\AssetCache",
+      "%ProgramData%\\Microsoft\\Provisioning\\AssetCache\\CellularUx",
+      "%ProgramData%\\Microsoft\\Settings",
+      "%ProgramData%\\Microsoft\\Settings\\Accounts",
+      "%ProgramData%\\Microsoft\\UEV",
+      "%ProgramData%\\Microsoft\\UEV\\InboxTemplates",
+      "%ProgramData%\\Microsoft\\UEV\\Scripts",
+      "%ProgramData%\\Microsoft\\UEV\\Templates",
+      "%ProgramData%\\Microsoft\\WinMSIPC",
+      "%ProgramData%\\Microsoft\\WinMSIPC\\Server",
+      "%ProgramData%\\Microsoft\\WwanSvc",
+      "%ProgramData%\\Microsoft\\WwanSvc\\DMProfiles",
+      "%ProgramData%\\Microsoft\\WwanSvc\\Profiles",
+      "%ProgramData%\\USOPrivate",
+      "%ProgramData%\\USOShared",
+      "%ProgramData%\\USOShared\\Logs",
+      "%ProgramData%\\USOShared\\Logs\\System",
+      "%ProgramData%\\USOShared\\Logs\\User",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Cache",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Cyber",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\DataCollection",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Downloads",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Temp",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Trace",
+      "%ProgramData%\\Microsoft\\Windows Defender Advanced Threat Protection\\Temp\\PSScriptOutputs",
+      "%ProgramData%\\Microsoft\\Windows Defender",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Clean Store",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Definition Updates",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Features",
+      "%ProgramData%\\Microsoft\\Windows Defender\\LocalCopy",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Network Inspection System",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Platform",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Quarantine",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Scans",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Support",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Definition Updates\\Backup",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Definition Updates\\Default",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Definition Updates\\NisBackup",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Definition Updates\\Updates",
+      "%ProgramData%\\Microsoft\\Windows Defender\\Network Inspection System\\Support",
+      "%ProgramData%\\Microsoft\\Windows Security Health",
+      "%ProgramData%\\Microsoft\\Windows Security Health\\Health Advisor",
+      "%ProgramData%\\Microsoft\\Windows Security Health\\Logs",
+      "%ProgramData%\\regid.1991-06.com.microsoft",
+      "%ProgramData%\\SoftwareDistribution",
+      "%ProgramData%\\ssh"
+    ]
+  },
+  "TemplateAppCPaths": {
+    "OpenFilePath": [
+      "\\device\\*pipe\\lsarpc",
+      "\\device\\*pipe\\srvsvc",
+      "\\device\\*pipe\\wkssvc",
+      "\\device\\*pipe\\samr",
+      "\\device\\*pipe\\netlogon"
+    ],
+    "OpenIpcPath": [
+      "\\Sessions\\*\\AppContainerNamedObjects\\*"
+    ]
+  },
+  "TemplateSettings": {
+    "Tmpl.Version": [
+      "1"
+    ],
+    "Tmpl.Firefox": [
+      "%AppData%\\Mozilla\\Firefox\\Profiles\\*"
+    ],
+    "Tmpl.Waterfox": [
+      "%AppData%\\Waterfox\\Profiles\\*"
+    ],
+    "Tmpl.PaleMoon": [
+      "%AppData%\\Moonchild Productions\\Pale Moon\\Profiles\\*"
+    ],
+    "Tmpl.SeaMonkey": [
+      "%AppData%\\Mozilla\\SeaMonkey\\Profiles\\*"
+    ],
+    "Tmpl.LibreWolf": [
+      "%AppData%\\LibreWolf\\Profiles\\*"
+    ],
+    "Tmpl.Zotero": [
+      "%Tmpl.Firefox%\\zotero"
+    ],
+    "Tmpl.Chrome": [
+      "%Local AppData%\\Google\\Chrome\\User Data\\Default"
+    ],
+    "Tmpl.Edge": [
+      "%Local AppData%\\Microsoft\\Edge\\User Data\\Default"
+    ],
+    "Tmpl.Vivaldi": [
+      "%Local AppData%\\Vivaldi\\User Data\\Default"
+    ],
+    "Tmpl.Brave": [
+      "%Local AppData%\\BraveSoftware\\Brave-Browser\\User Data\\Default"
+    ],
+    "Tmpl.Opera": [
+      "%AppData%\\Opera Software\\Opera Stable\\Default"
+    ],
+    "Tmpl.Yandex": [
+      "%Local AppData%\\Yandex\\YandexBrowser\\User Data\\Default"
+    ],
+    "Tmpl.Ungoogled": [
+      "%Local AppData%\\Chromium\\User Data\\Default"
+    ],
+    "Tmpl.Iron": [
+      "%Local AppData%\\Chromium\\User Data\\Default"
+    ],
+    "Tmpl.Maxthon_6": [
+      "%Local AppData%\\Maxthon\\Application\\User Data\\Default"
+    ],
+    "Tmpl.Dragon": [
+      "%Local AppData%\\Comodo\\Dragon\\User Data\\Default"
+    ],
+    "Tmpl.Osiris": [
+      "%Local AppData%\\Osiris\\Osiris-Browser\\User Data\\Default"
+    ],
+    "Tmpl.Slimjet": [
+      "%Local AppData%\\Slimjet\\User Data\\Default"
+    ],
+    "Tmpl.Office_Outlook": [
+      "%Local AppData%\\Microsoft\\Outlook"
+    ],
+    "Tmpl.Windows_Vista_Mail": [
+      "%Local AppData%\\Microsoft\\Windows Mail"
+    ],
+    "Tmpl.Windows_Live_Mail": [
+      "%Local AppData%\\Microsoft\\Windows Live Mail"
+    ],
+    "Tmpl.Thunderbird": [
+      "%Local AppData%\\Thunderbird"
+    ],
+    "Tmpl.Thunderbird:ExpectFile": [
+      "xulstore.json"
+    ],
+    "Tmpl.Opera_Mail": [
+      "%Local AppData%\\Opera\\*\\mail"
+    ],
+    "Tmpl.Opera_Mail:ExpectFile": [
+      "accounts.ini"
+    ],
+    "Tmpl.Incredimail": [
+      "%Local AppData%\\IM"
+    ],
+    "Tmpl.TheBat": [
+      "%AppData%\\The Bat!"
+    ],
+    "Tmpl.eM_Client": [
+      "%AppData%\\eM Client"
+    ],
+    "Tmpl.eDocPrinter": [
+      "%ProgramFiles%\\ITEKSOFT\\eDocPrinter*"
+    ],
+    "Tmpl.FinePrint": [
+      "%Personal%\\FinePrint files"
+    ],
+    "Tmpl.RoboForm": [
+      "%Personal%\\My RoboForm Data"
+    ],
+    "Tmpl.KasperskyDataRoot": [
+      "%AllUsersProfile%\\Kaspersky Lab"
+    ]
+  }
+}

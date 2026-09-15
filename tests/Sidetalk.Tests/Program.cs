@@ -26,7 +26,8 @@ internal static class Program
         };
 
         var failures = 0;
-        foreach (var test in tests)
+        var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).ToArray();
+        foreach (var test in allTests)
         {
             try
             {
@@ -40,7 +41,7 @@ internal static class Program
             }
         }
 
-        Console.WriteLine($"{tests.Length - failures}/{tests.Length} tests passed.");
+        Console.WriteLine($"{allTests.Length - failures}/{allTests.Length} tests passed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -103,7 +104,7 @@ internal static class Program
         var expected = IsolationPolicy.Expected(profile);
 
         Assert.True(expected.TryGetValue("BoxInfo", out var ownerInfo), "The owner marker must use BoxInfo.");
-        Assert.SequenceEqual(new[] { $"SIDETALK:{profile.OwnerToken}:policy=1" }, ownerInfo!);
+        Assert.SequenceEqual(new[] { $"SIDETALK:{profile.OwnerToken}:policy=2" }, ownerInfo!);
         Assert.False(expected.ContainsKey("SidetalkOwner"), "The retired owner setting must not be emitted.");
         Assert.False(expected.ContainsKey("SidetalkPolicy"), "The retired policy setting must not be emitted.");
 
@@ -114,7 +115,7 @@ internal static class Program
 
         var ini = IsolationPolicy.ToIni(profile);
         Assert.Contains($"[{profile.BoxName}]", ini);
-        Assert.Contains($"BoxInfo=SIDETALK:{profile.OwnerToken}:policy=1", ini);
+        Assert.Contains($"BoxInfo=SIDETALK:{profile.OwnerToken}:policy=2", ini);
         Assert.False(ini.Contains("SidetalkOwner=", StringComparison.Ordinal));
         Assert.False(ini.Contains("SidetalkPolicy=", StringComparison.Ordinal));
     }
@@ -139,7 +140,7 @@ internal static class Program
         Assert.IssueContains(rootResult, "FileRootPath");
 
         var foreignOwner = Copy(expected);
-        foreignOwner["BoxInfo"] = [$"SIDETALK:{new string('f', 32)}:policy=1"];
+        foreignOwner["BoxInfo"] = [$"SIDETALK:{new string('f', 32)}:policy=2"];
         var foreignOwnerResult = IsolationPolicy.Validate(profile, foreignOwner, EmptyGlobals());
         Assert.False(foreignOwnerResult.Owned);
         Assert.False(foreignOwnerResult.Safe);

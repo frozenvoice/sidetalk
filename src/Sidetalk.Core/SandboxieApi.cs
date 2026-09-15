@@ -36,28 +36,10 @@ public sealed class SandboxieApi : IDisposable
         catch { FreeLibrary(library); throw; }
     }
     private T Export<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
-    public Dictionary<string, string[]> ReadSection(string section)
-    {
-        var result = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        // Enumerate names INCLUDING expanded template settings; read each local effective value without globals.
-        // GlobalSettings is separately inspected to avoid hiding list-valued inherited access exceptions.
-        for (uint index = 0; index < 4096; index++)
-        {
-            var key = Query(section, null, index | 0x60000000);
-            if (key is null) return result;
-            if (result.ContainsKey(key)) throw new InvalidDataException("중복된 Sandboxie 설정 이름입니다.");
-            var values = new List<string>();
-            for (uint valueIndex = 0; ; valueIndex++)
-            {
-                if (valueIndex >= 4096) throw new InvalidDataException("Sandboxie 설정 개수 제한을 초과했습니다.");
-                var value = Query(section, key, valueIndex | 0x60000000);
-                if (value is null) break;
-                values.Add(value);
-            }
-            result.Add(key, values.ToArray());
-        }
-        throw new InvalidDataException("Sandboxie 설정 개수 제한을 초과했습니다.");
-    }
+    public Dictionary<string, string[]> ReadSection(string section, bool includeTemplates = true) =>
+        new SandboxieConfigurationReader(Query).ReadSection(section, includeTemplates);
+    public ConfigurationLayers ReadConfiguration(string boxName) =>
+        new SandboxieConfigurationReader(Query).ReadConfiguration(boxName);
     public string? Query(string section, string? key, uint index = 0)
     {
         var value = new StringBuilder(16384);
