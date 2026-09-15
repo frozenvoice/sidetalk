@@ -77,10 +77,11 @@ public sealed class CommandJournal
     }
 
     /// <summary>
-    /// Opens an existing lock for a read-only inspection.  Inspection never creates the
-    /// journal directory or lock file, so a fresh profile remains entirely read-only.
+    /// Opens an existing journal lock. Writable inspection may recover a missing lock
+    /// after interrupted initialization; read-only callers never create files. Inspection
+    /// does not create an absent journal directory or change any command record.
     /// </summary>
-    public IDisposable? TryAcquireInspectionLease()
+    public IDisposable? TryAcquireInspectionLease(bool recoverMissingLock = false)
     {
         ProfileStore.RejectReparseAncestors(root);
         if (!Directory.Exists(journalDirectory))
@@ -88,7 +89,12 @@ public sealed class CommandJournal
         ProfileStore.RejectReparseAncestors(journalDirectory);
         ProfileStore.RejectReparseAncestors(LockPath);
         if (!File.Exists(LockPath))
+        {
+            // Reuse the exclusive no-truncate acquisition path. Creating the lock does
+            // not complete a command: callers must still validate and reconcile records.
+            if (recoverMissingLock) return AcquireLease();
             throw new InvalidDataException("명령 기록 폴더에 잠금 파일이 없어 상태를 확정할 수 없습니다.");
+        }
 
         FileStream stream;
         try

@@ -19,7 +19,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Isolation probe publish failed.' }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $output
     Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $output -Recurse -Force
-    $zip = Join-Path $repo ('artifacts/SIDETALK-0.1.3-win-x64-' + $(if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }) + '.zip')
+    $zip = Join-Path $repo ('artifacts/SIDETALK-0.1.4-win-x64-' + $(if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }) + '.zip')
     Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip -Force
     Get-FileHash -LiteralPath $zip -Algorithm SHA256
     Write-Output ('App: ' + (Join-Path $output 'Sidetalk.exe'))

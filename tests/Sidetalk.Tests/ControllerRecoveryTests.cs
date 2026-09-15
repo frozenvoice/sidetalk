@@ -23,7 +23,11 @@ public static class ControllerRecoveryTests
         ("Controller recovery: creation identity is forwarded exactly", RecoveryReceivesExactCreationIdentity),
         ("Controller recovery: read only inspection does not complete journal", ReadOnlyInspectionDoesNotCompleteJournal),
         ("Controller recovery: concurrent controllers allow one Start request", ConcurrentControllersAllowOneStartRequest),
-        ("Controller recovery: corrupt journal blocks state changes", CorruptJournalBlocksStateChanges)
+        ("Controller recovery: corrupt journal blocks state changes", CorruptJournalBlocksStateChanges),
+        ("Controller recovery: writable inspection recreates a missing journal lock", WritableInspectionRecreatesMissingJournalLock),
+        ("Controller recovery: read only inspection does not recreate a missing journal lock", ReadOnlyInspectionDoesNotRecreateMissingJournalLock),
+        ("Controller recovery: lockless pending journal remains durable", LocklessPendingJournalRemainsDurable),
+        ("Controller recovery: lockless corrupt journal remains blocked", LocklessCorruptJournalRemainsBlocked)
     ];
 
     private static void RestartKeepsTimedOutLaunchBlocked()
@@ -326,6 +330,104 @@ public static class ControllerRecoveryTests
         Assert.False(snapshot.CanStop);
         Assert.Equal(0, harness.Runtime.ProcessQueryCount);
         Assert.Contains("손상", snapshot.Detail);
+    }
+    private static void WritableInspectionRecreatesMissingJournalLock()
+    {
+        var harness = Harness.Create("controller-lockless-empty");
+        var journalDirectory = Path.Combine(harness.Root, "command-journal");
+        Directory.CreateDirectory(journalDirectory);
+        var lockPath = Path.Combine(journalDirectory, "command.lock");
+        Assert.False(File.Exists(lockPath));
+        using var controller = harness.CreateController();
+
+        var snapshot = controller.InspectAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(Readiness.Ready, snapshot.State);
+        Assert.True(snapshot.CanLaunch);
+        Assert.Equal(0, harness.Runner.StartCount);
+        Assert.True(File.Exists(lockPath), "Writable inspection must recreate the missing journal lock.");
+    }
+
+    private static void ReadOnlyInspectionDoesNotRecreateMissingJournalLock()
+    {
+        var harness = Harness.Create("controller-lockless-readonly");
+        var journalDirectory = Path.Combine(harness.Root, "command-journal");
+        Directory.CreateDirectory(journalDirectory);
+        var lockPath = Path.Combine(journalDirectory, "command.lock");
+        using var controller = harness.CreateController(readOnly: true);
+
+        var snapshot = controller.InspectAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(Readiness.Unknown, snapshot.State);
+        Assert.False(snapshot.ActionsPermitted);
+        Assert.False(File.Exists(lockPath), "Read only inspection must not create a missing journal lock.");
+        Assert.Equal(0, harness.Runner.StartCount);
+        Assert.Equal(0, harness.Runtime.ProcessQueryCount);
+    }
+
+    private static void LocklessPendingJournalRemainsDurable()
+    {
+        var harness = Harness.Create("controller-lockless-pending");
+        var identity = Identity(harness.StartExe, 1211);
+        harness.Runner.Enqueue(new FakeHandle(false, 0, identity));
+        using (var first = harness.CreateController(commandTimeout: TimeSpan.FromMilliseconds(20)))
+            Assert.Throws<InvalidOperationException>(() => first.LaunchAsync().GetAwaiter().GetResult());
+
+        Assert.Equal(1, harness.Runner.StartCount);
+        var journal = new CommandJournal(harness.Root);
+        var intentPath = Directory.EnumerateFiles(journal.JournalDirectory, "*.intent.json").Single();
+        var startedPath = Directory.EnumerateFiles(journal.JournalDirectory, "*.started.json").Single();
+        var intentBytes = File.ReadAllBytes(intentPath);
+        var startedBytes = File.ReadAllBytes(startedPath);
+        File.Delete(journal.LockPath);
+        Assert.False(File.Exists(journal.LockPath));
+
+        var recovered = new FakeHandle(false, 0, identity);
+        harness.Recovery.EnqueueRecovered(recovered);
+        var beforeQueries = harness.Runtime.ProcessQueryCount;
+        using var restarted = harness.CreateController();
+        var blocked = restarted.InspectAsync().GetAwaiter().GetResult();
+        Assert.Equal(Readiness.Unknown, blocked.State);
+        Assert.False(blocked.CanLaunch);
+        Assert.False(blocked.CanStop);
+        Assert.True(File.Exists(journal.LockPath));
+        Assert.Equal(beforeQueries, harness.Runtime.ProcessQueryCount);
+        Assert.Equal(identity, harness.Recovery.LastIdentity);
+        Assert.Equal(0, Directory.GetFiles(journal.JournalDirectory, "*.completed.json").Length);
+
+        recovered.Complete(0);
+        var ready = restarted.InspectAsync().GetAwaiter().GetResult();
+        Assert.Equal(Readiness.Ready, ready.State);
+        Assert.True(ready.CanLaunch);
+        Assert.Equal(beforeQueries + 1, harness.Runtime.ProcessQueryCount);
+        Assert.Equal(1, harness.Runner.StartCount);
+        Assert.Equal(1, Directory.GetFiles(journal.JournalDirectory, "*.completed.json").Length);
+        Assert.SequenceEqual(intentBytes, File.ReadAllBytes(intentPath));
+        Assert.SequenceEqual(startedBytes, File.ReadAllBytes(startedPath));
+    }
+
+    private static void LocklessCorruptJournalRemainsBlocked()
+    {
+        var harness = Harness.Create("controller-lockless-corrupt");
+        var journal = new CommandJournal(harness.Root);
+        PendingCommandRecord record;
+        using (journal.AcquireLease())
+            record = journal.Prepare(harness.Profile, SidetalkCommandAction.Launch, harness.StartExe);
+        var intentPath = Path.Combine(journal.JournalDirectory, $"{record.OperationId}.intent.json");
+        File.Delete(journal.LockPath);
+        File.WriteAllText(intentPath, "{corrupt");
+
+        using var controller = harness.CreateController();
+        var snapshot = controller.InspectAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(Readiness.Unknown, snapshot.State);
+        Assert.False(snapshot.CanLaunch);
+        Assert.False(snapshot.CanStop);
+        Assert.Equal(0, harness.Runner.StartCount);
+        Assert.Equal(0, harness.Runtime.ProcessQueryCount);
+        Assert.Contains("손상", snapshot.Detail);
+        Assert.True(File.Exists(journal.LockPath), "Writable inspection may recreate the lock before reading the record.");
+        Assert.Equal("{corrupt", File.ReadAllText(intentPath));
     }
     private static CommandProcessIdentity Identity(string startExe, int pid) =>
         new(pid, DateTime.UtcNow.AddMinutes(-1).Ticks + pid, startExe);

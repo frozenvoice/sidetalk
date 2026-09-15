@@ -53,7 +53,7 @@ public sealed class SidetalkController : ISidetalkController
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            using var lease = leaseHeld ? null : journal.TryAcquireInspectionLease();
+            using var lease = leaseHeld ? null : journal.TryAcquireInspectionLease(recoverMissingLock: !readOnly);
             kakao = runtime.Kakao();
             sandboxie = runtime.Sandboxie();
             profile = store.Load();
@@ -227,7 +227,7 @@ public sealed class SidetalkController : ISidetalkController
     {
         var snapshot = await InspectAsync();
         ProfileStore.RejectReparseAncestors(path);
-        var report = new { SidetalkVersion = "0.1.3", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { SidetalkVersion = "0.1.4", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, RunningProcessEffectiveRulesVerified = false, AccountLogin = "미검증",
                 SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증",
                 MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };
