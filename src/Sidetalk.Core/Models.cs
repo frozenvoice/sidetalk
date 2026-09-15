@@ -1,12 +1,16 @@
 namespace Sidetalk.Core;
 
-public enum Readiness { MissingDependency, SetupRequired, Blocked, Ready, Running, Unknown }
+public enum Readiness { MissingDependency, SetupRequired, Blocked, Ready, Running, RunningUnverified, Unknown }
+public enum ProcessPolicyStatus { NotObserved, NoProcesses, EffectiveRulesUnverified }
 public sealed record DependencyInfo(string Name, string? Path, string Version, string Detail, bool Available);
 public sealed record AppSnapshot(
     Readiness State, string Title, string Detail, string BoxName, string StoragePath,
     DependencyInfo Kakao, DependencyInfo Sandboxie, IReadOnlyList<int> BoxProcessIds,
     IReadOnlyList<string> Checks, bool CanLaunch, bool CanStop,
-    DateTimeOffset CheckedAt, RuntimeVerifier.ServiceVerification? ServiceIdentity = null);
+    DateTimeOffset CheckedAt, RuntimeVerifier.ServiceVerification? ServiceIdentity = null,
+    bool CurrentConfigurationVerified = false,
+    ProcessPolicyStatus ProcessPolicy = ProcessPolicyStatus.NotObserved,
+    bool ActionsPermitted = true);
 
 public interface ISidetalkController : IDisposable
 {

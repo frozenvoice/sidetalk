@@ -39,3 +39,8 @@
 - 직접 이미지 검사를 생략하는 경우는 OpenProcess의 ERROR_ACCESS_DENIED뿐이다. 그 외 오류, 열린 핸들에서 QueryFullProcessImageName 실패, 읽힌 이미지 경로 불일치는 차단한다. 진단의 LiveImagePathVerified=false와 근거 문구는 직접 실행 이미지 증명이 없음을 나타낸다.
 - 서비스 실행 중 관리자가 등록 구성을 바꾼 경우 QueryServiceConfig는 다음 시작 시 적용될 구성을 반환할 수 있다. 따라서 SCM과 서명만으로 확인한 상태를 현재 실행 이미지 경로의 직접 증거로 보고하지 않는다. 이 검사는 신뢰하는 Windows·관리자 환경을 전제로 하며, 실행 중 관리자에 의한 악의적 변경까지 검증하는 기능은 아니다.
 - Start의 /silent는 Start 자체 오류 상자만 억제하며, 다른 관리 UI의 표시나 전역 호환성 템플릿 적용을 차단하는 옵션이 아니다. [공식 Start 소스](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/apps/start/start.cpp)와 [SbieIniServer 소스](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/core/svc/sbieiniserver.cpp)에서 관리 UI 실행 경로를 별도로 확인했다. 이번 호환성 창이 어떤 경로로 열렸는지는 관찰하지 않아 원인을 단정하지 않는다.
+## 재시작 복구와 실행 중 규칙 — 0.1.3
+
+- [Sandboxie /reload 문서](https://sandboxie-plus.github.io/sandboxie-docs/Content/StartCommandLine.html#reload-configuration)는 설정 재조회가 이미 실행 중인 샌드박스 프로그램에 적용되지 않는다고 명시한다. 따라서 현재 설정 검사와 실행 중 프로세스의 실제 적용 규칙을 구분한다.
+- [GetProcessTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)의 생성 시각과 PID, [QueryFullProcessImageName](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamew)의 실행 경로를 같은 보유 핸들로 확인한다. [Windows 프로세스 핸들·식별자](https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers)에서 설명하는 PID 수명 때문에 PID 하나만으로 재시작 후 명령을 식별하지 않는다.
+- 명령 생성 전에 기록을 저장하고 작업 잠금 아래에서 생성·식별 정보 기록을 수행한다. 식별 정보 저장 전에 중단된 작업은 현재 공식 Start.exe 후보가 하나라도 있거나 후보 조회 중 상태가 바뀌면 계속 차단한다. 후보가 없고 전용 박스 새 조회까지 성공했을 때만 완료한다. 종료 코드를 얻을 수 없는 경우에는 null로 남기며 성공 코드로 바꾸지 않는다.

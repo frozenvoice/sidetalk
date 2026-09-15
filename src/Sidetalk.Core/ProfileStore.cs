@@ -8,9 +8,17 @@ public sealed record BoxProfile(int Schema, string BoxName, string OwnerToken, s
 
 public sealed class ProfileStore
 {
+    private readonly Action<Stream, BoxProfile> profileWriter;
+    private readonly Action<string, BoxProfile>? beforePublish;
+
     public string Root { get; }
     public string ProfilePath => Path.Combine(Root, "profile.json");
-    public ProfileStore(string? root = null) => Root = Path.GetFullPath(root ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SIDETALK"));
+    public ProfileStore(string? root = null, Action<Stream, BoxProfile>? profileWriter = null, Action<string, BoxProfile>? beforePublish = null)
+    {
+        Root = Path.GetFullPath(root ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SIDETALK"));
+        this.profileWriter = profileWriter ?? ((stream, profile) => JsonSerializer.Serialize(stream, profile, new JsonSerializerOptions { WriteIndented = true }));
+        this.beforePublish = beforePublish;
+    }
     public BoxProfile? Load()
     {
         RejectReparseAncestors(Root);
@@ -25,13 +33,31 @@ public sealed class ProfileStore
         var existing = Load();
         if (existing is not null) return existing;
         Directory.CreateDirectory(Root);
+        RejectReparseAncestors(Root);
         var id = Guid.NewGuid().ToString("N");
         var name = "SideTalk_" + id[..23];
         var profile = new BoxProfile(1, name, Guid.NewGuid().ToString("N"), CurrentSid(), Path.Combine(Root, "Boxes", name));
-        using var stream = new FileStream(ProfilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, profile, new JsonSerializerOptions { WriteIndented = true });
-        stream.Flush(true);
-        return profile;
+        var temporaryPath = Path.Combine(Root, $".profile.{id}.tmp");
+        using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            profileWriter(stream, profile);
+            stream.Flush(true);
+        }
+
+        beforePublish?.Invoke(temporaryPath, profile);
+        try
+        {
+            File.Move(temporaryPath, ProfilePath, overwrite: false);
+            return profile;
+        }
+        catch (IOException) when (File.Exists(ProfilePath))
+        {
+            // Another creator may have published first. Load it only after the
+            // no-overwrite move fails; a corrupt winner still fails closed.
+            var raced = Load();
+            if (raced is not null) return raced;
+            throw;
+        }
     }
     public void Validate(BoxProfile profile)
     {

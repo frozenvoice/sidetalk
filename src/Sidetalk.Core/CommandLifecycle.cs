@@ -12,6 +12,7 @@ public enum SidetalkCommandAction
 /// <summary>A process handle retained until its exit and the box state are known.</summary>
 public interface ISidetalkCommandHandle : IDisposable
 {
+    CommandProcessIdentity? Identity => null;
     bool HasExited { get; }
     int ExitCode { get; }
     Task WaitForExitAsync(CancellationToken cancellationToken);
@@ -28,11 +29,12 @@ internal sealed class ProcessCommandRunner : ISidetalkCommandRunner
     public ISidetalkCommandHandle Start(ProcessStartInfo command)
     {
         var process = Process.Start(command) ?? throw new InvalidOperationException("Sandboxie 명령을 시작하지 못했습니다.");
-        return new ProcessCommandHandle(process);
+        return new ProcessCommandHandle(process, command.FileName);
     }
 
-    private sealed class ProcessCommandHandle(Process process) : ISidetalkCommandHandle
+    private sealed class ProcessCommandHandle(Process process, string imagePath) : ISidetalkCommandHandle
     {
+        public CommandProcessIdentity? Identity => ProcessCommandRecovery.Capture(process, imagePath);
         public bool HasExited => process.HasExited;
         public int ExitCode => process.ExitCode;
         public Task WaitForExitAsync(CancellationToken cancellationToken) => process.WaitForExitAsync(cancellationToken);
@@ -158,13 +160,16 @@ public sealed class CommandLifecycle : IDisposable
                 "카카오톡은 시작되지 않았지만 전용 환경의 보조 프로세스가 남아 있습니다. 새 실행은 막고 전용 상자 종료만 허용합니다."),
             SidetalkCommandAction.Launch => new CommandLifecycleResult(CommandLifecycleOutcome.LaunchFailed, current.Action, exitCode, false, false, 0,
                 "Sandboxie 명령은 끝났지만 보조 카카오톡 프로세스가 확인되지 않았습니다. 실행을 다시 시도할 수 있습니다."),
-            SidetalkCommandAction.Stop when exitCode == 0 && !hasResidual => new CommandLifecycleResult(CommandLifecycleOutcome.StopSucceeded, current.Action, exitCode, false, false, 0,
+            SidetalkCommandAction.Stop when (exitCode == 0 || exitCode is null) && !hasResidual => new CommandLifecycleResult(CommandLifecycleOutcome.StopSucceeded, current.Action, exitCode, false, false, 0,
                 "전용 상자가 비어 있어 종료가 확인되었습니다. 저장 데이터는 삭제하지 않았습니다."),
-            SidetalkCommandAction.Stop when exitCode == 0 => new CommandLifecycleResult(CommandLifecycleOutcome.StopResidual, current.Action, exitCode, false, hasKakao, processes.Count,
+            SidetalkCommandAction.Stop when exitCode == 0 || exitCode is null => new CommandLifecycleResult(CommandLifecycleOutcome.StopResidual, current.Action, exitCode, false, hasKakao, processes.Count,
                 "종료 명령은 끝났지만 전용 환경 프로세스가 남아 있습니다. 보조 종료를 다시 시도하세요."),
             _ => new CommandLifecycleResult(CommandLifecycleOutcome.StopFailed, current.Action, exitCode, false, hasKakao, processes.Count,
                 hasResidual ? "전용 상자 종료 명령이 실패했고 프로세스가 남아 있습니다. 보조 종료를 다시 시도하세요." : "종료 명령은 오류를 반환했지만 전용 환경이 비어 있는 것을 확인했습니다. 다시 실행할 수 있습니다.")
         };
+
+        if (exitCode is null)
+            result = result with { Message = result.Message + " 이전 명령의 종료 코드는 확인할 수 없으며, 종료 사실과 현재 상자 상태를 기준으로 판단했습니다." };
 
         // The command has exited and the process enumeration was validated. Only now is it
         // safe to release the retained OS handle. No process termination occurs here.
@@ -186,7 +191,8 @@ public sealed class CommandLifecycle : IDisposable
     {
         // Disposing the OS process handle never terminates the process. During normal
         // operation a live handle is retained for refresh/reconcile; when the app itself
-        // closes, releasing it is safe and leaves the Sandboxie command untouched.
+        // closes, releasing it leaves the Sandboxie command untouched. The controller
+        // retains its durable journal; disposal never marks that command completed.
         var current = pending;
         pending = null;
         if (current is not null)
@@ -196,22 +202,20 @@ public sealed class CommandLifecycle : IDisposable
     private static bool IsKakao(BoxProcess process) =>
         process.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase);
 
-    private static CommandExitState ReadExit(ISidetalkCommandHandle handle, out int exitCode)
+    private static CommandExitState ReadExit(ISidetalkCommandHandle handle, out int? exitCode)
     {
-        exitCode = 0;
+        exitCode = null;
         try
         {
-            if (!handle.HasExited)
-                return CommandExitState.Running;
-            exitCode = handle.ExitCode;
-            return CommandExitState.Exited;
+            if (!handle.HasExited) return CommandExitState.Running;
         }
-        catch
-        {
-            return CommandExitState.Unknown;
-        }
+        catch { return CommandExitState.Unknown; }
+        // An independently confirmed exited/reused PID may no longer have an exit code.
+        // Its code is unknown, never synthesized as a successful zero.
+        try { exitCode = handle.ExitCode; }
+        catch { }
+        return CommandExitState.Exited;
     }
-
     private enum CommandExitState
     {
         Running,

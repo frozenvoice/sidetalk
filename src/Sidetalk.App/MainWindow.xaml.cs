@@ -350,8 +350,8 @@ public partial class MainWindow : Window
 
     private void ApplyActionAvailability()
     {
-        LaunchButton.IsEnabled = !_actionInFlight && _lastSnapshot?.CanLaunch == true;
-        StopButton.IsEnabled = !_actionInFlight && _lastSnapshot?.CanStop == true;
+        LaunchButton.IsEnabled = !_actionInFlight && _lastSnapshot?.ActionsPermitted == true && _lastSnapshot.CanLaunch;
+        StopButton.IsEnabled = !_actionInFlight && _lastSnapshot?.ActionsPermitted == true && _lastSnapshot.CanStop;
     }
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)
@@ -392,7 +392,8 @@ public partial class MainWindow : Window
         Readiness.SetupRequired => "초기 설정이 필요합니다",
         Readiness.Blocked => "실행이 차단되었습니다",
         Readiness.Ready => "보조 환경이 실행 준비되었습니다",
-        Readiness.Running => "보조 카카오톡 프로세스 실행 중",
+        Readiness.Running => "보조 프로세스 실행 관찰됨",
+        Readiness.RunningUnverified => "실행 중 · 적용 정책 미확인",
         _ => "상태를 확인할 수 없습니다"
     };
 
@@ -402,7 +403,8 @@ public partial class MainWindow : Window
         Readiness.SetupRequired => "전용 Sandboxie Plus 상자와 저장 공간을 확인한 뒤 실행하세요.",
         Readiness.Blocked => "안전한 격리를 확인할 수 없어 실행을 막았습니다.",
         Readiness.Ready => "실행 버튼을 누르면 전용 상자에서 공식 카카오톡을 엽니다.",
-        Readiness.Running => "프로세스가 실행 중입니다. 로그인 성공 여부는 공식 창에서 확인하세요.",
+        Readiness.Running => "프로세스를 관찰했습니다. 실제 적용 규칙과 로그인 성공 여부는 별도 확인이 필요합니다.",
+        Readiness.RunningUnverified => "현재 설정과 기존 프로세스의 시작 당시 적용 규칙은 별개입니다.",
         _ => "다시 확인하거나 진단 JSON을 저장해 오류를 확인하세요."
     };
 
@@ -412,7 +414,8 @@ public partial class MainWindow : Window
         Readiness.SetupRequired => "설정 필요",
         Readiness.Blocked => "실행 차단",
         Readiness.Ready => "실행 가능",
-        Readiness.Running => "실행 중",
+        Readiness.Running => "실행 관찰됨",
+        Readiness.RunningUnverified => "정책 미확인",
         _ => "확인 실패"
     };
 

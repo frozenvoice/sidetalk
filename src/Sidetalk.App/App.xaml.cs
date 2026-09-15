@@ -74,7 +74,7 @@ public partial class App : Application
         var exitCode = 0;
         try
         {
-            controller = new SidetalkController();
+            controller = new SidetalkController(readOnly: true);
             window = new MainWindow(controller!, isRenderMode: true);
             MainWindow = window;
             window.PrepareRender(setupTab, compactWindow);
@@ -162,7 +162,7 @@ public partial class App : Application
     {
         try
         {
-            using var controller = new SidetalkController();
+            using var controller = new SidetalkController(readOnly: true);
             await controller.ExportDiagnosticsAsync(path);
             Shutdown(0);
         }
