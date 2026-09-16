@@ -6,7 +6,7 @@ Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용
 
 ## 실행
 
-배포 폴더의 `Sidetalk.exe`를 **일반 사용자 권한**으로 실행합니다. 폴더 안의 파일을 함께 보관하세요. SIDETALK를 닫아도 카카오톡은 종료되지 않습니다.
+저장소에서 직접 실행할 때는 `artifacts/publish/win-x64/Sidetalk.exe`를, 배포 ZIP을 받은 경우에는 압축을 푼 폴더의 `Sidetalk.exe`를 **일반 사용자 권한**으로 실행합니다. 실행 파일이 있는 폴더의 파일을 함께 보관하세요. SIDETALK를 닫아도 카카오톡은 종료되지 않습니다.
 
 - Windows 11 x64
 - 공식 서명이 유효한 카카오톡 (현재 PC: 26.7.1.5263)
@@ -16,6 +16,8 @@ Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용
 ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로는 이번 빌드의 검증 범위 밖입니다. 기존 설치를 이동하거나 다른 버전을 자동 설치하지 않습니다.
 
 이전 버전에서 업그레이드할 때에는 먼저 이전 SIDETALK가 요청한 명령이 끝났는지 확인하세요. 재시작 복구 기록은 0.1.3부터 생성하므로, 이전 버전이 이미 시작한 기록 없는 명령을 소급 복구하지는 못합니다.
+
+배포본을 교체하기 전에는 SIDETALK와 배포본에 포함된 `tools/IsolationProbe`를 모두 종료하세요. 저장소에서 최신 파일을 반영하는 안정 경로는 이후 빌드에서도 항상 `artifacts/publish/win-x64`로 유지됩니다.
 
 ## 초기 설정
 
@@ -60,10 +62,16 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 PowerShell, .NET SDK 8.0.400 이상(8.x):
 
 ```powershell
-dotnet build src/Sidetalk.App/Sidetalk.App.csproj -c Release
-dotnet run --project tests/Sidetalk.Tests/Sidetalk.Tests.csproj -c Release
+# self-contained 배포본 (.NET 런타임 포함)
 pwsh -File scripts/build.ps1 -SelfContained
+
+# framework-dependent 배포본 (.NET 8 Desktop Runtime 필요)
+# pwsh -File scripts/build.ps1
 ```
+
+`scripts/build.ps1`가 앱 빌드·콘솔 테스트·시험 도구 빌드·두 프로젝트 publish·ZIP 생성을 한 번에 수행합니다. 빌드와 publish가 모두 성공하면 먼저 임시 배포 폴더에서 ZIP과 SHA-256을 준비한 뒤 최신 앱을 `artifacts/publish/win-x64`로 반영합니다. 빌드·publish·압축 실패 시 기존 `win-x64` 배포본을 유지합니다. 교체 중 오류가 나면 기존 배포본 복구를 시도합니다. 버전별 ZIP은 `artifacts`에 계속 보관합니다. 반영 전에 실행 중인 SIDETALK와 배포본의 `tools/IsolationProbe`를 종료해야 합니다.
+
+교체 도중 PowerShell 강제 종료나 전원 장애가 발생하면 자동 복구되지 않을 수 있습니다. 이때 기존 배포본은 `artifacts/.publish-<고유 ID>/previous-win-x64`에 남을 수 있으므로, 임시 폴더를 삭제하지 말고 기존 파일과 반영 상태를 먼저 확인하세요.
 
 스크립트가 출력한 배포 폴더에서 자체 GUI 렌더링과 읽기 전용 진단(카카오톡 실행 없음):
 

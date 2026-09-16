@@ -1,5 +1,17 @@
 # 검증 결과 — 0.1.4 / 2026-09-15
 
+## 2026-09-16 — 일반 GUI 프로필 누락 복구
+
+탐색기에서 실행한 GUI는 `SetupRequired`였지만 Codex에서 실행한 진단은 `Ready`였다. 파일 핸들의 실제 경로를 확인하니 기존 프로필은 Codex MSIX 패키지의 `LocalCache/Local/SIDETALK/profile.json`에 있었고, 일반 사용자의 `%LOCALAPPDATA%/SIDETALK/profile.json`에는 없었다. 앞선 도구 진단의 `Ready`는 일반 GUI의 실행 준비 완료를 증명하지 못했다.
+
+Codex의 파일 가상화를 상속하지 않는 일반 사용자 프로세스에서도 복구 전 `SetupRequired`를 재현했다. 기존 프로필의 사용자·소유 표식·전용 box 정책·실제 저장 경로와 빈 box를 검증하고, 실제 사용자 위치에 프로필이 없는 경우에만 기존 프로필을 바이트 그대로 복구했다. 원본 프로필은 보존했으며 기존 파일을 덮어쓰거나 새 box를 만들지 않았다. 명령 기록이 있는 경우에는 이 프로필 단독 복구를 수행하지 않도록 제한했다.
+
+복구 후 파일 핸들의 실제 경로가 일반 사용자의 `SIDETALK/profile.json`임을 확인했고, 같은 일반 사용자 컨텍스트의 읽기 전용 조회에서 `Ready`, `CanLaunch=true`, `CurrentConfigurationVerified=true`, box 프로세스 0개를 확인했다. 원본과 복구된 프로필의 SHA-256이 같고 Sandboxie.ini도 변경되지 않았다. 사용자가 탐색기에서 다시 실행한 실제 GUI의 보조 카카오톡 실행 버튼 활성화도 확인했다. 카카오톡 실행·로그인·송수신은 이번 복구 검증에 포함하지 않는다.
+
+원인 조사 중 발견한 별도 오인 경로도 보완했다. `ProfileStore.Load()`는 읽기 오류를 숨길 수 있는 `File.Exists` 검사 대신 기존 파일을 직접 읽고, 실제 파일/상위 폴더 부재만 미설정으로 취급한다. 접근 오류·잘못된 파일 형태는 차단 상태로 전달한다. 기존 경로에 디렉터리가 있는 경우 Load/Create 모두 실패하고 그 안의 데이터가 보존되는 회귀 등을 추가했다. Release 앱·시험 도구 빌드 경고 0 / 오류 0, 콘솔 검사 **76/76 통과**, self-contained 배포 교체를 확인했다.
+
+근거: `artifacts/verification/gui-live-profile.json`, `native-user-diagnostics-20260916-162738.json`, `real-profile-recovery.json`, `profile-read-fix-build.txt`. 개인 경로가 포함된 원본은 Git에서 제외한다.
+
 ## 0.1.4 — 저널 최초 초기화 중단 복구
 
 6f04933에서 저널 폴더 생성 후 command.lock 생성 전 중단되면 일반 GUI에서 계속 Unknown에 머무르는 경로를 보완했습니다. 일반 GUI 검사는 이미 존재하는 저널 폴더의 잠금을 생성·획득한 뒤 기존 기록 조회와 명령 종료·새 박스 조회 절차를 이어갑니다. 저널 폴더 자체가 없으면 검사만으로 만들지 않습니다.

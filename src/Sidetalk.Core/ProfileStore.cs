@@ -22,9 +22,22 @@ public sealed class ProfileStore
     public BoxProfile? Load()
     {
         RejectReparseAncestors(Root);
-        if (!File.Exists(ProfilePath)) return null;
         RejectReparseAncestors(ProfilePath);
-        var profile = JsonSerializer.Deserialize<BoxProfile>(File.ReadAllText(ProfilePath)) ?? throw new InvalidDataException("SIDETALK 프로필을 읽을 수 없습니다. 기존 파일을 삭제하거나 새 환경으로 덮어쓰지 마세요.");
+        BoxProfile? profile;
+        try
+        {
+            profile = JsonSerializer.Deserialize<BoxProfile>(File.ReadAllText(ProfilePath));
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+
+        if (profile is null) throw new InvalidDataException("SIDETALK 프로필을 읽을 수 없습니다. 기존 파일을 삭제하거나 새 환경으로 덮어쓰지 마세요.");
         Validate(profile);
         return profile;
     }

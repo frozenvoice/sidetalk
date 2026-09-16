@@ -8,10 +8,34 @@ internal static class ProfileStoreAtomicTests
 {
     public static IEnumerable<(string Name, Action Run)> Cases =>
     [
+        ("ProfileStore treats a missing profile as unconfigured", MissingProfileReturnsNull),
+        ("ProfileStore fails closed when the profile path is a directory", DirectoryProfilePathFailsClosed),
         ("ProfileStore leaves a failed staged write for diagnosis and retry", FailedStageIsRetainedForRetry),
         ("ProfileStore does not overwrite a profile published by a race", PublishedRaceIsLoadedWithoutOverwrite),
         ("ProfileStore rejects a corrupt racing winner and preserves both files", CorruptRacingWinnerFailsClosed)
     ];
+
+    private static void MissingProfileReturnsNull()
+    {
+        var root = TestContext.CreateRunDirectory("profile-missing");
+        var store = new ProfileStore(root);
+
+        Assert.Equal<BoxProfile?>(null, store.Load());
+    }
+
+    private static void DirectoryProfilePathFailsClosed()
+    {
+        var root = TestContext.CreateRunDirectory("profile-directory");
+        var store = new ProfileStore(root);
+        Directory.CreateDirectory(store.ProfilePath);
+        var markerPath = Path.Combine(store.ProfilePath, "preserve.txt");
+        File.WriteAllText(markerPath, "preserve");
+
+        Assert.Throws<Exception>(() => store.Load());
+        Assert.Throws<Exception>(() => store.Create());
+        Assert.True(Directory.Exists(store.ProfilePath));
+        Assert.Equal("preserve", File.ReadAllText(markerPath));
+    }
 
     private static void FailedStageIsRetainedForRetry()
     {
