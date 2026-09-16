@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _isRenderMode = isRenderMode;
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         ChecksList.ItemsSource = _checks;
 
         _inspectionTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -93,13 +94,29 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(snapshot);
         _lastSnapshot = snapshot;
 
-        StatusTitleText.Text = string.IsNullOrWhiteSpace(snapshot.Title)
-            ? ReadinessTitle(snapshot.State)
-            : snapshot.Title;
-        StatusDetailText.Text = string.IsNullOrWhiteSpace(snapshot.Detail)
-            ? ReadinessDetail(snapshot.State)
-            : snapshot.Detail;
+        var running = snapshot.State is Readiness.Running or Readiness.RunningUnverified;
+        var detail = string.IsNullOrWhiteSpace(snapshot.Detail) ? ReadinessDetail(snapshot.State) : snapshot.Detail;
+        StatusTitleText.Text = running ? "보조 환경 실행 중"
+            : string.IsNullOrWhiteSpace(snapshot.Title) ? ReadinessTitle(snapshot.State) : snapshot.Title;
+        StatusDetailText.Text = running ? SummarizeRunningDetail(detail) : detail;
+        PolicyDetailText.Text = detail;
+        PolicySummaryText.Text = running
+            ? (snapshot.CurrentConfigurationVerified ? "현재 격리 설정 확인됨 · 시작 당시 적용 규칙은 확인 불가" : "현재 격리 설정과 시작 당시 적용 규칙을 확인할 수 없습니다.")
+            : string.Empty;
+        PolicySummaryText.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+        PolicySummaryText.Foreground = (Brush)FindResource("WarningInkBrush");
         StatusBadgeText.Text = ReadinessBadge(snapshot.State);
+        var statusBrush = snapshot.State switch
+        {
+            Readiness.Ready or Readiness.Running or Readiness.RunningUnverified => "AccentBrush",
+            Readiness.Blocked or Readiness.Unknown => "ErrorInkBrush",
+            _ => "WarningInkBrush"
+        };
+        StatusDot.Fill = (Brush)FindResource(statusBrush);
+        StatusBadgeText.Foreground = (Brush)FindResource(statusBrush);
+        RefreshSummaryText.Text = $"{snapshot.CheckedAt.ToLocalTime():HH:mm:ss} 확인 · 4초마다 자동 갱신";
+        KakaoSummaryText.Text = DependencySummary(snapshot.Kakao);
+        SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
 
         BoxNameText.Text = DisplayValue(snapshot.BoxName);
         StoragePathText.Text = DisplayValue(snapshot.StoragePath);
@@ -136,8 +153,8 @@ public partial class MainWindow : Window
 
         if (compactWindow)
         {
-            Width = 780;
-            Height = 660;
+            Width = 740;
+            Height = 640;
         }
     }
 
@@ -148,6 +165,13 @@ public partial class MainWindow : Window
         StatusTitleText.Text = "상태 확인 실패";
         StatusBadgeText.Text = "확인 실패";
         StatusDetailText.Text = ReadableException(exception);
+        PolicyDetailText.Text = StatusDetailText.Text;
+        PolicySummaryText.Visibility = Visibility.Collapsed;
+        StatusDot.Fill = (Brush)FindResource("ErrorInkBrush");
+        StatusBadgeText.Foreground = (Brush)FindResource("ErrorInkBrush");
+        RefreshSummaryText.Text = "자동 확인 실패 · 상태를 다시 확인하세요";
+        KakaoSummaryText.Text = "확인 실패";
+        SandboxieSummaryText.Text = "확인 실패";
         BoxNameText.Text = "확인할 수 없음";
         StoragePathText.Text = "확인할 수 없음";
         ProcessIdsText.Text = "확인할 수 없음";
@@ -169,8 +193,10 @@ public partial class MainWindow : Window
         }
 
         UpdateLayout();
-        var width = Math.Max(1, (int)Math.Ceiling(ActualWidth));
-        var height = Math.Max(1, (int)Math.Ceiling(ActualHeight));
+        // Native caption and borders are not drawn by RenderTargetBitmap.
+        var content = (FrameworkElement)Content;
+        var width = Math.Max(1, (int)Math.Ceiling(content.ActualWidth + content.Margin.Left + content.Margin.Right));
+        var height = Math.Max(1, (int)Math.Ceiling(content.ActualHeight + content.Margin.Top + content.Margin.Bottom));
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(this);
 
@@ -189,7 +215,7 @@ public partial class MainWindow : Window
 
     private async void LaunchButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_actionInFlight || _lastSnapshot?.CanLaunch != true)
+        if (_actionInFlight || _lastSnapshot is not { ActionsPermitted: true, CanLaunch: true })
         {
             return;
         }
@@ -227,7 +253,7 @@ public partial class MainWindow : Window
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_actionInFlight || _lastSnapshot?.CanStop != true)
+        if (_actionInFlight || _lastSnapshot is not { ActionsPermitted: true, CanStop: true })
         {
             return;
         }
@@ -350,18 +376,34 @@ public partial class MainWindow : Window
 
     private void ApplyActionAvailability()
     {
-        LaunchButton.IsEnabled = !_actionInFlight && _lastSnapshot?.ActionsPermitted == true && _lastSnapshot.CanLaunch;
-        StopButton.IsEnabled = !_actionInFlight && _lastSnapshot?.ActionsPermitted == true && _lastSnapshot.CanStop;
+        LaunchButton.IsEnabled = !_actionInFlight && _lastSnapshot is { ActionsPermitted: true, CanLaunch: true };
+        StopButton.IsEnabled = !_actionInFlight && _lastSnapshot is { ActionsPermitted: true, CanStop: true };
     }
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)
     {
         availability.Text = dependency.Available
-            ? "확인됨"
-            : string.IsNullOrWhiteSpace(dependency.Path) ? "없음" : "확인 필요";
+            ? $"{dependency.Name} · 확인됨"
+            : $"{dependency.Name} · {(string.IsNullOrWhiteSpace(dependency.Path) ? "없음" : "확인 필요")}";
         info.Text = BuildDependencyInfo(dependency);
         info.ToolTip = info.Text;
     }
+
+    private static string SummarizeRunningDetail(string detail)
+    {
+        // Condense only this exact standard policy paragraph, retained in diagnostics.
+        // Lifecycle feedback before it and any unfamiliar detail stay on the primary screen.
+        const string standardPolicyDetail = "현재 설정은 검증됐지만 실행 중 프로세스의 시작 당시 적용 규칙은 직접 확인할 수 없습니다. 설정을 다시 불러와도 기존 프로세스의 규칙이 바뀌었다고 판단하지 않습니다. 외부에서 시작했거나 실행 중 설정을 바꿨다면 보조 앱을 정상 종료해 상자가 빈 것을 확인한 뒤 새로 실행하세요.";
+        var feedback = detail.EndsWith(standardPolicyDetail, StringComparison.Ordinal)
+            ? detail[..^standardPolicyDetail.Length].Trim() : detail;
+        return string.IsNullOrWhiteSpace(feedback)
+            ? "전용 환경에서 프로세스가 실행 중입니다. 로그인과 대화는 카카오톡 창에서 확인하세요."
+            : feedback;
+    }
+
+    private static string DependencySummary(DependencyInfo dependency) => dependency.Available
+        ? string.IsNullOrWhiteSpace(dependency.Version) ? "확인됨" : $"{dependency.Version} · 확인됨"
+        : string.IsNullOrWhiteSpace(dependency.Path) ? "설치 필요" : "확인 필요";
 
     private static string BuildDependencyInfo(DependencyInfo dependency)
     {
@@ -414,8 +456,8 @@ public partial class MainWindow : Window
         Readiness.SetupRequired => "설정 필요",
         Readiness.Blocked => "실행 차단",
         Readiness.Ready => "실행 가능",
-        Readiness.Running => "실행 관찰됨",
-        Readiness.RunningUnverified => "정책 미확인",
+        Readiness.Running => "실행 중",
+        Readiness.RunningUnverified => "실행 중",
         _ => "확인 실패"
     };
 
