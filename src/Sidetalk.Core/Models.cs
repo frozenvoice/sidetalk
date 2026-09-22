@@ -19,4 +19,9 @@ public interface ISidetalkController : IDisposable
     Task LaunchAsync();
     Task StopAsync();
     Task<string> ExportDiagnosticsAsync(string path);
+    Task<SetupRecoveryPlan> InspectSetupRecoveryAsync();
+    Task<AppSnapshot> PrepareAsync(SetupRecoveryPlan approvedPlan, bool allowAutomatic, IProgress<string>? progress = null);
+    Task<AppSnapshot> PrepareAutomaticallyAsync(IProgress<string>? progress = null);
+    Task RevokeAutomaticRecoveryAsync();
+    string RecoveryHistoryPath { get; }
 }

@@ -72,6 +72,41 @@ public sealed class ProfileStore
             throw;
         }
     }
+    /// <summary>Publishes an exact, pre-approved candidate without replacing an existing profile.</summary>
+    public BoxProfile CreateCandidate(BoxProfile candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ValidateIdentity(candidate);
+        if (candidate.UserSid != CurrentSid() || !string.Equals(candidate.StoragePath, Path.Combine(Root, "Boxes", candidate.BoxName), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("승인된 SIDETALK 프로필 후보가 현재 사용자 또는 저장 경로와 다릅니다.");
+        var existing = Load();
+        if (existing is not null)
+        {
+            if (existing != candidate) throw new InvalidDataException("기존 SIDETALK 프로필이 승인된 후보와 다릅니다.");
+            return existing;
+        }
+        Directory.CreateDirectory(Root);
+        RejectReparseAncestors(Root);
+        var temporaryPath = Path.Combine(Root, $".profile.{candidate.OwnerToken}.tmp");
+        using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            profileWriter(stream, candidate);
+            stream.Flush(true);
+        }
+        beforePublish?.Invoke(temporaryPath, candidate);
+        try
+        {
+            File.Move(temporaryPath, ProfilePath, overwrite: false);
+            return candidate;
+        }
+        catch (IOException) when (File.Exists(ProfilePath))
+        {
+            var raced = Load();
+            if (raced == candidate) return raced;
+            throw new InvalidDataException("경합으로 게시된 SIDETALK 프로필이 승인된 후보와 다릅니다.");
+        }
+    }
+
     public void Validate(BoxProfile profile)
     {
         ValidateIdentity(profile);

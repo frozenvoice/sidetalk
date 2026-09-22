@@ -98,6 +98,50 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                     <StackPanel>
                         <TextBlock Text="현재 환경" Style="{StaticResource SectionHeading}" />
+                        <Border x:Name="RecoveryPanel" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20,18,20,18" Margin="0,0,0,18" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="복구 계획" FontSize="20" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="RecoveryStateText" Grid.Column="1" Text="확인 중" Style="{StaticResource SecondaryText}" FontSize="12" VerticalAlignment="Center" />
+                                </Grid>
+                                <TextBlock x:Name="RecoverySummaryText" Text="현재 설정을 확인하고 있습니다." Style="{StaticResource BodyText}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                                <TextBlock Text="변경 예정" Style="{StaticResource SectionHeading}" FontSize="15" Margin="0,0,0,4" />
+                                <ItemsControl x:Name="RecoveryChangesList" AutomationProperties.Name="복구 변경 예정 항목" Margin="0,0,0,8">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" TextWrapping="Wrap" /></DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="영향 범위" Style="{StaticResource SectionHeading}" FontSize="15" Margin="0,0,0,4" />
+                                <ItemsControl x:Name="RecoveryAffectedList" AutomationProperties.Name="복구 영향 범위" Margin="0,0,0,6">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" TextWrapping="Wrap" /></DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="RecoveryBlockerText" Text="" Style="{StaticResource SecondaryText}" Foreground="{StaticResource WarningInkBrush}" Margin="0,0,0,8" Visibility="Collapsed" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RecoveryProgressText" Text="" Style="{StaticResource SecondaryText}" Margin="0,0,0,8" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RecoveryScopeText" Text="자동 복구 허용 범위: WindowsRasMan · OnScreenKeyboard · WindowsLive · Edge_Fix · OfficeLicensing · OfficeClickToRun. 현재 사용자 설정 SbieCtrl_AutoRunSoftCompat=n과 같은 검증 범위에서 확인된 Sandboxie 관리 창 정리만 포함합니다. 관리 창이 확인되어 정리되면 저장하지 않은 관리 설정은 사라질 수 있습니다." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="17" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <CheckBox x:Name="AutomaticRecoveryCheckBox" Content="같은 검증 범위에서 다시 발생하면 자동 복구 허용" Foreground="{StaticResource InkBrush}" FontSize="14" IsChecked="False" Margin="0,0,0,10" ToolTip="여섯 템플릿, 현재 사용자 자동 검사 옵션, 같은 검증 조건에서 확인된 관리 창 정리만 포함합니다. 저장하지 않은 관리 설정은 사라질 수 있습니다." Checked="AutomaticRecoveryCheckBox_Changed" Unchecked="AutomaticRecoveryCheckBox_Changed" />
+                                <WrapPanel>
+                                    <Button x:Name="PrepareRecoveryButton" Content="복구하고 실행 준비" Style="{StaticResource PrimaryButton}" Click="PrepareRecoveryButton_Click" MinHeight="46" Margin="0,0,8,6" AutomationProperties.Name="복구하고 실행 준비" />
+                                    <Button x:Name="RevokeAutomaticButton" Content="자동 복구 해제" Style="{StaticResource ActionButton}" Click="RevokeAutomaticButton_Click" MinHeight="46" Margin="0,0,8,6" />
+                                    <Button x:Name="OpenRecoveryHistoryButton" Content="복구 내역 열기" Style="{StaticResource ActionButton}" Click="OpenRecoveryHistoryButton_Click" MinHeight="46" Margin="0,0,0,6" />
+                                </WrapPanel>
+                                <Expander IsExpanded="False" Margin="0,0,0,7">
+                                    <Expander.Header>
+                                        <TextBlock Text="보존되는 데이터" Style="{StaticResource SectionHeading}" FontSize="15" />
+                                    </Expander.Header>
+                                    <ItemsControl x:Name="RecoveryPreservedList" AutomationProperties.Name="복구 중 보존되는 데이터" Margin="0,7,0,4">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" TextWrapping="Wrap" /></DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Expander>
+                                <TextBlock x:Name="RecoveryBackupText" Text="" Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RecoveryResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,5,0,0" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
                         <TextBlock x:Name="PolicyDetailText" Text="환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,14" />
                         <Grid Margin="0,0,0,20">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -126,8 +170,8 @@
                         <TextBlock x:Name="SandboxieInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,26" />
                         <Border Height="1" Background="{StaticResource DividerBrush}" Margin="0,0,0,24" />
                         <TextBlock Text="처음 한 번만 준비하세요" Style="{StaticResource SectionHeading}" />
-                        <TextBlock Text="1. 공식 카카오톡과 Sandboxie Plus를 설치합니다.&#10;2. 전용 INI를 내보내 내용을 검토합니다.&#10;3. Sandboxie 설정에 기존 내용을 보존하고 전용 섹션만 추가합니다.&#10;4. 격리 사전 검사를 마친 뒤 보조 카카오톡을 실행하고 직접 로그인합니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
-                        <TextBlock Text="설치와 설정 적용은 사용자가 확인한 뒤 진행합니다. SIDETALK가 시스템 설정을 자동으로 바꾸지는 않습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
+                        <TextBlock Text="1. 공식 카카오톡과 Sandboxie Plus를 설치합니다.&#10;2. 위의 변경 내용을 확인하고 ‘복구하고 실행 준비’를 누릅니다.&#10;3. 실행 준비가 되면 ‘보조 카카오톡 실행’을 누르고 공식 창에서 직접 로그인합니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
+                        <TextBlock Text="설정 변경은 표시된 범위를 승인한 뒤 진행합니다. 같은 문제의 자동 복구는 위 체크박스로 허용하거나 나중에 해제할 수 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
                         <WrapPanel Margin="0,0,0,22">
                             <Button Content="Sandboxie 공식 다운로드" Style="{StaticResource ActionButton}" Click="SandboxieDownloadButton_Click" Margin="0,0,8,8" />
                             <Button Content="카카오톡 공식 안내" Style="{StaticResource ActionButton}" Click="KakaoOfficialButton_Click" Margin="0,0,0,8" />

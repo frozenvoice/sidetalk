@@ -1,6 +1,6 @@
 # Sandboxie Plus 기준 데이터
 
-SIDETALK는 Sandboxie Plus의 설정을 설치하거나 자동으로 바꾸지 않는다. 아래
+SIDETALK는 Sandboxie Plus를 설치하지 않는다. 승인된 초기 준비와 동일 범위 복구에만 공식 설정 도구를 사용한다. 아래
 파일은 실행 시 읽어 온 설정을 검토할 때 사용하는, 공식 원문 기반의 검사 기준이다.
 
 - 기준 버전: Sandboxie Plus v1.18.4 (`Templates.ini`)
@@ -38,3 +38,9 @@ Sandboxie 설정으로 사용하지 않는다.
 새 upstream 원문을 기준으로 삼으려면 먼저 코드의 지원 버전과 기대 SHA, 테스트
 fixture 이름을 함께 검토하고 변경해야 한다. 원문 변경을 숨긴 채 해시 검사를
 완화하거나 모든 템플릿을 신뢰 범위에 넣는 방식은 사용하지 않는다.
+
+## 복구 판별용 여섯 섹션
+
+`src/Sidetalk.Core/RecoveryTemplates.json`은 같은 해시로 고정한 원문에서 WindowsRasMan, OnScreenKeyboard, WindowsLive, Edge_Fix, OfficeLicensing, OfficeClickToRun의 Template_* 섹션만 추출한다. 메타데이터·중복·값 순서를 보존하며 중첩 Template 참조가 생기면 재생성을 중단한다.
+
+이 자료는 전역 허용 목록을 늘리지 않는다. 공식 출처와 실제 상속 결과가 일치하는 충돌의 제거 계획을 판별하는 데만 사용한다. 기존 SandboxieDefaults.json, fixture, BuiltinTemplateHashes.json과 IsolationPolicy의 허용 기준은 유지한다.

@@ -52,3 +52,13 @@
 - [v1.18.4 ThirdPartyDialog.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/apps/control/ThirdPartyDialog.cpp#L231-L418): 자동 표시에서는 취소 버튼을 숨기고 `OnCancel()`도 `OnOK()`를 호출한다. 따라서 창의 X는 적용 없는 닫기가 아니다. `OnOK()`의 `ApplyTemplates()`가 선택된 호환성 템플릿을 적용한다. 수동으로 연 창의 취소 처리와 구별해야 한다.
 - [v1.18.4 Box.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/apps/control/Box.cpp#L1690-L1793): 적용은 전역 `Template=`을 추가하고, 항목을 거절하면 `TemplateReject=`를 기록한다. 후자는 현재 SIDETALK 허용 목록에 없으므로 단순한 우회책으로 안내하지 않는다.
 - [v1.18.4 SbieIni.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/apps/control/SbieIni.cpp#L382-L415): 설정 변경은 서비스 IPC를 통해 저장한다. 호환성 창을 닫은 후 별도 적용 버튼을 누르지 않아도 전역 설정이 바뀔 수 있다.
+
+## 승인된 재발 방지 — v1.18.4
+
+- [UserSettings.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/apps/control/UserSettings.cpp): CUserSettings는 서비스가 반환한 사용자 섹션에 SbieCtrl_ 접두사의 옵션을 저장한다. 현재 사용자 값이 없으면 UserSettings_Default를 조회한다. UserSettings_Portable의 공유 범위는 개별 사용자 범위로 단정하지 않는다.
+- [ThirdPartyDialog.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/apps/control/ThirdPartyDialog.cpp): AutoRunSoftCompat의 변경은 모달 대화 종료 후 저장되며 ApplyTemplates와 별개다. 옵션 변경만으로 열린 대화의 템플릿 적용을 취소하지 않는다.
+- [MyFrame.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/apps/control/MyFrame.cpp): SbieCtrl은 생성 시 자동 검사 옵션을 읽고 타이머에서 호환성 대화를 연다. 열린 관리 UI의 캐시 상태를 고려해야 한다.
+- [SbieIni query.c](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/apps/ini/query.c), [update.c](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/apps/ini/update.c): 공식 명령 도구의 설정별 쓰기 및 조회 경로. 종료 코드 0은 파일/API 재검사의 대체 근거가 아니다.
+- [SbieIni service](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/svc/sbieiniserver.cpp): 실제 INI 경로와 현재 사용자 섹션 결정, 설정 변경 권한, 저장 후 refresh를 처리한다. SIDETALK는 별도 Start /reload 반복이나 보안 기능 완화를 수행하지 않는다.
+- [SandMan.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/SandboxiePlus/SandMan/SandMan.cpp): SandMan의 Qt 설정은 SbieCtrl의 사용자별 AutoRunSoftCompat 옵션과 같은 설정으로 취급하지 않는다.
+- [sbieiniwire.h](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/svc/sbieiniwire.h)와 [defines.h](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/common/defines.h): GetPath 응답의 WCHAR 오프셋은 10, GetUser의 고정 섹션 버퍼는 40자입니다. 문자열 뒤의 미초기화 패딩은 값으로 읽지 않습니다. GetUser의 admin은 UAC 제한 토큰도 포함하므로 앱의 실제 권한 검사를 대체하지 않습니다.

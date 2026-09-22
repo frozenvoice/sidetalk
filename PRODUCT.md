@@ -16,7 +16,7 @@ A Windows user keeping the existing official KakaoTalk main account running, whi
 
 ## Workflow and constraints
 
-Korean GUI: prerequisites, setup guidance, launch, stop, process state. No automatic data deletion. Never control another box or the main KakaoTalk. Never copy/read account or chat data. Login and device verification happen in the official app. No app patching, custom hooking, handle unlocking, authentication bypass, or security-feature disabling. Installation, system configuration changes, and real-account tests require explicit confirmation. Process existence never proves login success.
+Korean GUI: prerequisites, setup guidance, launch, stop, process state. No automatic data deletion. Never control another box or the main KakaoTalk. Never copy/read account or chat data. Login and device verification happen in the official app. No app patching, custom hooking, handle unlocking, authentication bypass, or security-feature disabling. Installation and real-account tests require explicit confirmation. The app presents an explicit first approval for its narrow setup/repair scope; later recurrence repair requires stored opt-in consent for the same verified scope. Process existence never proves login success.
 
 ## Brand commitments
 

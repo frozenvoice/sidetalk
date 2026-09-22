@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Sidetalk.Core;
 
-public sealed class SidetalkController : ISidetalkController
+public sealed partial class SidetalkController : ISidetalkController
 {
     private readonly ProfileStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -19,12 +19,12 @@ public sealed class SidetalkController : ISidetalkController
     private volatile bool disposed;
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
-    public SidetalkController(bool readOnly = false) : this(new ProfileStore(), new ProcessCommandRunner(), new SidetalkRuntime(), new ProcessCommandRecovery(), readOnly: readOnly) { }
+    public SidetalkController(bool readOnly = false) : this(new ProfileStore(), new ProcessCommandRunner(), new SidetalkRuntime(), new ProcessCommandRecovery(), readOnly: readOnly, setupEnvironment: new WindowsSetupRecoveryEnvironment()) { }
     public SidetalkController(ProfileStore store) : this(store, new ProcessCommandRunner()) { }
     public SidetalkController(ProfileStore store, ISidetalkCommandRunner commandRunner)
-        : this(store, commandRunner, new SidetalkRuntime(), new ProcessCommandRecovery()) { }
+        : this(store, commandRunner, new SidetalkRuntime(), new ProcessCommandRecovery(), setupEnvironment: new WindowsSetupRecoveryEnvironment()) { }
     public SidetalkController(ProfileStore store, ISidetalkCommandRunner commandRunner, ISidetalkRuntime runtime,
-        ICommandProcessRecovery recovery, TimeSpan? commandTimeout = null, bool readOnly = false)
+        ICommandProcessRecovery recovery, TimeSpan? commandTimeout = null, bool readOnly = false, ISetupRecoveryEnvironment? setupEnvironment = null)
     {
         this.store = store;
         this.commandRunner = commandRunner ?? throw new ArgumentNullException(nameof(commandRunner));
@@ -33,6 +33,7 @@ public sealed class SidetalkController : ISidetalkController
         this.commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(12);
         this.readOnly = readOnly;
         journal = new CommandJournal(store.Root);
+        setupRecovery = setupEnvironment is null ? null : new SetupRecovery(store, setupEnvironment);
     }
 
     public async Task<AppSnapshot> InspectAsync()
@@ -57,22 +58,24 @@ public sealed class SidetalkController : ISidetalkController
             kakao = runtime.Kakao();
             sandboxie = runtime.Sandboxie();
             profile = store.Load();
-            try { runtime.RequireHost(); }
+            if (setupRecovery?.HasUnfinishedRecovery == true)
+                return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 초기 설정 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
+            try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
             catch (Exception ex) { return Blocked("지원 실행 환경을 확인해주세요", ex.Message); }
             if (!kakao.Available || !sandboxie.Available)
                 return Snapshot(Readiness.MissingDependency, "실행 준비가 필요해요", !sandboxie.Available ? "Sandboxie Plus를 확인한 뒤 전용 환경을 설정하세요." : "공식 카카오톡의 설치 경로와 서명을 확인하세요.");
             if (!RuntimeVerifier.MatchesVersion(sandboxie.Version, RuntimeVerifier.PlusVersion))
                 return Blocked("Sandboxie 버전 검토가 필요해요", "이 빌드는 Sandboxie Plus 1.18.4의 API·설정을 기준으로 작성되었습니다.");
             if (profile is null)
-                return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정에서 설정 파일을 내보내고 내용을 확인하세요. 다른 샌드박스는 가져오지 않습니다.");
+                return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정 · 진단에서 변경 내용을 확인하고 복구하고 실행 준비를 누르세요.");
             using var api = runtime.Open(sandboxie);
             serviceIdentity = api.ServiceIdentity;
             var config = api.ReadConfiguration(profile.BoxName);
             if (config.ExplicitBox.Count == 0)
-                return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "내보낸 전용 환경 설정을 Sandboxie Plus에 추가한 뒤 새로고침하세요.");
+                return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "초기 설정 · 진단에서 필요한 전용 환경 설정과 복구 가능 여부를 확인하세요.");
             var policy = IsolationPolicy.Validate(profile, config);
             if (!policy.Safe)
-                return Blocked("격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 다른 샌드박스나 전역 설정은 변경하지 마세요.", policy.Issues);
+                return Blocked("격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.", policy.Issues);
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Blocked("저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
             currentConfigurationVerified = true;
@@ -106,6 +109,12 @@ public sealed class SidetalkController : ISidetalkController
                     detail, checks, processes, canStop: true);
             }
             processPolicy = ProcessPolicyStatus.NoProcesses;
+            if (setupRecovery is not null)
+            {
+                var preparation = setupRecovery.Inspect();
+                if (!preparation.IsHealthy)
+                    return Blocked("설정 준비를 확인해주세요", preparation.Summary, preparation.Blockers.Concat(preparation.Evidence).ToArray());
+            }
             return Snapshot(Readiness.Ready,
                 lifecycle.Outcome == CommandLifecycleOutcome.LaunchFailed ? "보조 카카오톡을 실행하지 못했어요" : "보조 카카오톡 실행 준비",
                 lifecycle.Action is not null ? lifecycle.Message : "현재 구성과 빈 상자를 확인했습니다. 새 실행 전 설정을 다시 검사합니다.",
@@ -153,6 +162,7 @@ public sealed class SidetalkController : ISidetalkController
         {
             return await Task.Run(() =>
             {
+                if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store);
                 ProfileStore.RejectReparseAncestors(folder);
                 var profile = store.Create();
                 var destination = Path.Combine(Path.GetFullPath(folder), $"{profile.BoxName}-{DateTime.Now:yyyyMMdd-HHmmss}.ini");
@@ -227,7 +237,14 @@ public sealed class SidetalkController : ISidetalkController
     {
         var snapshot = await InspectAsync();
         ProfileStore.RejectReparseAncestors(path);
-        var report = new { SidetalkVersion = "0.1.4", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var preparation = setupRecovery is null ? null : await InspectSetupRecoveryAsync();
+        var setupReport = preparation is null ? null : new
+        {
+            preparation.PlanRevision, preparation.State, preparation.Summary, preparation.AllowAutomatic,
+            Changes = preparation.Changes.Select(change => new { change.Section, change.Key, change.Description }).ToArray(),
+            preparation.Blockers, preparation.BackupPath, preparation.HistoryPath
+        };
+        var report = new { SetupRecovery = setupReport, SidetalkVersion = "0.1.5", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, RunningProcessEffectiveRulesVerified = false, AccountLogin = "미검증",
                 SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증",
                 MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };
@@ -248,6 +265,7 @@ public sealed class SidetalkController : ISidetalkController
     public void Dispose()
     {
         disposed = true;
+        setupCancellation.Cancel();
         // Do not synchronously wait for the WPF continuation that owns this gate.
         // Its finally block releases the handle after its last inspection/wait.
         if (!gate.Wait(0)) return;

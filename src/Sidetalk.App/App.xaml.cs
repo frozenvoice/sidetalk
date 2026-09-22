@@ -83,6 +83,7 @@ public partial class App : Application
             // LaunchAsync or StopAsync here, so external applications are untouched.
             var snapshot = await controller.InspectAsync();
             window.ApplySnapshot(snapshot);
+            window.ApplyRecoveryPlan(await controller.InspectSetupRecoveryAsync());
             window.Show();
             await Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.Render);
             window.RenderToPng(path);

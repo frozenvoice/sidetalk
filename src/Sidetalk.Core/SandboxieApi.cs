@@ -4,8 +4,10 @@ using System.Text;
 namespace Sidetalk.Core;
 
 public sealed record BoxProcess(int Id, string ImageName, string UserSid, uint SessionId);
+public sealed record SandboxieIniPath(string Path, bool IsHomePath);
+public sealed record SandboxieUser(string Section, string Name, bool IsAdmin);
 
-/// <summary>Only read-only Sandboxie exports. No hooks, injection, configuration writes or arbitrary PID termination.</summary>
+/// <summary>Strictly read-only Sandboxie native boundary; mutations are performed by verified SbieIni.exe.</summary>
 public sealed class SandboxieApi : IDisposable
 {
     private readonly IntPtr library;
@@ -14,11 +16,13 @@ public sealed class SandboxieApi : IDisposable
     private readonly QueryProcess queryProcess;
     private readonly QueryBoxPath queryBoxPath;
     private readonly QueryProcessPath queryProcessPath;
+    private readonly CallServer callServer;
+    private readonly FreeMem freeMem;
+
     public SandboxieApi(string directory)
     {
         var path = Path.Combine(directory, "SbieDll.dll");
         RuntimeVerifier.RequireComponent(path);
-        // Resolve dependencies only from this verified installation directory and System32.
         library = LoadLibraryEx(path, IntPtr.Zero, 0x00000100 | 0x00000800);
         if (library == IntPtr.Zero) throw new InvalidOperationException("Sandboxie API를 불러올 수 없습니다. x64 설치와 서비스를 확인하세요.");
         try
@@ -26,21 +30,41 @@ public sealed class SandboxieApi : IDisposable
             var driverVersion = new StringBuilder(16);
             RequireSuccess(Export<GetVersion>("SbieApi_GetVersion")(driverVersion), "활성 드라이버 버전 조회");
             if (!RuntimeVerifier.MatchesVersion(driverVersion.ToString(), RuntimeVerifier.DriverVersion))
-                throw new InvalidDataException("활성 드라이버 버전이 공식 1.18.4 설치본의 검토 기준 5.73.2와 다릅니다.");
+                throw new InvalidDataException("활성 드라이버 버전이 검토된 Sandboxie 설치본과 다릅니다.");
             queryConf = Export<QueryConf>("SbieApi_QueryConf");
             enumProcesses = Export<EnumProcesses>("SbieApi_EnumProcessEx");
             queryProcess = Export<QueryProcess>("SbieApi_QueryProcess");
             queryBoxPath = Export<QueryBoxPath>("SbieApi_QueryBoxPath");
             queryProcessPath = Export<QueryProcessPath>("SbieApi_QueryProcessPath");
+            callServer = Export<CallServer>("SbieDll_CallServer");
+            freeMem = Export<FreeMem>("SbieDll_FreeMem");
         }
         catch { FreeLibrary(library); throw; }
     }
+
     private T Export<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
+
     public Dictionary<string, string[]> ReadSection(string section, bool includeTemplates = true) =>
         new SandboxieConfigurationReader(Query).ReadSection(section, includeTemplates);
+
     public ConfigurationLayers ReadConfiguration(string boxName) =>
         new SandboxieConfigurationReader(Query).ReadConfiguration(boxName);
-    public string? Query(string section, string? key, uint index = 0)
+
+    public Dictionary<string, IReadOnlyDictionary<string, string[]>> ReadAllSections(bool includeTemplates = false)
+    {
+        var result = new Dictionary<string, IReadOnlyDictionary<string, string[]>>(StringComparer.OrdinalIgnoreCase)
+        { ["GlobalSettings"] = ReadSection("GlobalSettings", includeTemplates) };
+        for (uint index = 0; index < 4096; index++)
+        {
+            var section = Query(null, null, index | SandboxieConfigurationReader.WithoutTemplatesGlobalsOrExpansion);
+            if (section is null) return result;
+            if (string.IsNullOrWhiteSpace(section) || !result.TryAdd(section, ReadSection(section, includeTemplates)))
+                throw new InvalidDataException("Sandboxie 설정 섹션이 중복되거나 비어 있습니다.");
+        }
+        throw new InvalidDataException("Sandboxie 설정 섹션 개수 제한을 초과했습니다.");
+    }
+
+    public string? Query(string? section, string? key, uint index = 0)
     {
         var value = new StringBuilder(16384);
         var status = queryConf(section, key, index, value, (uint)value.Capacity * 2);
@@ -48,15 +72,46 @@ public sealed class SandboxieApi : IDisposable
         RequireSuccess(status, "설정 조회");
         return value.ToString();
     }
+
+    // v1.18.4 sbieiniwire.h: default native alignment (WCHAR at offset 10,
+    // BOXNAME_COUNT=40). Replies have trailing allocation padding; stop at NUL.
+    public SandboxieIniPath QueryConfigurationLocation() =>
+        SandboxieServiceReply.Path(CallReadOnlyService(0x1802));
+
+    public SandboxieUser QueryUserSettingsSection() =>
+        SandboxieServiceReply.User(CallReadOnlyService(0x1801));
+
+    private byte[] CallReadOnlyService(int messageId)
+    {
+        var request = Marshal.AllocHGlobal(8);
+        Marshal.WriteInt32(request, 0, 8);
+        Marshal.WriteInt32(request, 4, messageId);
+        IntPtr reply = IntPtr.Zero;
+        try
+        {
+            reply = callServer(request);
+            if (reply == IntPtr.Zero) throw new InvalidOperationException("Sandboxie 서비스 응답이 없습니다.");
+            var length = Marshal.ReadInt32(reply, 0);
+            if (length < 8 || length > 1024 * 1024) throw new InvalidDataException("Sandboxie 서비스 응답 길이가 유효하지 않습니다.");
+            RequireSuccess(Marshal.ReadInt32(reply, 4), "읽기 전용 서비스 조회");
+            var bytes = new byte[length];
+            Marshal.Copy(reply, bytes, 0, length);
+            return bytes;
+        }
+        finally
+        {
+            if (reply != IntPtr.Zero) freeMem(reply);
+            Marshal.FreeHGlobal(request);
+        }
+    }
     public IReadOnlyList<BoxProcess> Processes(BoxProfile profile)
     {
         var pids = new uint[512];
         uint count = 512;
         RequireSuccess(enumProcesses(profile.BoxName, true, uint.MaxValue, pids, ref count), "전용 환경 프로세스 조회");
-        // With a non-null count pointer, EnumProcessEx writes IDs from index 0 (drv/process_api.c).
         if (count >= 512) throw new InvalidDataException("프로세스 목록이 잘렸습니다. 상태를 확정할 수 없습니다.");
         var result = new List<BoxProcess>();
-        var boxPaths = Paths(profile.BoxName);
+        var boxPaths = count == 0 ? (File: string.Empty, Key: string.Empty, Ipc: string.Empty) : Paths(profile.BoxName);
         for (var i = 0; i < count; i++)
         {
             var box = new StringBuilder(34);
@@ -79,6 +134,7 @@ public sealed class SandboxieApi : IDisposable
         }
         return result;
     }
+
     public (string File, string Key, string Ipc) Paths(string boxName)
     {
         var file = new StringBuilder(16384);
@@ -86,12 +142,13 @@ public sealed class SandboxieApi : IDisposable
         var ipc = new StringBuilder(16384);
         uint fileLength = 32768, keyLength = 32768, ipcLength = 32768;
         RequireSuccess(queryBoxPath(boxName, file, key, ipc, ref fileLength, ref keyLength, ref ipcLength), "격리 경로 조회");
-        if (!key.ToString().Contains(boxName, StringComparison.OrdinalIgnoreCase) ||
-            !ipc.ToString().Contains(boxName, StringComparison.OrdinalIgnoreCase))
+        if (!key.ToString().Contains(boxName, StringComparison.OrdinalIgnoreCase) || !ipc.ToString().Contains(boxName, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("전용 환경 이름이 없는 레지스트리/IPC 경로는 사용하지 않습니다.");
         return (file.ToString(), key.ToString(), ipc.ToString());
     }
+
     public string FileRoot(string boxName) => Paths(boxName).File;
+
     public static bool SameNativePath(string actual, string expected)
     {
         if (actual.StartsWith(@"\??\", StringComparison.Ordinal)) actual = actual[4..];
@@ -103,23 +160,22 @@ public sealed class SandboxieApi : IDisposable
         }
         return actual.TrimEnd('\\').Equals(expected.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
     }
+
     private static void RequireSuccess(int status, string action)
     {
         if (status != 0) throw new InvalidOperationException($"Sandboxie {action} 실패 (0x{status:X8}). 서비스·드라이버와 설정을 확인하세요.");
     }
+
     public void Dispose() => FreeLibrary(library);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int GetVersion([Out] StringBuilder version);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int QueryConf([MarshalAs(UnmanagedType.LPWStr)] string section, [MarshalAs(UnmanagedType.LPWStr)] string? setting, uint index, [Out] StringBuilder value, uint valueLength);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int EnumProcesses([MarshalAs(UnmanagedType.LPWStr)] string box, [MarshalAs(UnmanagedType.U1)] bool allSessions, uint session, [Out] uint[] pids, ref uint count);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int QueryProcess(IntPtr processId, [Out] StringBuilder box, [Out] StringBuilder image, [Out] StringBuilder sid, out uint session);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int QueryBoxPath([MarshalAs(UnmanagedType.LPWStr)] string box, [Out] StringBuilder file, [Out] StringBuilder key, [Out] StringBuilder ipc, ref uint fileLength, ref uint keyLength, ref uint ipcLength);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    private delegate int QueryProcessPath(IntPtr pid, [Out] StringBuilder file, [Out] StringBuilder key, [Out] StringBuilder ipc, ref uint fileLength, ref uint keyLength, ref uint ipcLength);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int GetVersion([Out] StringBuilder version);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int QueryConf([MarshalAs(UnmanagedType.LPWStr)] string? section, [MarshalAs(UnmanagedType.LPWStr)] string? setting, uint index, [Out] StringBuilder value, uint valueLength);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate IntPtr CallServer(IntPtr request);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate void FreeMem(IntPtr data);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int EnumProcesses([MarshalAs(UnmanagedType.LPWStr)] string box, [MarshalAs(UnmanagedType.U1)] bool allSessions, uint session, [Out] uint[] pids, ref uint count);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int QueryProcess(IntPtr processId, [Out] StringBuilder box, [Out] StringBuilder image, [Out] StringBuilder sid, out uint session);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int QueryBoxPath([MarshalAs(UnmanagedType.LPWStr)] string box, [Out] StringBuilder file, [Out] StringBuilder key, [Out] StringBuilder ipc, ref uint fileLength, ref uint keyLength, ref uint ipcLength);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)] private delegate int QueryProcessPath(IntPtr pid, [Out] StringBuilder file, [Out] StringBuilder key, [Out] StringBuilder ipc, ref uint fileLength, ref uint keyLength, ref uint ipcLength);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool FreeLibrary(IntPtr module);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint QueryDosDevice(string device, StringBuilder target, int max);

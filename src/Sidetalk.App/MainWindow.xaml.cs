@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -18,9 +19,19 @@ public partial class MainWindow : Window
     private readonly ISidetalkController _controller;
     private readonly DispatcherTimer _inspectionTimer;
     private readonly ObservableCollection<string> _checks = new();
+    private readonly ObservableCollection<string> _recoveryChanges = new();
+    private readonly ObservableCollection<string> _recoveryAffected = new();
+    private readonly ObservableCollection<string> _recoveryPreserved = new();
     private AppSnapshot? _lastSnapshot;
+    private SetupRecoveryPlan? _recoveryPlan;
     private bool _inspectionInFlight;
     private bool _actionInFlight;
+    private bool _operationInFlight;
+    private bool _automaticRecoveryAttempted;
+    private string? _automaticRecoveryFailureScopeFingerprint;
+    private bool _suppressRecoveryChoiceChange;
+    private bool _automaticRecoveryChoiceDirty;
+    private bool _initialRecoveryShown;
     private readonly bool _isRenderMode;
 
     public MainWindow(ISidetalkController controller, bool isRenderMode = false)
@@ -30,6 +41,10 @@ public partial class MainWindow : Window
         InitializeComponent();
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         ChecksList.ItemsSource = _checks;
+        RecoveryChangesList.ItemsSource = _recoveryChanges;
+        RecoveryAffectedList.ItemsSource = _recoveryAffected;
+        RecoveryPreservedList.ItemsSource = _recoveryPreserved;
+        ApplyActionAvailability();
 
         _inspectionTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -37,6 +52,7 @@ public partial class MainWindow : Window
         };
         _inspectionTimer.Tick += InspectionTimer_Tick;
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
     }
 
@@ -45,10 +61,23 @@ public partial class MainWindow : Window
         if (!_isRenderMode)
         {
             _inspectionTimer.Start();
-            await InspectAndApplyAsync();
+            await InspectAndApplyAsync(allowAutomaticRecovery: true);
         }
     }
 
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_operationInFlight)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                this,
+                "현재 설정 복구나 저장 작업이 진행 중입니다. 진행 단계가 끝난 뒤 창을 닫아 주세요.",
+                "SIDETALK 작업 진행 중",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _inspectionTimer.Stop();
@@ -56,35 +85,80 @@ public partial class MainWindow : Window
 
     private async void InspectionTimer_Tick(object? sender, EventArgs e)
     {
-        await InspectAndApplyAsync();
+        await InspectAndApplyAsync(allowAutomaticRecovery: true);
     }
 
     private async void InspectButton_Click(object sender, RoutedEventArgs e)
     {
-        await InspectAndApplyAsync();
+        await InspectAndApplyAsync(allowAutomaticRecovery: true);
     }
 
-    private async Task InspectAndApplyAsync()
+    private async Task InspectAndApplyAsync(bool allowAutomaticRecovery = false)
     {
-        if (_inspectionInFlight)
+        if (_isRenderMode || _inspectionInFlight || _operationInFlight)
         {
             return;
         }
 
         _inspectionInFlight = true;
-        InspectButton.IsEnabled = false;
+        ApplyActionAvailability();
         try
         {
             ApplySnapshot(await _controller.InspectAsync());
+            ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
+
+            if (allowAutomaticRecovery &&
+                !_isRenderMode &&
+                !_automaticRecoveryAttempted &&
+                _recoveryPlan is { State: SetupRecoveryState.AutomaticallyApplicable, AllowAutomatic: true, RequiresApproval: false })
+            {
+                await RunAutomaticRecoveryAsync();
+            }
         }
         catch (Exception exception)
         {
             ApplyError(exception);
+            SetRecoveryResult($"복구 상태를 확인하지 못했습니다: {ReadableException(exception)}");
         }
         finally
         {
             _inspectionInFlight = false;
-            InspectButton.IsEnabled = true;
+            ApplyActionAvailability();
+        }
+    }
+
+    private async Task RunAutomaticRecoveryAsync()
+    {
+        if (_isRenderMode || _automaticRecoveryAttempted || _operationInFlight)
+        {
+            return;
+        }
+
+        _automaticRecoveryAttempted = true;
+        ClearStaleSnapshot("동일한 검증 범위의 복구를 준비하고 있습니다.");
+        _operationInFlight = true;
+        SetRecoveryProgress("복구 준비 중…");
+        ApplyActionAvailability();
+
+        try
+        {
+            var progress = new Progress<string>(SetRecoveryProgress);
+            ApplySnapshot(await _controller.PrepareAutomaticallyAsync(progress));
+            ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
+            SetRecoveryResult("자동 복구를 마쳤습니다. 카카오톡은 자동으로 실행하지 않습니다.");
+            _automaticRecoveryAttempted = false;
+            _automaticRecoveryFailureScopeFingerprint = null;
+        }
+        catch (Exception exception)
+        {
+            ApplyError(exception);
+            SetRecoveryResult($"자동 복구를 완료하지 못했습니다: {ReadableException(exception)}");
+            _automaticRecoveryFailureScopeFingerprint = _recoveryPlan?.ScopeFingerprint;
+        }
+        finally
+        {
+            _operationInFlight = false;
+            RecoveryProgressText.Visibility = Visibility.Collapsed;
             ApplyActionAvailability();
         }
     }
@@ -144,6 +218,297 @@ public partial class MainWindow : Window
         ApplyActionAvailability();
     }
 
+    public void ApplyRecoveryPlan(SetupRecoveryPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        var samePlan = _recoveryPlan is not null &&
+            SameApproval(_recoveryPlan, plan);
+        if (!samePlan)
+        {
+            _automaticRecoveryChoiceDirty = false;
+        }
+
+        _recoveryPlan = plan;
+        if (_automaticRecoveryFailureScopeFingerprint is not null &&
+            !string.Equals(_automaticRecoveryFailureScopeFingerprint, plan.ScopeFingerprint, StringComparison.Ordinal))
+        {
+            _automaticRecoveryAttempted = false;
+            _automaticRecoveryFailureScopeFingerprint = null;
+        }
+        if (plan.IsHealthy)
+        {
+            _automaticRecoveryAttempted = false;
+            _automaticRecoveryFailureScopeFingerprint = null;
+        }
+
+
+        if (!_initialRecoveryShown && plan.CanApply && plan.RequiresApproval && !_isRenderMode)
+        {
+            MainTabs.SelectedIndex = 1;
+            _initialRecoveryShown = true;
+        }
+
+        var showPanel = !plan.IsHealthy || plan.AllowAutomatic;
+        RecoveryPanel.Visibility = showPanel ? Visibility.Visible : Visibility.Collapsed;
+        RecoveryStateText.Text = RecoveryStateLabel(plan.State);
+        RecoverySummaryText.Text = string.IsNullOrWhiteSpace(plan.Summary)
+            ? "현재 설정을 확인했습니다."
+            : plan.Summary;
+
+        _recoveryChanges.Clear();
+        foreach (var change in plan.Changes.Where(change => !change.IsNoOp && change.Kind != SetupRecoveryChangeKind.AddOwnedBoxSetting))
+        {
+            _recoveryChanges.Add(FormatRecoveryChange(change));
+        }
+
+        var ownedChanges = plan.Changes.Count(change => !change.IsNoOp && change.Kind == SetupRecoveryChangeKind.AddOwnedBoxSetting);
+        if (ownedChanges > 0)
+            _recoveryChanges.Add($"SIDETALK 전용 환경 생성: 표시된 전용 저장 경로에 격리 설정 {ownedChanges}개 적용 · 기존 데이터 보존");
+
+        if (_recoveryChanges.Count == 0)
+        {
+            _recoveryChanges.Add(plan.IsHealthy ? "변경할 설정이 없습니다." : "확인된 변경 항목이 없습니다.");
+        }
+
+        _recoveryAffected.Clear();
+        var evidenceTargets = plan.Evidence
+            .Where(text => !plan.Changes.Any(change => text == change.Section + "." + change.Key))
+            .Select(SafeRecoveryText)
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var evidence in evidenceTargets)
+        {
+            _recoveryAffected.Add("영향 확인: " + evidence);
+        }
+
+        _recoveryAffected.Add(evidenceTargets.Any(text => text.StartsWith("관리 UI 종료 대상:", StringComparison.Ordinal))
+            ? "열린 Sandboxie 관리 창: 위에 표시된 종료 대상은 승인 후 닫힙니다."
+            : "열린 Sandboxie 관리 창: 확인된 종료 대상이 없습니다.");
+
+
+        _recoveryPreserved.Clear();
+        _recoveryPreserved.Add("서비스·드라이버·Start.exe·메인 카카오톡·다른 Sandboxie 상자는 종료하거나 변경하지 않습니다.");
+        _recoveryPreserved.Add("보조 계정과 대화 데이터는 삭제하거나 복사하지 않습니다.");
+        _recoveryPreserved.Add("profile.json·소유 식별자·전용 저장 공간과 미완료 명령 기록을 보존합니다.");
+        _recoveryPreserved.Add("확인된 범위 밖의 설정과 데이터는 건드리지 않습니다.");
+
+        var safeBlockers = plan.Blockers.Select(SafeRecoveryText).Where(text => !string.IsNullOrWhiteSpace(text)).ToArray();
+        RecoveryBlockerText.Text = safeBlockers.Length == 0
+            ? string.Empty
+            : "진행할 수 없는 이유: " + string.Join(" · ", safeBlockers);
+        RecoveryBlockerText.Visibility = safeBlockers.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (!samePlan || !_automaticRecoveryChoiceDirty)
+        {
+            _suppressRecoveryChoiceChange = true;
+            try
+            {
+                AutomaticRecoveryCheckBox.IsChecked = plan.AllowAutomatic;
+            }
+            finally
+            {
+                _suppressRecoveryChoiceChange = false;
+            }
+        }
+        RecoveryBackupText.Text = string.IsNullOrWhiteSpace(plan.BackupPath)
+            ? string.Empty
+            : "백업 위치: " + plan.BackupPath;
+        if (!samePlan) { SetRecoveryResult(string.Empty); }
+        ApplyActionAvailability();
+    }
+
+    private async void PrepareRecoveryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRenderMode || _operationInFlight || _recoveryPlan is not { CanApply: true } plan)
+        {
+            return;
+        }
+
+        ClearStaleSnapshot("복구를 준비하고 있습니다. 기존 실행 가능 상태는 해제했습니다.");
+        _operationInFlight = true;
+        SetRecoveryProgress("설정 백업 중…");
+        ApplyActionAvailability();
+
+        try
+        {
+            var progress = new Progress<string>(SetRecoveryProgress);
+            ApplySnapshot(await _controller.PrepareAsync(
+                plan,
+                AutomaticRecoveryCheckBox.IsChecked == true,
+                progress));
+            ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
+            SetRecoveryResult("복구가 완료되었습니다. 카카오톡은 자동으로 실행하지 않습니다.");
+        }
+        catch (Exception exception)
+        {
+            ApplyError(exception);
+            SetRecoveryResult($"복구를 완료하지 못했습니다: {ReadableException(exception)}");
+        }
+        finally
+        {
+            _operationInFlight = false;
+            RecoveryProgressText.Visibility = Visibility.Collapsed;
+            ApplyActionAvailability();
+        }
+    }
+
+    private async void RevokeAutomaticButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRenderMode || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
+        {
+            return;
+        }
+
+        ClearStaleSnapshot("자동 복구 설정을 해제하고 있습니다.");
+        _operationInFlight = true;
+        SetRecoveryProgress("자동 복구 동의 해제 중…");
+        ApplyActionAvailability();
+
+        try
+        {
+            await _controller.RevokeAutomaticRecoveryAsync();
+            SetRecoveryResult("자동 복구 동의를 해제했습니다.");
+        }
+        catch (Exception exception)
+        {
+            ApplyError(exception);
+            SetRecoveryResult($"자동 복구 동의를 해제하지 못했습니다: {ReadableException(exception)}");
+        }
+        finally
+        {
+            _operationInFlight = false;
+            RecoveryProgressText.Visibility = Visibility.Collapsed;
+            ApplyActionAvailability();
+        }
+
+        await InspectAndApplyAsync(allowAutomaticRecovery: true);
+    }
+
+    private void OpenRecoveryHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isRenderMode || _operationInFlight)
+        {
+            return;
+        }
+
+        try
+        {
+            var historyPath = _controller.RecoveryHistoryPath;
+            if (string.IsNullOrWhiteSpace(historyPath) || historyPath.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("복구 내역의 로컬 폴더를 확인할 수 없습니다.");
+            }
+
+            var fullPath = Path.GetFullPath(historyPath);
+            var folder = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            {
+                throw new DirectoryNotFoundException("복구 내역의 로컬 폴더를 확인할 수 없습니다.");
+            }
+
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+            SetRecoveryResult("복구 내역 폴더를 열었습니다.");
+        }
+        catch (Exception exception)
+        {
+            SetRecoveryResult($"복구 내역 폴더를 열지 못했습니다: {ReadableException(exception)}");
+        }
+    }
+
+    private void AutomaticRecoveryCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_suppressRecoveryChoiceChange)
+        {
+            _automaticRecoveryChoiceDirty = true;
+        }
+    }
+    private void SetRecoveryProgress(string message)
+    {
+        RecoveryProgressText.Text = message;
+        RecoveryProgressText.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void SetRecoveryResult(string message)
+    {
+        RecoveryResultText.Text = message;
+        RecoveryResultText.ToolTip = message;
+    }
+
+    private void ClearStaleSnapshot(string detail)
+    {
+        _lastSnapshot = null;
+        StatusTitleText.Text = "작업 진행 중";
+        StatusBadgeText.Text = "진행 중";
+        StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
+        StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
+        StatusDetailText.Text = detail;
+        PolicyDetailText.Text = detail;
+        PolicySummaryText.Visibility = Visibility.Collapsed;
+    }
+
+    private static string SafeRecoveryText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) ||
+            text.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("소유 식별자", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("ScopeFingerprint", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        if (text.Contains("완료되지 않은 복구 기록", StringComparison.Ordinal))
+        {
+            return "완료되지 않은 복구 기록이 있어 먼저 상태를 확인해야 합니다.";
+        }
+
+        return text;
+    }
+    private static bool SameApproval(SetupRecoveryPlan left, SetupRecoveryPlan right) =>
+        left.ScopeFingerprint == right.ScopeFingerprint && left.State == right.State &&
+        left.IsFirstSetup == right.IsFirstSetup && left.IsReconciliation == right.IsReconciliation &&
+        left.InterruptedOperationId == right.InterruptedOperationId && left.RequiresApproval == right.RequiresApproval &&
+        left.AllowAutomatic == right.AllowAutomatic && left.Changes.Count == right.Changes.Count &&
+        left.Changes.Zip(right.Changes).All(pair => pair.First.Identity == pair.Second.Identity &&
+            pair.First.Kind == pair.Second.Kind && pair.First.CurrentValues.SequenceEqual(pair.Second.CurrentValues) &&
+            pair.First.DesiredValues.SequenceEqual(pair.Second.DesiredValues));
+
+    private static string FormatRecoveryChange(SetupRecoveryChange change)
+    {
+        if (change.Kind == SetupRecoveryChangeKind.RemoveGlobalTemplate)
+            return "GlobalSettings의 Template 제거: " + string.Join(", ", change.CurrentValues.Except(change.DesiredValues, StringComparer.OrdinalIgnoreCase));
+        if (change.Kind == SetupRecoveryChangeKind.SetUserSetting && change.Key == "SbieCtrl_AutoRunSoftCompat")
+            return $"현재 사용자({change.Section})의 SbieCtrl_AutoRunSoftCompat=n · 자동 호환성 팝업 재발 방지";
+        var description = SafeRecoveryText(change.Description);
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            description = $"{change.Section} · {change.Key}";
+        }
+
+        return $"• {description} ({RecoveryChangeLabel(change.Kind)})";
+    }
+
+    private static string RecoveryChangeLabel(SetupRecoveryChangeKind kind) => kind switch
+    {
+        SetupRecoveryChangeKind.RemoveGlobalTemplate => "검토된 전역 항목 제거",
+        SetupRecoveryChangeKind.SetUserSetting => "현재 사용자 설정 적용",
+        SetupRecoveryChangeKind.RemoveUserSetting => "현재 사용자 설정 제거",
+        SetupRecoveryChangeKind.AddOwnedBoxSetting => "전용 box 설정 추가",
+        SetupRecoveryChangeKind.RepairOwnedBoxSetting => "전용 box 설정 복구",
+        _ => "검토된 설정 변경"
+    };
+
+    private static string RecoveryStateLabel(SetupRecoveryState state) => state switch
+    {
+        SetupRecoveryState.Healthy => "정상",
+        SetupRecoveryState.FirstSetup => "최초 준비",
+        SetupRecoveryState.ApprovalRequired => "승인 필요",
+        SetupRecoveryState.AutomaticallyApplicable => "자동 복구 가능",
+        SetupRecoveryState.Blocked => "복구 차단",
+        SetupRecoveryState.Interrupted => "중단 복구 검토",
+        SetupRecoveryState.Applied => "복구 완료",
+        SetupRecoveryState.Failed => "복구 실패",
+        _ => "확인 중"
+    };
     public void PrepareRender(bool setupTab, bool compactWindow)
     {
         if (setupTab)
@@ -215,7 +580,7 @@ public partial class MainWindow : Window
 
     private async void LaunchButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_actionInFlight || _lastSnapshot is not { ActionsPermitted: true, CanLaunch: true })
+        if (_isRenderMode || _actionInFlight || _operationInFlight || _lastSnapshot is not { ActionsPermitted: true, CanLaunch: true })
         {
             return;
         }
@@ -233,12 +598,13 @@ public partial class MainWindow : Window
         }
 
         _actionInFlight = true;
+        _operationInFlight = true;
+        ClearStaleSnapshot("실행 요청을 보내고 있습니다.");
         ApplyActionAvailability();
         try
         {
             await _controller.LaunchAsync();
             StatusDetailText.Text = "실행 요청을 보냈습니다. 프로세스 상태를 다시 확인하고 있습니다.";
-            await InspectAndApplyAsync();
         }
         catch (Exception exception)
         {
@@ -246,14 +612,16 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _operationInFlight = false;
             _actionInFlight = false;
             ApplyActionAvailability();
+            await InspectAndApplyAsync(allowAutomaticRecovery: true);
         }
     }
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_actionInFlight || _lastSnapshot is not { ActionsPermitted: true, CanStop: true })
+        if (_isRenderMode || _actionInFlight || _operationInFlight || _lastSnapshot is not { ActionsPermitted: true, CanStop: true })
         {
             return;
         }
@@ -271,12 +639,13 @@ public partial class MainWindow : Window
         }
 
         _actionInFlight = true;
+        _operationInFlight = true;
+        ClearStaleSnapshot("전용 상자를 종료하고 있습니다.");
         ApplyActionAvailability();
         try
         {
             await _controller.StopAsync();
             StatusDetailText.Text = "전용 상자의 종료 요청을 보냈습니다. 저장 데이터는 삭제하지 않았습니다.";
-            await InspectAndApplyAsync();
         }
         catch (Exception exception)
         {
@@ -284,13 +653,20 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _operationInFlight = false;
             _actionInFlight = false;
             ApplyActionAvailability();
+            await InspectAndApplyAsync(allowAutomaticRecovery: true);
         }
     }
 
     private async void ExportSetupButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isRenderMode || _operationInFlight || _inspectionInFlight)
+        {
+            return;
+        }
+
         var dialog = new OpenFolderDialog
         {
             Title = "전용 INI를 저장할 새 폴더 선택",
@@ -302,7 +678,9 @@ public partial class MainWindow : Window
         }
 
         SetSetupResult("전용 INI 파일을 저장하는 중…");
-        ExportSetupButton.IsEnabled = false;
+        _operationInFlight = true;
+        ClearStaleSnapshot("전용 INI를 저장하고 있습니다.");
+        ApplyActionAvailability();
         try
         {
             var path = await _controller.ExportSetupAsync(dialog.FolderName);
@@ -314,12 +692,19 @@ public partial class MainWindow : Window
         }
         finally
         {
-            ExportSetupButton.IsEnabled = true;
+            _operationInFlight = false;
+            ApplyActionAvailability();
+            await InspectAndApplyAsync();
         }
     }
 
     private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isRenderMode || _operationInFlight || _inspectionInFlight)
+        {
+            return;
+        }
+
         var dialog = new SaveFileDialog
         {
             Title = "진단 JSON 저장",
@@ -334,9 +719,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (File.Exists(dialog.FileName)) { SetSetupResult("기존 진단 파일은 덮어쓰지 않습니다. 새 파일 이름을 선택하세요."); return; }
+        if (File.Exists(dialog.FileName))
+        {
+            SetSetupResult("기존 진단 파일은 덮어쓰지 않습니다. 새 파일 이름을 선택하세요.");
+            return;
+        }
+
         SetSetupResult("진단 JSON을 저장하는 중…");
-        ExportDiagnosticsButton.IsEnabled = false;
+        _operationInFlight = true;
+        ClearStaleSnapshot("진단 JSON을 저장하고 있습니다.");
+        ApplyActionAvailability();
         try
         {
             var path = await _controller.ExportDiagnosticsAsync(dialog.FileName);
@@ -348,7 +740,9 @@ public partial class MainWindow : Window
         }
         finally
         {
-            ExportDiagnosticsButton.IsEnabled = true;
+            _operationInFlight = false;
+            ApplyActionAvailability();
+            await InspectAndApplyAsync();
         }
     }
 
@@ -364,6 +758,7 @@ public partial class MainWindow : Window
 
     private void OpenOfficialPage(string url, string description)
     {
+        if (_isRenderMode) return;
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
@@ -376,8 +771,16 @@ public partial class MainWindow : Window
 
     private void ApplyActionAvailability()
     {
-        LaunchButton.IsEnabled = !_actionInFlight && _lastSnapshot is { ActionsPermitted: true, CanLaunch: true };
-        StopButton.IsEnabled = !_actionInFlight && _lastSnapshot is { ActionsPermitted: true, CanStop: true };
+        var busy = _isRenderMode || _inspectionInFlight || _operationInFlight || _actionInFlight;
+        LaunchButton.IsEnabled = !busy && _lastSnapshot is { ActionsPermitted: true, CanLaunch: true } && _recoveryPlan is { IsHealthy: true };
+        StopButton.IsEnabled = !busy && _lastSnapshot is { ActionsPermitted: true, CanStop: true };
+        InspectButton.IsEnabled = !busy;
+        ExportSetupButton.IsEnabled = !busy;
+        ExportDiagnosticsButton.IsEnabled = !busy;
+        PrepareRecoveryButton.IsEnabled = !busy && _recoveryPlan is { CanApply: true };
+        AutomaticRecoveryCheckBox.IsEnabled = !busy && _recoveryPlan is { RequiresApproval: true };
+        RevokeAutomaticButton.IsEnabled = !busy && _recoveryPlan is { AllowAutomatic: true };
+        OpenRecoveryHistoryButton.IsEnabled = !busy;
     }
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)

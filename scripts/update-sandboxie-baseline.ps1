@@ -159,3 +159,19 @@ foreach ($sectionName in $selectedNames) {
 Write-Output "Generated $jsonPath"
 Write-Output "Generated $fixturePath"
 Write-Output "Source SHA-256: $actualSha256"
+
+# Recovery selectors are never policy allow-list entries. Their exact upstream
+# definitions are pinned solely to recognize a reviewed removable conflict.
+$recoveryNames = @('WindowsRasMan', 'OnScreenKeyboard', 'WindowsLive', 'Edge_Fix', 'OfficeLicensing', 'OfficeClickToRun')
+$recoverySections = [ordered]@{}
+foreach ($name in $recoveryNames) {
+    $sectionName = "Template_$name"
+    if (-not $allSections.Contains($sectionName)) { throw "Missing recovery template: $sectionName" }
+    $configuration = Get-Configuration -Lines $allSections[$sectionName]
+    if ($configuration.Contains('Template')) { throw "Nested recovery template requires review: $sectionName" }
+    $recoverySections[$sectionName] = $allSections[$sectionName]
+}
+$recoveryPath = Resolve-RepositoryPath -Root $rootFull -RelativePath 'src/Sidetalk.Core/RecoveryTemplates.json'
+$recoveryJson = Convert-ToJsonObject -Sections $recoverySections | ConvertTo-Json -Depth 20
+[IO.File]::WriteAllText($recoveryPath, $recoveryJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+Write-Output "Generated $recoveryPath"
