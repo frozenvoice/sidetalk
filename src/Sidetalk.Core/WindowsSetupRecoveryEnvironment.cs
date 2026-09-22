@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Security.Principal;
 using System.Text;
 
@@ -446,7 +447,7 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
 
     private static string QueryProcessSid(IntPtr process)
     {
-        if (!OpenProcessToken(process, 0x0008, out var token)) throw new InvalidOperationException("Sandboxie 관리 도구 토큰을 열지 못했습니다.");
+        if (!OpenProcessToken(process, 0x0008, out var token)) { token?.Dispose(); throw new InvalidOperationException("Sandboxie 관리 도구 토큰을 열지 못했습니다."); }
         using (token)
         using (var identity = new WindowsIdentity(token.DangerousGetHandle()))
             return identity.User?.Value ?? throw new InvalidDataException("Sandboxie 관리 도구 SID가 없습니다.");
@@ -493,11 +494,6 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetProcessTimes(IntPtr process, out NativeFileTime creation, out NativeFileTime exit, out NativeFileTime kernel, out NativeFileTime user);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeTokenHandle token);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeAccessTokenHandle token);
 
-    private sealed class SafeTokenHandle(IntPtr handle) : SafeHandle(handle, true)
-    {
-        public override bool IsInvalid => handle == IntPtr.Zero || handle == new IntPtr(-1);
-        protected override bool ReleaseHandle() => CloseHandle(handle);
-    }
 }

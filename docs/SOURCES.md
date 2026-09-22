@@ -62,3 +62,7 @@
 - [SbieIni service](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/svc/sbieiniserver.cpp): 실제 INI 경로와 현재 사용자 섹션 결정, 설정 변경 권한, 저장 후 refresh를 처리한다. SIDETALK는 별도 Start /reload 반복이나 보안 기능 완화를 수행하지 않는다.
 - [SandMan.cpp](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/SandboxiePlus/SandMan/SandMan.cpp): SandMan의 Qt 설정은 SbieCtrl의 사용자별 AutoRunSoftCompat 옵션과 같은 설정으로 취급하지 않는다.
 - [sbieiniwire.h](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/core/svc/sbieiniwire.h)와 [defines.h](https://github.com/sandboxie-plus/Sandboxie/blob/v1.18.4/Sandboxie/common/defines.h): GetPath 응답의 WCHAR 오프셋은 10, GetUser의 고정 섹션 버퍼는 40자입니다. 문자열 뒤의 미초기화 패딩은 값으로 읽지 않습니다. GetUser의 admin은 UAC 제한 토큰도 포함하므로 앱의 실제 권한 검사를 대체하지 않습니다.
+
+## Windows 토큰 조회 핸들 — 0.1.6
+
+- [Microsoft OpenProcessToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken): 프로세스는 QUERY_LIMITED_INFORMATION으로 열고 토큰은 TOKEN_QUERY만 요청한다. 성공 시 반환된 토큰 핸들은 해제해야 하며, 실패를 정상 신원으로 취급하지 않는다. SIDETALK는 .NET의 SafeAccessTokenHandle로 이 소유권을 관리한다.

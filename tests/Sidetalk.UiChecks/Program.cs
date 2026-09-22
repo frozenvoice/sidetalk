@@ -26,15 +26,31 @@ internal static class Program
 
         var app = new App();
         app.InitializeComponent();
+        var repository = new DirectoryInfo(AppContext.BaseDirectory);
+        while (repository is not null && !File.Exists(Path.Combine(repository.FullName, "src", "Sidetalk.App", "Assets", "Sidetalk.ico"))) repository = repository.Parent;
+        if (repository is null) throw new InvalidOperationException("Repository icon resource not found.");
+        IconResourceChecks.VerifySourceAndWpfResource(Path.Combine(repository.FullName, "src", "Sidetalk.App", "Assets", "Sidetalk.ico"));
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var output = Path.GetFullPath(args[0]);
         Directory.CreateDirectory(output);
+        InspectionDiagnostics.OutputDirectoryOverride = output;
+        InspectionDiagnostics.Clear();
 
         var baseSnapshot = CreateSnapshot();
         RenderBasicFixtures(app, output, baseSnapshot);
         RenderRecoveryFixtures(app, output, baseSnapshot);
         AssertInterruptedChoiceReset(baseSnapshot);
+        RunRefreshFailureFixtures(baseSnapshot);
+        var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
+        File.WriteAllText(invalidLogDirectory, "fixture");
+        InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;
+        try
+        {
+            InspectionDiagnostics.Record("log-write-failure-fixture", new IOException("fixture log failure"), persist: true);
+            Assert(InspectionDiagnostics.Snapshot().Any(failure => failure.Stage == "log-write-failure-fixture"), "Logging failure escaped or lost in-memory evidence");
+        }
+        finally { InspectionDiagnostics.OutputDirectoryOverride = output; }
 
         app.Shutdown();
     }
@@ -280,6 +296,62 @@ internal static class Program
 
     }
 
+    private static void RunRefreshFailureFixtures(AppSnapshot snapshot)
+    {
+        InspectionDiagnostics.Clear();
+        var actionableSnapshot = snapshot with { CanStop = true };
+        using (var mainController = new PreviewController(actionableSnapshot, CreateHealthyPlan()))
+        {
+            var window = new MainWindow(mainController, isRenderMode: false);
+            window.ApplySnapshot(actionableSnapshot);
+            window.ApplyRecoveryPlan(CreateHealthyPlan());
+            mainController.FailInspect = true;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+
+            Assert(((TextBlock)window.FindName("StatusDetailText")).Text.Contains("마지막 확인 결과", StringComparison.Ordinal), "Main inspection failure did not label last check");
+            Assert(((TextBlock)window.FindName("RefreshSummaryText")).Text.Contains("마지막 확인", StringComparison.Ordinal), "Main inspection failure lost last-check timestamp");
+            Assert(!((Button)window.FindName("LaunchButton")).IsEnabled, "Main inspection failure left launch enabled");
+            Assert(!((Button)window.FindName("StopButton")).IsEnabled, "Main inspection failure left stop enabled");
+
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((TextBlock)window.FindName("RefreshSummaryText")).Text.Contains("마지막 확인", StringComparison.Ordinal), "Repeated main failure lost its last-check label");
+            Assert(((TextBlock)window.FindName("BoxNameText")).Text == actionableSnapshot.BoxName, "Repeated main failure discarded the last observation");
+            Assert(!((Button)window.FindName("LaunchButton")).IsEnabled, "Repeated failure restored stale launch");
+            mainController.FailInspect = false;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((Button)window.FindName("LaunchButton")).IsEnabled, "Main inspection retry did not restore launch");
+            Assert(((Button)window.FindName("StopButton")).IsEnabled, "Main inspection retry did not restore stop");
+            Assert(mainController.InspectCount >= 2, "Main inspection retry did not call controller again");
+        }
+
+        var runningSnapshot = actionableSnapshot with { State = Readiness.RunningUnverified, BoxProcessIds = [12345], CanLaunch = false, ProcessPolicy = ProcessPolicyStatus.EffectiveRulesUnverified };
+        using (var recoveryController = new PreviewController(runningSnapshot, CreateApprovalPlan()))
+        {
+            var window = new MainWindow(recoveryController, isRenderMode: false);
+            window.ApplySnapshot(actionableSnapshot);
+            window.ApplyRecoveryPlan(CreateApprovalPlan());
+            recoveryController.FailRecoveryInspect = true;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+
+            Assert(((TextBlock)window.FindName("StatusTitleText")).Text.Contains("실행 중", StringComparison.Ordinal), "Recovery failure hid the fresh running observation");
+            Assert(((TextBlock)window.FindName("StatusDetailText")).Text.Contains("복구", StringComparison.Ordinal), "Recovery inspection failure did not identify its stage");
+            Assert(((TextBlock)window.FindName("ProcessIdsText")).Text.Contains("12345", StringComparison.Ordinal), "Recovery failure lost the observed process");
+            Assert(((TextBlock)window.FindName("BoxNameText")).Text == actionableSnapshot.BoxName, "Recovery inspection failure discarded fresh box evidence");
+            Assert(((TextBlock)window.FindName("CheckedAtText")).Text == actionableSnapshot.CheckedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"), "Recovery inspection failure discarded fresh timestamp");
+            Assert(!((Button)window.FindName("StopButton")).IsEnabled, "Recovery inspection failure left stop enabled");
+            Assert(!((Button)window.FindName("PrepareRecoveryButton")).IsEnabled, "Recovery inspection failure left recovery enabled");
+
+            recoveryController.FailRecoveryInspect = false;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((Button)window.FindName("StopButton")).IsEnabled, "Recovery inspection retry did not restore stop");
+            Assert(((Button)window.FindName("PrepareRecoveryButton")).IsEnabled, "Recovery inspection retry did not restore recovery");
+            Assert(recoveryController.RecoveryInspectCount >= 2, "Recovery inspection retry did not call controller again");
+        }
+
+        var failures = InspectionDiagnostics.Snapshot();
+        Assert(failures.Any(failure => failure.Stage == "main-inspection"), "Main inspection failure was not recorded");
+        Assert(failures.Any(failure => failure.Stage == "recovery-inspection"), "Recovery inspection failure was not recorded");
+    }
     private static void RenderWindow(
         App app,
         string output,
@@ -447,6 +519,9 @@ internal sealed class PreviewController : ISidetalkController
     private readonly SetupRecoveryPlan _plan;
     private readonly bool _failPrepare;
 
+    public bool FailInspect { get; set; }
+    public bool FailRecoveryInspect { get; set; }
+
     public PreviewController(AppSnapshot snapshot, SetupRecoveryPlan plan, bool failPrepare = false)
     {
         _snapshot = snapshot;
@@ -455,12 +530,26 @@ internal sealed class PreviewController : ISidetalkController
     }
 
     public int WritableCallCount { get; private set; }
+    public int InspectCount { get; private set; }
+    public int RecoveryInspectCount { get; private set; }
 
     public string RecoveryHistoryPath => _plan.HistoryPath;
 
-    public Task<AppSnapshot> InspectAsync() => Task.FromResult(_snapshot);
+    public Task<AppSnapshot> InspectAsync()
+    {
+        InspectCount++;
+        if (FailInspect)
+            throw new InvalidOperationException("preview main inspect failure");
+        return Task.FromResult(_snapshot);
+    }
 
-    public Task<SetupRecoveryPlan> InspectSetupRecoveryAsync() => Task.FromResult(_plan);
+    public Task<SetupRecoveryPlan> InspectSetupRecoveryAsync()
+    {
+        RecoveryInspectCount++;
+        if (FailRecoveryInspect)
+            throw new InvalidOperationException("preview recovery inspect failure");
+        return Task.FromResult(_plan);
+    }
 
     public Task<AppSnapshot> PrepareAsync(
         SetupRecoveryPlan approvedPlan,

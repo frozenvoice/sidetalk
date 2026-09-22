@@ -51,6 +51,7 @@ public sealed partial class SidetalkController : ISidetalkController
         RuntimeVerifier.ServiceVerification? serviceIdentity = null;
         var currentConfigurationVerified = false;
         var processPolicy = ProcessPolicyStatus.NotObserved;
+        InspectionFailure? inspectionFailure = null;
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
@@ -61,7 +62,7 @@ public sealed partial class SidetalkController : ISidetalkController
             if (setupRecovery?.HasUnfinishedRecovery == true)
                 return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 초기 설정 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
             try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
-            catch (Exception ex) { return Blocked("지원 실행 환경을 확인해주세요", ex.Message); }
+            catch (Exception ex) { inspectionFailure = InspectionFailure.Capture("실행 환경 조회", ex); return Blocked("지원 실행 환경을 확인해주세요", "일반 사용자 실행 환경을 확인하지 못했습니다. 탐색기에서 run-local.cmd로 열고 다시 확인해 주세요."); }
             if (!kakao.Available || !sandboxie.Available)
                 return Snapshot(Readiness.MissingDependency, "실행 준비가 필요해요", !sandboxie.Available ? "Sandboxie Plus를 확인한 뒤 전용 환경을 설정하세요." : "공식 카카오톡의 설치 경로와 서명을 확인하세요.");
             if (!RuntimeVerifier.MatchesVersion(sandboxie.Version, RuntimeVerifier.PlusVersion))
@@ -122,7 +123,10 @@ public sealed partial class SidetalkController : ISidetalkController
         }
         catch (Exception ex)
         {
-            return Snapshot(Readiness.Unknown, "상태를 확인할 수 없어요", ex.Message);
+            inspectionFailure = InspectionFailure.Capture("상태 조회", ex);
+            return Snapshot(Readiness.Unknown, "상태 확인 실패", ex is InvalidDataException
+                ? "현재 상태를 확인하지 못했습니다: " + InspectionFailure.Sanitize(ex.Message)
+                : "현재 실행 상태를 확인하지 못했습니다. 상태 새로 확인으로 다시 시도하거나 진단을 저장해 주세요.");
         }
 
         AppSnapshot Blocked(string title, string detail, IReadOnlyList<string>? issues = null)
@@ -133,7 +137,7 @@ public sealed partial class SidetalkController : ISidetalkController
             IReadOnlyList<BoxProcess>? processes = null, bool canLaunch = false, bool canStop = false) =>
             new(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
                 processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop,
-                DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed);
+                DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed) { InspectionFailure = inspectionFailure };
     }
 
     private void RecoverPending(BoxProfile profile, string startExe)
@@ -235,16 +239,24 @@ public sealed partial class SidetalkController : ISidetalkController
 
     public async Task<string> ExportDiagnosticsAsync(string path)
     {
-        var snapshot = await InspectAsync();
         ProfileStore.RejectReparseAncestors(path);
-        var preparation = setupRecovery is null ? null : await InspectSetupRecoveryAsync();
+        var failures = new List<InspectionFailure>();
+        AppSnapshot? snapshot = null;
+        SetupRecoveryPlan? preparation = null;
+        try { snapshot = await InspectAsync(); if (snapshot.InspectionFailure is { } failure) failures.Add(failure); }
+        catch (Exception error) { failures.Add(InspectionFailure.Capture("상태 조회", error)); }
+        if (setupRecovery is not null)
+        {
+            try { preparation = await InspectSetupRecoveryAsync(); }
+            catch (Exception error) { failures.Add(InspectionFailure.Capture("복구 상태 조회", error)); }
+        }
         var setupReport = preparation is null ? null : new
         {
             preparation.PlanRevision, preparation.State, preparation.Summary, preparation.AllowAutomatic,
             Changes = preparation.Changes.Select(change => new { change.Section, change.Key, change.Description }).ToArray(),
             preparation.Blockers, preparation.BackupPath, preparation.HistoryPath
         };
-        var report = new { SetupRecovery = setupReport, SidetalkVersion = "0.1.5", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { InspectionFailures = failures, SetupRecovery = setupReport, SidetalkVersion = "0.1.6", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, RunningProcessEffectiveRulesVerified = false, AccountLogin = "미검증",
                 SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증",
                 MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };

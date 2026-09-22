@@ -10,7 +10,10 @@ public sealed record AppSnapshot(
     DateTimeOffset CheckedAt, RuntimeVerifier.ServiceVerification? ServiceIdentity = null,
     bool CurrentConfigurationVerified = false,
     ProcessPolicyStatus ProcessPolicy = ProcessPolicyStatus.NotObserved,
-    bool ActionsPermitted = true);
+    bool ActionsPermitted = true)
+{
+    public InspectionFailure? InspectionFailure { get; init; }
+}
 
 public interface ISidetalkController : IDisposable
 {

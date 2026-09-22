@@ -1,3 +1,34 @@
+# 검증 결과 — 0.1.6 / 2026-09-22
+
+## 토큰 핸들·조회 오류 구분·앱 아이콘 후속 수정
+
+`codex/approved-setup-recovery`의 `607d93dfecade9489de37d64e9a14f53ae6b32f4`에서 이어서 수정했다. 시작 당시 로컬/원격 HEAD가 같고 작업 트리는 깨끗했다. 실행 중인 배포본은 0.1.5였고 EXE/DLL의 ProductVersion에는 이전 빌드 기준 `46dd793`이 표시됐다. 파일 해시와 시작 전 파일 시각을 기록했으며 바이너리가 검토 커밋과 같다고 추정하지 않았다.
+
+기존 배포 DLL에서 실제 Windows 호출을 실행해 **System.MissingMethodException: .ctor**를 재현했다. 공식 설치의 실행 중 SbieCtrl을 읽는 `CaptureManagementProcesses → CaptureProcess → QueryProcessSid(Int32) → QueryProcessSid(IntPtr) → OpenProcessToken` 경로이며 기존 소스 449행에서 발생했다. 사용자 정의 `SafeTokenHandle`의 out 마샬링에 필요한 인자 없는 생성자가 없었다. 프레임워크 `SafeAccessTokenHandle`로 교체했고 성공·실패·예외 경로에서 토큰을 해제한다. 실행 경로·서명·버전·사용자·세션·PID·생성 시각 검사는 유지했다.
+
+상태 조회와 복구 조회 오류를 분리했다. 복구 조회만 실패하면 같은 주기에 확인한 프로세스·설치 정보·확인 시각은 유지하고 복구 단계에 실패를 표시한다. 상태 조회 자체가 실패하면 남은 관찰을 마지막 확인으로 표시한다. 필요한 검사 실패 중에는 실행·강제 종료·복구 권한을 해제하며 재시도 성공 후 새 결과로만 복원한다. 내부 메시지 .ctor를 기본 화면에 단독 표시하지 않는다. 진단에는 발생 단계·예외 타입·메시지·내부 예외·스택을 남기며 사용자 경로·SID·소유 토큰 표식은 가린다. 로그 저장 실패가 UI 상태를 다시 실패시키지 않게 한다.
+
+기존 헤더의 라임색 이중 말풍선으로 투명 ICO의 16/24/32/48/64/128/256 프레임을 생성했다. EXE ApplicationIcon과 WPF의 명시적 assembly pack URI를 연결한다. CMD 파일의 아이콘을 바꾸는 작업이 아니다.
+
+### 이번 검증
+
+- 실제 Windows TOKEN_QUERY 현재 프로세스 조회·SID 일치·해제 및 잘못된 프로세스 핸들 실패 검사를 포함한 콘솔 회귀 **123/123 통과**. 토큰이나 SID 값은 출력하지 않는다.
+- 수정된 DLL로 현재 실행 중인 공식 **SbieCtrl** 신원 조회에 성공했다. 현재 사용자/세션, 서명·버전·경로 및 생성 시각을 확인했고 조회 중 종료·설정 쓰기는 하지 않았다. SandMan은 실행 중이지 않아 실제 프로세스 조회를 수행하지 않았다.
+- WPF 회귀에서 정상 관찰 뒤 복구만 실패, 상태 조회 실패와 반복 실패, 재시도 후 정상 회복, 실행·종료·복구 권한 차단, 로그 저장 실패를 확인했다. 기존 14개 fixture와 읽기 전용 검사도 통과했다.
+- ICO의 7개 크기와 투명도, WPF pack 리소스와 원본의 바이트 일치, EXE의 실제 RT_GROUP_ICON/RT_ICON 내용 일치를 검사했다. 작업 디렉터리를 리소스 경로로 사용하지 않는다.
+- 기존 루트 `build-local.cmd -NoLaunch -NoPause`의 self-contained 배포 검증으로 앱·시험 도구 빌드, 콘솔 검사, 두 프로젝트 publish와 ZIP 생성을 완료했다. 앱·시험 도구 빌드는 경고·오류 0이다. 최종 self-contained EXE의 아이콘 7개도 원본과 일치했다. 일반 사용자 화면 관찰 결과는 아래 후속 기록을 참고한다.
+
+초기 관찰 뒤 사용자가 카카오톡과 관리 UI를 모두 닫았다가 다시 열었다고 알려왔다. 그 재실행 이후의 PID·생성 시각을 별도 보존 기준으로 기록했다. 에이전트는 카카오톡·SbieCtrl·SandMan을 종료하거나 새로 실행하지 않았다. 사용자에게 SIDETALK 창만 정상 종료하도록 요청하고 프로세스가 없는 것을 확인한 뒤 기존 보호 절차로 전체 배포 폴더를 교체했다. 교체 후에도 재실행 기준의 카카오톡 2개와 SbieCtrl의 PID·생성 시각·세션이 유지됐다. 프로필·전용 box·계정 데이터·명령 저널·복구 이력은 변경하거나 초기화하지 않았다.
+
+Windows 화면 검증 도구는 초기화와 재시도 모두 `helper_unknown_error: apply deny-read ACLs`로 실패했다. WPF fixture, 실제 Windows 네이티브 호출, EXE 리소스 검사는 화면에서 본 일반 사용자 실행 결과와 구분한다. 제목 표시줄·작업표시줄·Alt+Tab·탐색기의 실제 표시 및 일반 사용자 run-local.cmd 최종 실행의 확인 여부는 최종 결과에 별도로 기록한다. 카카오톡 로그인·송수신은 이번 후속 수정에서 시험하지 않는다.
+
+### 일반 사용자 최종 확인
+
+사용자는 탐색기에서 루트 `run-local.cmd`를 실행한 뒤 **상태 표시와 제목 표시줄·작업표시줄·Alt+Tab·탐색기 EXE의 라임색 말풍선 아이콘이 모두 정상**이라고 확인했다. 이는 사용자 화면 관찰에 근거한 결과다. 실행 프로세스의 경로는 최종 배포 폴더의 `Sidetalk.exe`이고 버전은 0.1.6이며, 배포 파일의 SHA-256을 별도로 기록했다. 화면 도구로 직접 관찰한 결과로 취급하지 않는다.
+
+최종 배포는 수정된 소스로 커밋 직전에 빌드되어 ProductVersion의 소스 접미사는 부모 커밋 `607d93d`이다. 이 접미사만으로 바이너리 동일성을 주장하지 않으며 EXE·App DLL·Core DLL 및 ZIP 해시는 `token-fix-package.json`에 기록했다. 이후 변경은 검증 문서뿐이다. 실제 실행 중 SandMan 조회, 이번 버전의 카카오톡 로그인·송수신, 실제 승인 복구에 따른 관리 UI 종료·설정 쓰기는 이번 후속 검증 범위에 포함하지 않았다.
+로컬 근거: `artifacts/verification/token-fix-before-*.txt`, `token-fix-baseline.json`, `token-fix-user-reopened-baseline.json`, `token-fix-build*.txt`, `token-fix-native-after.json`, `token-fix-package.json`, `token-fix-ui-checks/`. 생성물과 개인 환경 자료는 커밋하지 않는다.
+
 # 검증 결과 — 0.1.5 / 2026-09-22
 
 ## 초기 설정·승인된 복구·재발 방지

@@ -82,8 +82,21 @@ public partial class App : Application
             // Render mode performs one read-only inspection. MainWindow never calls
             // LaunchAsync or StopAsync here, so external applications are untouched.
             var snapshot = await controller.InspectAsync();
-            window.ApplySnapshot(snapshot);
-            window.ApplyRecoveryPlan(await controller.InspectSetupRecoveryAsync());
+            if (snapshot.InspectionFailure is { } failure)
+            {
+                window.ApplyMainInspectionFailure(failure);
+                exitCode = 1;
+            }
+            else
+            {
+                window.ApplySnapshot(snapshot);
+                try { window.ApplyRecoveryPlan(await controller.InspectSetupRecoveryAsync()); }
+                catch (Exception error)
+                {
+                    window.ApplyRecoveryInspectionError(error);
+                    exitCode = 1;
+                }
+            }
             window.Show();
             await Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.Render);
             window.RenderToPng(path);

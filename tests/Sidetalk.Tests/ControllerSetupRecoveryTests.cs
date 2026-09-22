@@ -13,7 +13,8 @@ internal static class ControllerSetupRecoveryTests
         ("Setup controller: unfinished Start command prevents configuration writes", PendingCommandBlocks),
         ("Setup controller: two instances serialize repair with command lease", TwoInstancesSerialize),
         ("Setup controller: launch requires recurrence prevention approval", LaunchRequiresPreparation),
-        ("Setup controller: revocation verifies host before creating journals", RevocationRequiresHost)
+        ("Setup controller: revocation verifies host before creating journals", RevocationRequiresHost),
+        ("Setup controller: diagnostic preserves running observation when recovery fails", DiagnosticPreservesRunningObservation)
     ];
 
     private static void ReadOnlyNeverWrites()
@@ -112,6 +113,26 @@ internal static class ControllerSetupRecoveryTests
         Assert.False(Directory.Exists(Path.Combine(h.Store.Root, "command-journal")));
         Assert.False(Directory.Exists(Path.Combine(h.Store.Root, "setup-recovery")));
     }
+    private static void DiagnosticPreservesRunningObservation()
+    {
+        var h = new Harness("setup-controller-diagnostic-stage", needsRepair: false);
+        h.Runtime.ProcessIds = [12345];
+        h.Environment.InspectionError = new MissingMethodException(".ctor");
+        using var controller = h.Controller(readOnly: true);
+        var path = Path.Combine(h.Store.Root, "diagnostics.json");
+        controller.ExportDiagnosticsAsync(path).GetAwaiter().GetResult();
+        using var report = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        var snapshot = report.RootElement.GetProperty("snapshot");
+        Assert.Equal("RunningUnverified", snapshot.GetProperty("State").GetString());
+        Assert.True(snapshot.GetProperty("Kakao").GetProperty("Available").GetBoolean());
+        Assert.Equal(12345, snapshot.GetProperty("BoxProcessIds")[0].GetInt32());
+        var failure = report.RootElement.GetProperty("InspectionFailures")[0];
+        Assert.Equal("복구 상태 조회", failure.GetProperty("Stage").GetString());
+        Assert.Equal("System.MissingMethodException", failure.GetProperty("ExceptionType").GetString());
+        Assert.True(failure.GetProperty("StackTrace").GetString()?.Contains("Inspect", StringComparison.Ordinal) == true);
+        Assert.Equal(0, h.Environment.WriteCount);
+        Assert.Equal(0, h.Runner.Starts);
+    }
     private sealed class Harness
     {
         public ProfileStore Store { get; }
@@ -135,9 +156,11 @@ internal static class ControllerSetupRecoveryTests
         private string option = needsRepair ? "y" : "n";
         public int WriteCount { get; private set; }
         public bool IgnoreWrite { get; set; }
+        public Exception? InspectionError { get; set; }
         public Action? BeforeWrite { get; set; }
         public SetupRecoveryObservation Inspect(ProfileStore requested, BoxProfile? observed, CancellationToken cancellationToken = default)
         {
+            if (InspectionError is not null) throw InspectionError;
             Assert.Equal(store, requested);
             Assert.Equal(profile, observed);
             var globals = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
@@ -174,10 +197,11 @@ internal static class ControllerSetupRecoveryTests
         public DependencyInfo Kakao() => new("카카오톡", Path.Combine(root, "KakaoTalk.exe"), "26.8", "시험", true);
         public DependencyInfo Sandboxie() => new("Sandboxie", Path.Combine(root, "SandMan.exe"), "1.18.4", "시험", true);
         public bool RejectHost { get; set; }
+        public int[] ProcessIds { get; set; } = [];
         public void RequireHost() { if (RejectHost) throw new InvalidOperationException("Unverified host."); }
         public void VerifyCommandFiles(string startExe, string kakaoExe) { }
-        public ISidetalkRuntimeSession Open(DependencyInfo sandboxie) => new Session(profile);
-        private sealed class Session(BoxProfile profile) : ISidetalkRuntimeSession
+        public ISidetalkRuntimeSession Open(DependencyInfo sandboxie) => new Session(profile, ProcessIds);
+        private sealed class Session(BoxProfile profile, int[] processIds) : ISidetalkRuntimeSession
         {
             public RuntimeVerifier.ServiceVerification ServiceIdentity => new(9999, false, "시험", "시험");
             public ConfigurationLayers ReadConfiguration(string boxName)
@@ -187,7 +211,7 @@ internal static class ControllerSetupRecoveryTests
                 return new(box, box, globals, BuiltinTemplates.ExpectedGlobals(globals));
             }
             public string FileRoot(string boxName) => profile.StoragePath;
-            public IReadOnlyList<BoxProcess> Processes(BoxProfile requested) => [];
+            public IReadOnlyList<BoxProcess> Processes(BoxProfile requested) => processIds.Select(id => new BoxProcess(id, "KakaoTalk.exe", profile.UserSid, 1)).ToArray();
             public void Dispose() { }
         }
     }
