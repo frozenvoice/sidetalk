@@ -10,7 +10,10 @@ public sealed record AppSnapshot(
     DateTimeOffset CheckedAt, RuntimeVerifier.ServiceVerification? ServiceIdentity = null,
     bool CurrentConfigurationVerified = false,
     ProcessPolicyStatus ProcessPolicy = ProcessPolicyStatus.NotObserved,
-    bool ActionsPermitted = true);
+    bool ActionsPermitted = true)
+{
+    public InspectionFailure? InspectionFailure { get; init; }
+}
 
 public interface ISidetalkController : IDisposable
 {
@@ -19,4 +22,9 @@ public interface ISidetalkController : IDisposable
     Task LaunchAsync();
     Task StopAsync();
     Task<string> ExportDiagnosticsAsync(string path);
+    Task<SetupRecoveryPlan> InspectSetupRecoveryAsync();
+    Task<AppSnapshot> PrepareAsync(SetupRecoveryPlan approvedPlan, bool allowAutomatic, IProgress<string>? progress = null);
+    Task<AppSnapshot> PrepareAutomaticallyAsync(IProgress<string>? progress = null);
+    Task RevokeAutomaticRecoveryAsync();
+    string RecoveryHistoryPath { get; }
 }

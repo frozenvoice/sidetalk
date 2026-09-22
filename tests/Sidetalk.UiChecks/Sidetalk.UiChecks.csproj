@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Sidetalk.App/Sidetalk.App.csproj" />
+    <ProjectReference Include="../../src/Sidetalk.Core/Sidetalk.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,67 @@
-# 검증 결과 — 0.1.4 / 2026-09-15
+# 검증 결과 — 0.1.6 / 2026-09-22
+
+## 토큰 핸들·조회 오류 구분·앱 아이콘 후속 수정
+
+`codex/approved-setup-recovery`의 `607d93dfecade9489de37d64e9a14f53ae6b32f4`에서 이어서 수정했다. 시작 당시 로컬/원격 HEAD가 같고 작업 트리는 깨끗했다. 실행 중인 배포본은 0.1.5였고 EXE/DLL의 ProductVersion에는 이전 빌드 기준 `46dd793`이 표시됐다. 파일 해시와 시작 전 파일 시각을 기록했으며 바이너리가 검토 커밋과 같다고 추정하지 않았다.
+
+기존 배포 DLL에서 실제 Windows 호출을 실행해 **System.MissingMethodException: .ctor**를 재현했다. 공식 설치의 실행 중 SbieCtrl을 읽는 `CaptureManagementProcesses → CaptureProcess → QueryProcessSid(Int32) → QueryProcessSid(IntPtr) → OpenProcessToken` 경로이며 기존 소스 449행에서 발생했다. 사용자 정의 `SafeTokenHandle`의 out 마샬링에 필요한 인자 없는 생성자가 없었다. 프레임워크 `SafeAccessTokenHandle`로 교체했고 성공·실패·예외 경로에서 토큰을 해제한다. 실행 경로·서명·버전·사용자·세션·PID·생성 시각 검사는 유지했다.
+
+상태 조회와 복구 조회 오류를 분리했다. 복구 조회만 실패하면 같은 주기에 확인한 프로세스·설치 정보·확인 시각은 유지하고 복구 단계에 실패를 표시한다. 상태 조회 자체가 실패하면 남은 관찰을 마지막 확인으로 표시한다. 필요한 검사 실패 중에는 실행·강제 종료·복구 권한을 해제하며 재시도 성공 후 새 결과로만 복원한다. 내부 메시지 .ctor를 기본 화면에 단독 표시하지 않는다. 진단에는 발생 단계·예외 타입·메시지·내부 예외·스택을 남기며 사용자 경로·SID·소유 토큰 표식은 가린다. 로그 저장 실패가 UI 상태를 다시 실패시키지 않게 한다.
+
+기존 헤더의 라임색 이중 말풍선으로 투명 ICO의 16/24/32/48/64/128/256 프레임을 생성했다. EXE ApplicationIcon과 WPF의 명시적 assembly pack URI를 연결한다. CMD 파일의 아이콘을 바꾸는 작업이 아니다.
+
+### 이번 검증
+
+- 실제 Windows TOKEN_QUERY 현재 프로세스 조회·SID 일치·해제 및 잘못된 프로세스 핸들 실패 검사를 포함한 콘솔 회귀 **123/123 통과**. 토큰이나 SID 값은 출력하지 않는다.
+- 수정된 DLL로 현재 실행 중인 공식 **SbieCtrl** 신원 조회에 성공했다. 현재 사용자/세션, 서명·버전·경로 및 생성 시각을 확인했고 조회 중 종료·설정 쓰기는 하지 않았다. SandMan은 실행 중이지 않아 실제 프로세스 조회를 수행하지 않았다.
+- WPF 회귀에서 정상 관찰 뒤 복구만 실패, 상태 조회 실패와 반복 실패, 재시도 후 정상 회복, 실행·종료·복구 권한 차단, 로그 저장 실패를 확인했다. 기존 14개 fixture와 읽기 전용 검사도 통과했다.
+- ICO의 7개 크기와 투명도, WPF pack 리소스와 원본의 바이트 일치, EXE의 실제 RT_GROUP_ICON/RT_ICON 내용 일치를 검사했다. 작업 디렉터리를 리소스 경로로 사용하지 않는다.
+- 기존 루트 `build-local.cmd -NoLaunch -NoPause`의 self-contained 배포 검증으로 앱·시험 도구 빌드, 콘솔 검사, 두 프로젝트 publish와 ZIP 생성을 완료했다. 앱·시험 도구 빌드는 경고·오류 0이다. 최종 self-contained EXE의 아이콘 7개도 원본과 일치했다. 일반 사용자 화면 관찰 결과는 아래 후속 기록을 참고한다.
+
+초기 관찰 뒤 사용자가 카카오톡과 관리 UI를 모두 닫았다가 다시 열었다고 알려왔다. 그 재실행 이후의 PID·생성 시각을 별도 보존 기준으로 기록했다. 에이전트는 카카오톡·SbieCtrl·SandMan을 종료하거나 새로 실행하지 않았다. 사용자에게 SIDETALK 창만 정상 종료하도록 요청하고 프로세스가 없는 것을 확인한 뒤 기존 보호 절차로 전체 배포 폴더를 교체했다. 교체 후에도 재실행 기준의 카카오톡 2개와 SbieCtrl의 PID·생성 시각·세션이 유지됐다. 프로필·전용 box·계정 데이터·명령 저널·복구 이력은 변경하거나 초기화하지 않았다.
+
+Windows 화면 검증 도구는 초기화와 재시도 모두 `helper_unknown_error: apply deny-read ACLs`로 실패했다. WPF fixture, 실제 Windows 네이티브 호출, EXE 리소스 검사는 화면에서 본 일반 사용자 실행 결과와 구분한다. 제목 표시줄·작업표시줄·Alt+Tab·탐색기의 실제 표시 및 일반 사용자 run-local.cmd 최종 실행의 확인 여부는 최종 결과에 별도로 기록한다. 카카오톡 로그인·송수신은 이번 후속 수정에서 시험하지 않는다.
+
+### 일반 사용자 최종 확인
+
+사용자는 탐색기에서 루트 `run-local.cmd`를 실행한 뒤 **상태 표시와 제목 표시줄·작업표시줄·Alt+Tab·탐색기 EXE의 라임색 말풍선 아이콘이 모두 정상**이라고 확인했다. 이는 사용자 화면 관찰에 근거한 결과다. 실행 프로세스의 경로는 최종 배포 폴더의 `Sidetalk.exe`이고 버전은 0.1.6이며, 배포 파일의 SHA-256을 별도로 기록했다. 화면 도구로 직접 관찰한 결과로 취급하지 않는다.
+
+최종 배포는 수정된 소스로 커밋 직전에 빌드되어 ProductVersion의 소스 접미사는 부모 커밋 `607d93d`이다. 이 접미사만으로 바이너리 동일성을 주장하지 않으며 EXE·App DLL·Core DLL 및 ZIP 해시는 `token-fix-package.json`에 기록했다. 이후 변경은 검증 문서뿐이다. 실제 실행 중 SandMan 조회, 이번 버전의 카카오톡 로그인·송수신, 실제 승인 복구에 따른 관리 UI 종료·설정 쓰기는 이번 후속 검증 범위에 포함하지 않았다.
+로컬 근거: `artifacts/verification/token-fix-before-*.txt`, `token-fix-baseline.json`, `token-fix-user-reopened-baseline.json`, `token-fix-build*.txt`, `token-fix-native-after.json`, `token-fix-package.json`, `token-fix-ui-checks/`. 생성물과 개인 환경 자료는 커밋하지 않는다.
+
+# 검증 결과 — 0.1.5 / 2026-09-22
+
+## 초기 설정·승인된 복구·재발 방지
+
+기준 브랜치는 실제 원격 main과 같았던 `46dd793`이며 별도 `codex/approved-setup-recovery`에서 작업했다. 기존 격리 정책은 완화하지 않았다. 최초 승인 계획, 실제 INI 백업, 현재 사용자 `SbieCtrl_AutoRunSoftCompat=n`, 공식 기준과 일치하는 여섯 전역 템플릿 선택 제거, 필요한 전용 환경 생성, 파일/API 재검사를 추가했다. 동일 범위 자동 복구는 별도 선택 동의를 요구하고 철회할 수 있다. 열린 관리 UI는 승인 화면에 표시된 공식 설치·서명·버전·현재 사용자/세션·PID·생성 시각이 일치할 때만 보유 핸들로 정리한다. 실제 PC의 관리 UI를 종료하는 시험은 하지 않았다.
+
+### 자동 검사와 배포
+
+- Windows에서 루트 `build-local.cmd -NoLaunch -NoPause`로 기존 `scripts/build.ps1 -SelfContained`를 실행했다. Release 앱·IsolationProbe 빌드, 자체 콘솔 테스트, 두 프로젝트 publish와 ZIP/SHA-256 생성을 수행했다. 최종 검사 수는 아래 최종 결과에 기록한다. 컴파일 경고는 오류로 취급한다.
+- 정상 무쓰기, 최초 승인, 같은 범위 재발, 여섯 템플릿의 63가지 비어 있지 않은 부분 집합, 사용자 UI 섹션, 다른 box·알 수 없는 규칙·공식 기준 변조, 오래된 UI/PID 교체, 종료 코드 0 무변경, 백업 실패·취소·외부 변경 경합·부분 생성 후 재시작, 컨트롤러 동시 요청·미완료 Start, 읽기 전용 모드, 데이터 보존을 가짜 외부 경계로 확인한다.
+- 복구 기록은 시작부터 완료까지 연속적인 상태 전이를 검증하며, 손상·중복·고아 완료 기록을 준비 완료로 취급하지 않는다. 자동 복구 동의의 선후관계는 벽시계에 의존하지 않아 시계가 뒤로 바뀌어도 철회가 우선한다.
+- WPF에 예시 상태만 주입한 `tests/Sidetalk.UiChecks`의 fixture 검사로 승인·중단·차단·정상·실패·읽기 전용 화면과 기존 실행 상태를 렌더링했다. 승인 범위 변경 시 체크 해제, 복구 실패 뒤 실행 비활성화, 읽기 전용 동작 금지를 확인했다. 실제 Sandboxie나 계정에 연결한 GUI 시험과 구분한다.
+- 개발 중 컴파일/테스트 실패에서는 기존 0.1.4 배포본이 유지됨을 확인했다. 통과 후에만 0.1.5 self-contained 배포본을 기존 `artifacts/publish/win-x64` 경로로 반영했다. 루트 실행·빌드 파일과 배포 교체·롤백 스크립트는 변경하지 않았다.
+
+### 이 PC에서 수행한 읽기 전용 검사
+
+공식 설치의 SbieDll을 통해 서비스를 조회한 실제 INI는 `C:\WINDOWS\Sandboxie.ini`였다. 경로를 상수로 가정하지 않았고 사용자 섹션 역시 서비스 응답으로 얻었다. 전체 명시적 섹션은 3개였고 실제 파일과 API가 일치했다. 공식 여섯 템플릿의 내용·순서 검사도 통과했다. 현재 전역 Template 선택은 **0개**, 현재 사용자 `SbieCtrl_AutoRunSoftCompat` 값은 **n**이었다. 실제 전용 box API 조회를 실행했고 프로세스는 **0개**였다. 앞서 정책 검사에서 반환된 빈 배열을 재사용하지 않았다.
+
+이 API 검사는 Codex 자식 프로세스에서 수행했다. 물리적 프로필 경로 확인은 Codex/MSIX의 파일 가상화를 감지해 차단했다. Shell을 통해 배포 앱의 읽기 전용 진단을 요청한 시도도 같은 경로 차단을 반환했다. 따라서 이를 일반 사용자 GUI의 Ready로 보고하지 않는다. 네이티브 UI 도구는 실행 도우미의 ACL 초기화 오류로 사용할 수 없었다.
+
+검사 전후 실제 INI의 SHA-256, Codex에서 보이는 프로필의 SHA-256, 기존 본계정 카카오톡의 PID·생성 시각·세션이 모두 같았다. 일반 사용자 프로필과 전체 계정 데이터 무결성까지 확인한 결과는 아니다.
+
+현재 설정이 이미 정상이라 일부러 템플릿을 추가하거나 자동 검사 옵션을 바꾸지 않았다. 실제 SbieIni 쓰기, 실제 관리 UI 종료, 실제 일반 사용자 GUI에서 승인 버튼 클릭과 자동 재발 복구는 **미검증**이다. 카카오톡 실행·로그인·송수신은 이번 작업에서 수행하지 않았다. 아래의 과거 실계정 기록은 이번 변경의 검증 근거로 재사용하지 않는다.
+
+로컬 근거는 `artifacts/verification/setup-recovery-build-*.txt`, `setup-recovery-native-readonly.json`, `setup-recovery-preservation.json`, `setup-recovery-ui-fixtures-*.txt`, `ui-checks/ui-recovery-*-fixture.png`에 둔다. 개인 경로가 포함된 원본·백업·이미지는 Git에서 제외한다.
+
+WPF 회귀 검사는 `dotnet run --project tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release -- artifacts/verification/ui-checks`로 재현한다. 실제 창 조작 없이 WPF 객체에 예시 상태를 주입해 14개 fixture를 생성한다.
+
+### 최종 결과
+
+Release 빌드 경고·오류 0, 자체 콘솔 회귀 **118/118 통과**, WPF 회귀 검사와 **14개 fixture 생성 통과**. 기본 창의 실제 스크롤 가시 영역에 승인 버튼이 완전히 들어오는지도 확인했다. 최종 self-contained ZIP은 `artifacts/SIDETALK-0.1.5-win-x64-self-contained.zip`이며 같은 버전의 배포 폴더를 루트 진입점에서 사용한다. 일반 사용자 GUI의 실제 설정 쓰기와 실계정 검증은 위에 적은 대로 남아 있다.
+
+# 과거 검증 기록
 
 ## 2026-09-16 — 실행 화면과 상태 설명 정리
 

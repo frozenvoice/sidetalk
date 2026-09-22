@@ -1,0 +1,158 @@
+{
+  "Template_WindowsRasMan": {
+    "Tmpl.Title": [
+      "Windows Remote Access Connection Manager (dial-up/VPN)"
+    ],
+    "Tmpl.Class": [
+      "Desktop"
+    ],
+    "Tmpl.Scan": [
+      "i"
+    ],
+    "OpenIpcPath": [
+      "\\RPC Control\\RasManLrpc"
+    ]
+  },
+  "Template_OnScreenKeyboard": {
+    "Tmpl.Title": [
+      "#4342,On-Screen Keyboard freezing fix for Windows 11"
+    ],
+    "Tmpl.Class": [
+      "Misc"
+    ],
+    "Tmpl.Scan": [
+      "s"
+    ],
+    "Tmpl.ScanFile": [
+      "C:\\Windows\\System32\\Taskbar.dll"
+    ],
+    "OpenIpcPath": [
+      "*\\BaseNamedObjects*\\UIA_CONNECT_EVENT_*",
+      "*\\BaseNamedObjects*\\UIA_PIPEREADY_EVENT_*"
+    ],
+    "OpenFilePath": [
+      "\\Device\\NamedPipe\\UIA_PIPE_*"
+    ]
+  },
+  "Template_WindowsLive": {
+    "Tmpl.Title": [
+      "Windows Live"
+    ],
+    "Tmpl.Class": [
+      "Desktop"
+    ],
+    "Tmpl.Url": [
+      "http://www.live.com"
+    ],
+    "Tmpl.Scan": [
+      "s"
+    ],
+    "Tmpl.ScanService": [
+      "wlidsvc"
+    ],
+    "OpenIpcPath": [
+      "\\RPC Control\\LiveIdSvc"
+    ],
+    "ClosedFilePath": [
+      "%SystemRoot%\\System32\\IDStore.dll",
+      "%SystemRoot%\\System32\\wlidprov.dll"
+    ],
+    "ClosedKeyPath": [
+      "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\NetworkServiceTriggers\\Triggers\\bc90d167-9470-4139-a9ba-be0bbbf5b74d\\CC105610-DA03-467E-BC73-5B9E2937458D"
+    ]
+  },
+  "Template_Edge_Fix": {
+    "Tmpl.Title": [
+      "#4342,Microsoft Edge"
+    ],
+    "Tmpl.Class": [
+      "WebBrowser"
+    ],
+    "Tmpl.Url": [
+      "https://www.microsoft.com/en-us/edge"
+    ],
+    "Tmpl.Scan": [
+      "s"
+    ],
+    "Tmpl.ScanProduct": [
+      "Microsoft Edge"
+    ],
+    "Tmpl.ScanService": [
+      "edgeupdate"
+    ],
+    "NormalFilePath": [
+      "msedge.exe,%LocalAppData%\\Microsoft\\Edge\\User Data\\Default\\Secure Preferences"
+    ],
+    "FakeAdminRights": [
+      "msedge.exe,n"
+    ]
+  },
+  "Template_OfficeLicensing": {
+    "Tmpl.Title": [
+      "Windows and Office Licensing Services"
+    ],
+    "Tmpl.Class": [
+      "Desktop"
+    ],
+    "Tmpl.Url": [
+      "http://office.microsoft.com"
+    ],
+    "Tmpl.Scan": [
+      "s"
+    ],
+    "Tmpl.ScanService": [
+      "osppsvc",
+      "sppsvc"
+    ],
+    "OpenIpcPath": [
+      "\\RPC Control\\OSPPCTransportEndpoint-*",
+      "\\RPC Control\\SPPCTransportEndpoint-*"
+    ],
+    "UseDragDropHack": [
+      "excel.exe,n"
+    ]
+  },
+  "Template_OfficeClickToRun": {
+    "Tmpl.Title": [
+      "Microsoft Office Click-to-Run"
+    ],
+    "Tmpl.Class": [
+      "Desktop"
+    ],
+    "Tmpl.Url": [
+      "http://office.microsoft.com"
+    ],
+    "Tmpl.Scan": [
+      "s"
+    ],
+    "Tmpl.ScanService": [
+      "ClickToRunSvc"
+    ],
+    "HostInjectDll": [
+      "\\SboxHostDll.dll"
+    ],
+    "HostInjectDll64": [
+      "\\SboxHostDll.dll"
+    ],
+    "HostInjectDllARM64": [
+      "\\SboxHostDll.dll"
+    ],
+    "HostInjectProcess": [
+      "OfficeClicktoRun.exe|ClickToRunSvc"
+    ],
+    "OpenIpcPath": [
+      "\\RPC Control\\C2RClientAPI_Server_System*",
+      "\\RPC Control\\ClickToRun_Pipeline*",
+      "\\RPC Control\\AppV-ISV-*"
+    ],
+    "BoxNameTitle": [
+      "EXCEL.EXE,-",
+      "MSACCESS.EXE,-",
+      "MSPUB.EXE,-",
+      "ONENOTE.EXE,-",
+      "OUTLOOK.EXE,-",
+      "POWERPNT.EXE,-",
+      "WINWORD.EXE,-"
+    ]
+  }
+}
