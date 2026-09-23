@@ -10,14 +10,20 @@
 저장소 루트에서 PowerShell로 실행한다. 컴파일 경고는 오류로 처리된다(`Directory.Build.props`).
 
 ```powershell
-dotnet build src/Sidetalk.App/Sidetalk.App.csproj -c Release
-dotnet run --project tests/Sidetalk.Tests/Sidetalk.Tests.csproj -c Release
+# 개발 중 검증: 실행 중인 배포 앱을 닫지 않아도 된다.
+pwsh -File scripts/verify.ps1
+
+# 복구 UI 변경 시 합성 WPF 검사도 포함한다. 출력은 기본적으로 새 임시 폴더다.
+pwsh -File scripts/verify.ps1 -UiChecks
+
+# 배포 패키징: 검증 + 두 publish + README/docs + ZIP/SHA-256 + 기존 배포본 교체
+pwsh -File scripts/build.ps1 -SelfContained
 ```
 
-- 테스트는 자체 콘솔 러너이므로 `dotnet test`로 대체하지 않는다.
-- 복구 UI 변경 시 `dotnet run --project tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release -- artifacts/verification/ui-checks`로 가짜 상태 기반 WPF 검사도 실행한다. 실제 설정·관리 UI·카카오톡에 접근하지 않으며 일반 사용자 GUI 검증과 구분한다.
-- 시험 도구 변경 시 `dotnet build src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj -c Release`도 확인한다.
-- 배포 검증은 `pwsh -File scripts/build.ps1 -SelfContained`로 수행한다. 이 스크립트가 앱 빌드·콘솔 테스트·시험 도구 빌드·두 프로젝트 publish·ZIP/SHA-256 생성을 포함하므로 위 검증을 별도로 중복 실행하지 않는다. `-SelfContained`를 생략하면 .NET Desktop Runtime이 필요한 배포본을 만든다.
+- 검증은 Release 앱 빌드·자체 콘솔 테스트·시험 도구 빌드를 수행한다. `dotnet test`로 대체하지 않으며, publish·ZIP·배포 교체·앱/시험 도구 실행은 하지 않는다. 실제 `bin/obj` 출력이 잠기면 해당 빌드 오류를 해결해야 하며 프로세스를 임의 종료하지 않는다.
+- `-UiChecks`는 실제 설정·관리 UI·카카오톡에 접근하지 않는다. 일반 사용자 GUI 검증과 구분한다.
+- 패키징은 같은 검증을 한 번 포함하므로 그 직전에 검증 명령을 중복 실행하지 않는다. `-SelfContained`를 생략하면 .NET Desktop Runtime이 필요한 배포본을 만든다. 배포본 교체 전에는 해당 SIDETALK와 배포된 IsolationProbe를 정상 종료해야 한다.
+- 스크립트 변경 시 `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`로 임시 fixture의 실패 전파·패키징 보호·롤백 회귀를 확인한다. 실제 publish나 앱 실행을 하지 않는 모의 검사다.
 - `artifacts/`, `bin/`, `obj/`는 생성 결과다. 배포본에는 공식 카카오톡이나 Sandboxie를 포함하지 않는다.
 
 ## 유지할 제약

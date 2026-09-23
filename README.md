@@ -72,18 +72,39 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 ## 빌드와 검증
 
-PowerShell, .NET SDK 8.0.400 이상(8.x):
+PowerShell 7, .NET SDK 8.0.400 이상(8.x), 저장소 루트에서 실행합니다.
 
 ```powershell
-# self-contained 배포본 (.NET 런타임 포함)
+# 개발 중 코드 검증 (배포 앱을 켜 둔 채 실행 가능)
+pwsh -File scripts/verify.ps1
+
+# 복구 UI 변경 시 합성 WPF 검사도 포함
+pwsh -File scripts/verify.ps1 -UiChecks
+
+# self-contained 패키지 생성·기존 배포본 교체 (.NET 런타임 포함)
 pwsh -File scripts/build.ps1 -SelfContained
 
-# framework-dependent 배포본 (.NET 8 Desktop Runtime 필요)
-# pwsh -File scripts/build.ps1
+# framework-dependent 패키지 생성·교체 (.NET 8 Desktop Runtime 필요)
+pwsh -File scripts/build.ps1
 ```
 
-`scripts/build.ps1`가 앱 빌드·콘솔 테스트·시험 도구 빌드·두 프로젝트 publish·ZIP 생성을 한 번에 수행합니다. 빌드와 publish가 모두 성공하면 먼저 임시 배포 폴더에서 ZIP과 SHA-256을 준비한 뒤 최신 앱을 `artifacts/publish/win-x64`로 반영합니다. 빌드·publish·압축 실패 시 기존 `win-x64` 배포본을 유지합니다. 교체 중 오류가 나면 기존 배포본 복구를 시도합니다. 버전별 ZIP은 `artifacts`에 계속 보관합니다. 반영 전에 실행 중인 SIDETALK와 배포본의 `tools/IsolationProbe`를 종료해야 합니다.
+`verify.ps1`는 Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드만 수행합니다. 기존 배포 폴더·ZIP·사용자 설정을 변경하지 않으며, 실행 중인 배포본을 검사해 검증을 막지 않습니다. `bin/obj`와 테스트용 `artifacts/tests`에는 빌드·합성 검사 결과가 생깁니다. 실제 빌드 출력이 잠겼다면 dotnet이 출력한 파일 경로와 오류를 확인하세요. 스크립트가 프로세스를 종료하지는 않습니다. `-UiChecks` 결과는 매번 새 임시 폴더에 생성하고 위치를 출력합니다. 두 스크립트는 `bin/obj`를 공유하므로 동시에 실행하지 마세요.
 
+`build.ps1`는 같은 검증을 한 번 수행한 뒤 각 프로젝트를 `win-x64`와 선택한 런타임 모드로 복원·publish합니다. 일반 빌드 결과만으로 RID별 publish를 생략하지 않습니다. README와 docs를 포함한 ZIP과 SHA-256을 staging에서 준비한 뒤 `artifacts/publish/win-x64`로 반영합니다. 빌드·테스트·publish·압축 실패 시 기존 배포본과 ZIP을 유지하고, 교체 실패 시 롤백합니다. 경로 경계·reparse point 검사, 실행 중 출력 보호와 publish lock도 유지합니다. 롤백까지 실패하면 원래 오류·롤백 오류·보존 경로를 출력하며 staging을 남깁니다. 버전별 ZIP은 `artifacts`에 계속 보관합니다.
+
+패키징 전에는 해당 배포본의 SIDETALK와 `tools/IsolationProbe`를 정상 종료해야 합니다. `build-local.cmd`는 기존대로 self-contained 패키징 후 앱을 열며, `build-local.cmd -NoLaunch -NoPause`는 패키징만 합니다. `run-local.cmd`는 기존 배포본을 바로 열고 배포본이 없을 때만 패키징합니다. 단순 코드 검증에는 위 `verify.ps1`를 사용하세요.
+
+각 단계는 경과 시간과 실패 단계를 출력합니다. 종료 코드 `0`은 성공이며, 다음 코드는 CMD 진입점에서도 전달됩니다.
+
+| 종료 코드 | 실패 단계 |
+|---|---|
+| 10 / 11 / 12 / 13 | 앱 빌드 / 콘솔 안전성 테스트 / 시험 도구 빌드 / 합성 WPF 검사 |
+| 20 | 패키징 사전 검사·잠금·실행 중 출력 보호 |
+| 21 / 22 / 23 | 앱 publish / 시험 도구 publish / 문서 복사·버전 확인 |
+| 30 | ZIP·SHA-256 생성 |
+| 40 / 41 | 배포 교체(롤백 완료 또는 교체 전 차단) / 교체와 롤백 모두 실패 |
+
+진입점·도구 실행·스크립트 로딩 오류는 일반 비영 종료 코드로 반환될 수 있습니다. 이전 검증 통과 기록으로 현재 안전성 테스트를 생략하는 옵션은 없습니다.
 교체 도중 PowerShell 강제 종료나 전원 장애가 발생하면 자동 복구되지 않을 수 있습니다. 이때 기존 배포본은 `artifacts/.publish-<고유 ID>/previous-win-x64`에 남을 수 있으므로, 임시 폴더를 삭제하지 말고 기존 파일과 반영 상태를 먼저 확인하세요.
 
 스크립트가 출력한 배포 폴더에서 자체 GUI 렌더링과 읽기 전용 진단(카카오톡 실행 없음):

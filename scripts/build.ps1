@@ -1,5 +1,7 @@
 param([switch]$SelfContained)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'build-common.ps1')
+$timer = [Diagnostics.Stopwatch]::StartNew()
 $repo = Split-Path -Parent $PSScriptRoot
 $artifacts = Join-Path $repo 'artifacts'
 $output = Join-Path $artifacts 'publish/win-x64'
@@ -46,6 +48,7 @@ function Assert-OutputNotRunning {
 
 Push-Location -LiteralPath $repo
 try {
+    Start-SidetalkStage 'package/preflight' 20
     Assert-ArtifactPath $output
     Assert-ArtifactPath $staging
     $lockPath = Join-Path $artifacts '.publish.lock'
@@ -54,29 +57,33 @@ try {
     $buildLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     Assert-OutputNotRunning
 
-    dotnet build src/Sidetalk.App/Sidetalk.App.csproj -c Release --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-    dotnet run --project tests/Sidetalk.Tests/Sidetalk.Tests.csproj -c Release
-    if ($LASTEXITCODE -ne 0) { throw 'Safety tests failed.' }
-    dotnet build src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj -c Release --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'Isolation probe build failed.' }
+    Complete-SidetalkStage
+    Invoke-SidetalkVerification
     $flavor = if ($SelfContained) { 'self-contained' } else { 'desktop-runtime' }
     $bundled = if ($SelfContained) { 'true' } else { 'false' }
-    dotnet publish src/Sidetalk.App/Sidetalk.App.csproj -c Release -r win-x64 --self-contained $bundled -o $stagedOutput --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
+    # Publish restores/builds for its own RID and runtime mode; generic builds cannot replace it.
+    Start-SidetalkStage 'publish/app' 21
+    Invoke-SidetalkDotnet @('publish', 'src/Sidetalk.App/Sidetalk.App.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', $bundled, '-o', $stagedOutput, '--nologo')
+    Complete-SidetalkStage
     $probeOutput = Join-Path $stagedOutput 'tools/IsolationProbe'
-    dotnet publish src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj -c Release -r win-x64 --self-contained $bundled -o $probeOutput --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'Isolation probe publish failed.' }
+    Start-SidetalkStage 'publish/isolation-probe' 22
+    Invoke-SidetalkDotnet @('publish', 'src/Sidetalk.IsolationProbe/Sidetalk.IsolationProbe.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', $bundled, '-o', $probeOutput, '--nologo')
+    Complete-SidetalkStage
+    Start-SidetalkStage 'package/documents' 23
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $stagedOutput
     Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $stagedOutput -Recurse -Force
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $stagedOutput 'Sidetalk.dll')).ProductVersion.Split('+')[0]
     if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z.-]*$') { throw "Invalid app version: $version" }
+    Complete-SidetalkStage
+    Start-SidetalkStage 'package/archive' 30
     $zip = Join-Path $artifacts "SIDETALK-$version-win-x64-$flavor.zip"
     Assert-ArtifactPath $zip
     Assert-ArtifactTree $stagedOutput
     Compress-Archive -Path (Join-Path $stagedOutput '*') -DestinationPath $stagedZip
     $zipHash = Get-FileHash -LiteralPath $stagedZip -Algorithm SHA256
 
+    Complete-SidetalkStage
+    Start-SidetalkStage 'package/replace' 40
     # Keep the old application and archive until every build/package step succeeds.
     New-Item -ItemType Directory -Path (Split-Path -Parent $output) -Force | Out-Null
     Assert-OutputNotRunning
@@ -97,13 +104,19 @@ try {
             if (Test-Path -LiteralPath $previousZip) { Move-ArtifactItem $previousZip $zip }
             $safeToCleanStaging = $true
         } catch {
-            throw "Publish replacement and rollback failed. Preserved files: $staging. Replacement: $promotionError. Rollback: $_"
+            $failure = [InvalidOperationException]::new("Publish replacement and rollback failed. Preserved files: $staging; current output: $output; archive: $zip. Replacement: $promotionError. Rollback: $_", $promotionError.Exception)
+            $failure.Data['SidetalkExitCode'] = 41
+            throw $failure
         }
         throw $promotionError
     }
 
+    Complete-SidetalkStage
     [pscustomobject]@{ Algorithm = 'SHA256'; Hash = $zipHash.Hash; Path = $zip }
     Write-Output ('App: ' + (Join-Path $output 'Sidetalk.exe'))
+    Write-Host ("Packaging complete ({0:F2}s)." -f $timer.Elapsed.TotalSeconds)
+} catch {
+    exit (Write-SidetalkFailure $_)
 } finally {
     try {
         if ($safeToCleanStaging -and (Test-Path -LiteralPath $staging)) {

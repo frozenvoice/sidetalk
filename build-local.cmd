@@ -63,11 +63,12 @@ if errorlevel 1 (
     goto finish
 )
 
-echo Building and testing SIDETALK. Close SIDETALK and its IsolationProbe before rebuilding.
+echo Packaging SIDETALK. Close SIDETALK and its published IsolationProbe before replacement.
+echo For code-only checks with the published app running: pwsh -File scripts\verify.ps1
 echo KakaoTalk and Sandboxie are not stopped by this entry point.
 rem Use -Command so a cancelled PowerShell build cannot report success as -File can.
 rem Pass the path as data, not interpolated PowerShell source. Policy is session-only.
-"%PWSH%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "try { & $env:SIDETALK_BUILD_SCRIPT -SelfContained; if (-not $?) { exit 1 }; exit 0 } catch { Write-Error $_; exit 1 }"
+"%PWSH%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "try { & $env:SIDETALK_BUILD_SCRIPT -SelfContained; if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit 0 } catch { Write-Error $_; exit 1 }"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
     echo Build failed or was cancelled. The previous app will not be launched as a fallback.
@@ -91,6 +92,7 @@ echo Usage: build-local.cmd [-NoLaunch] [-NoPause]
 echo Builds the current checkout using scripts\build.ps1 -SelfContained, then opens SIDETALK.
 echo -NoLaunch  Build only; do not open SIDETALK.
 echo -NoPause   Do not wait for a key after an error.
+echo Code-only checks: pwsh -File scripts\verify.ps1
 echo For everyday use, double-click run-local.cmd. See docs\LOCAL-RUN.md.
 exit /b 0
 
