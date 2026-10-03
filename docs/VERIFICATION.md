@@ -46,6 +46,8 @@
 
 PR과 main push에서 PowerShell 7과 `global.json`으로 검증·WPF·빌드 스크립트 회귀를 순차 실행하는 workflow를 추가했다. 기본 `contents: read`, 공식 Actions 커밋 고정, checkout 자격 증명 미보존, 로그/합성 PNG만 7일간 업로드한다. 실제 hosted 실행 상태와 로그는 [작업 브랜치의 Actions 결과](https://github.com/frozenvoice/sidetalk/actions?query=branch%3Acodex%2Frecovery-reconciliation)에서 확인한다. Windows Server 2022 CI 성공은 Sandboxie 복구 통합 시험 결과가 아니다.
 
+제품·회귀 소스 `21edcfa`의 [첫 PR CI](https://github.com/frozenvoice/sidetalk/actions/runs/37146806599)는 모든 단계가 **성공(1분 33초)**했다. 이 실행에서 발생한 Node 20 폐기 경고를 반영하여 공식 Node 24 Actions의 고정 커밋으로 갱신했다(checkout 7.0.1, setup-dotnet 6.0.0, upload-artifact 7.0.1). 최종 브랜치의 재검증 결과는 위 Actions 링크에 별도 실행으로 남는다.
+
 # 검증 결과 — 0.1.6 / 2026-09-22
 
 ## 토큰 핸들·조회 오류 구분·앱 아이콘 후속 수정
