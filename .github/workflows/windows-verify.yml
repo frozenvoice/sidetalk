@@ -1,0 +1,69 @@
+name: Windows verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # This hosted Windows Server runner verifies build/synthetic boundaries.
+    # It is not the Windows 11 + Sandboxie 1.18.4 integration environment.
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Check out current source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
+        with:
+          persist-credentials: false
+      - name: Install SDK required by global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0 (Node 24)
+        with:
+          global-json-file: global.json
+      - name: Verify current source and synthetic WPF fixtures
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required.' }
+          New-Item -ItemType Directory -Path artifacts/ci -Force | Out-Null
+          $env:TEMP = Join-Path $env:RUNNER_TEMP 'sidetalk-ci-ui'
+          $env:TMP = $env:TEMP
+          New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
+          & pwsh -NoProfile -File scripts/verify.ps1 -UiChecks 2>&1 | Tee-Object -FilePath artifacts/ci/verify.log
+          $verificationExitCode = $LASTEXITCODE
+          exit $verificationExitCode
+      - name: Verify build failure propagation and packaging guards
+        # Sequential: verify/build use shared outputs. These checks use temporary
+        # fake tool/repository fixtures and never publish or run the real app.
+        if: ${{ !cancelled() }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          New-Item -ItemType Directory -Path artifacts/ci -Force | Out-Null
+          & pwsh -NoProfile -File tests/Sidetalk.BuildChecks/Program.ps1 2>&1 | Tee-Object -FilePath artifacts/ci/build-checks.log
+          $buildChecksExitCode = $LASTEXITCODE
+          exit $buildChecksExitCode
+      - name: Preserve logs and synthetic images
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: windows-verification-${{ github.run_attempt }}
+          # Never upload user profiles, raw fixture trees, INI backups, or accounts.
+          path: |
+            artifacts/ci/*.log
+            ${{ runner.temp }}/sidetalk-ci-ui/sidetalk-ui-checks-*/*.png
+          if-no-files-found: warn
+          retention-days: 7

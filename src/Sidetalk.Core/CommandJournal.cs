@@ -19,7 +19,12 @@ public sealed record PendingCommandRecord(
     CommandProcessIdentity? Process)
 {
     public CommandProcessIdentity? Identity => Process;
+    public int Schema { get; init; } = 1;
+    public CommandRecoveryContext? RecoveryContext { get; init; }
+    public CommandFailure? Failure { get; init; }
 }
+
+public sealed record CommandFailure(string Stage, string ErrorType, string Message, string? InnerCause, bool IsCancellation);
 
 /// <summary>
 /// Append-only operation journal for the SIDETALK profile root.  The journal has one
@@ -28,9 +33,9 @@ public sealed record PendingCommandRecord(
 /// </summary>
 public sealed class CommandJournal
 {
-    private const int Schema = 1;
+    private const int CurrentSchema = 2;
     private const long MaxEntryBytes = 64 * 1024;
-    private static readonly Regex FinalName = new(@"\A(?<operation>[a-f0-9]{32})\.(?<phase>intent|started|completed)\.json\z", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex FinalName = new(@"\A(?<operation>[a-f0-9]{32})\.(?<phase>intent|started|failed|completed)\.json\z", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex OperationIdPattern = new(@"\A[a-f0-9]{32}\z", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -153,7 +158,14 @@ public sealed class CommandJournal
         if (!Enum.IsDefined(action))
             throw new ArgumentOutOfRangeException(nameof(action));
 
-        var record = new PendingCommandRecord(Guid.NewGuid().ToString("N"), action, profile, expectedStart, DateTimeOffset.UtcNow, null);
+        var operationId = Guid.NewGuid().ToString("N");
+        // Failure to collect optional evidence must not fabricate metadata or block
+        // an otherwise safe fresh command. Recovery will use the conservative path.
+        CommandRecoveryContext? context = null;
+        try { context = WindowsCommandEvidence.Capture(operationId); }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidDataException or UnauthorizedAccessException) { }
+        var record = new PendingCommandRecord(operationId, action, profile, expectedStart, DateTimeOffset.UtcNow, null)
+        { Schema = CurrentSchema, RecoveryContext = context };
         Publish(record, "intent");
         return record;
     }
@@ -170,13 +182,48 @@ public sealed class CommandJournal
             throw new InvalidDataException("기록할 명령 프로세스가 전용 Start.exe와 다릅니다.");
 
         var state = ReadState(record, expectedStart);
-        if (state.Intent is null || state.Started is not null || state.Completed is not null)
+        if (state.Intent is null || state.Started is not null || state.Failed is not null || state.Completed is not null)
             throw new InvalidDataException("명령 기록의 시작 상태가 예상과 다릅니다.");
         if (record.Process is not null || !SameRecordMetadata(record, state.Intent))
             throw new InvalidDataException("명령 기록이 준비된 의도와 다릅니다.");
 
         Publish(record with { StartExe = expectedStart, Process = identity }, "started");
     }
+
+    /// <summary>
+    /// Preserves the first failure after a durable intent without declaring completion.
+    /// A verified completed command may still have a failed action outcome; adding its
+    /// cause preserves that existing completion and never rewrites the finished record.
+    /// A secondary journal failure is returned for diagnostics; it never replaces the
+    /// original command exception. Existing failure and history files are never replaced.
+    /// </summary>
+    public Exception? TryRecordFailure(PendingCommandRecord record, string stage, Exception error)
+    {
+        try
+        {
+            RequireLease();
+            ArgumentNullException.ThrowIfNull(record);
+            ArgumentNullException.ThrowIfNull(error);
+            if (record.Schema != CurrentSchema)
+                throw new InvalidDataException("이전 버전 명령 기록에 새 실패 이벤트를 추가하지 않습니다.");
+            if (string.IsNullOrWhiteSpace(stage) || stage.Length > 128 || stage.Any(char.IsControl))
+                throw new ArgumentException("명령 실패 단계를 확인할 수 없습니다.", nameof(stage));
+            var expectedStart = ValidateProfileAndStart(record.Profile, record.StartExe);
+            var state = ReadState(record, expectedStart);
+            if (state.Intent is null || !SameRecordMetadata(record, state.Intent))
+                throw new InvalidDataException("실패할 명령 기록이 준비된 의도와 다릅니다.");
+            if (state.Failed is not null) return null;
+            var cause = error.GetBaseException();
+            var failure = new CommandFailure(stage, error.GetType().FullName ?? error.GetType().Name,
+                Limit(error.Message, 4096), ReferenceEquals(cause, error) ? null : Limit(cause.GetType().Name + ": " + cause.Message, 4096),
+                error is OperationCanceledException || cause is OperationCanceledException);
+            Publish(record with { StartExe = expectedStart, Process = state.Started?.Process, Failure = failure }, "failed");
+            return null;
+        }
+        catch (Exception journalError) { return journalError; }
+    }
+
+    private static string Limit(string text, int maximum) => text.Length <= maximum ? text : text[..maximum];
 
     /// <summary>
     /// Publishes completion only after the caller has independently confirmed command
@@ -206,7 +253,8 @@ public sealed class CommandJournal
         var completion = state.Started is null
             ? state.Intent
             : state.Started;
-        Publish(new PendingCommandRecord(completion.OperationId, completion.Action, completion.Profile, completion.StartExe, completion.RequestedAtUtc, completion.Process), "completed");
+        Publish(new PendingCommandRecord(completion.OperationId, completion.Action, completion.Profile, completion.StartExe, completion.RequestedAtUtc, completion.Process)
+        { Schema = completion.Schema, RecoveryContext = completion.RecoveryContext }, "completed");
     }
 
     public bool IsCompleted(PendingCommandRecord record)
@@ -227,10 +275,10 @@ public sealed class CommandJournal
     private void Publish(PendingCommandRecord record, string phase)
     {
         var operation = ValidateOperationId(record.OperationId);
-        if (phase is not ("intent" or "started" or "completed"))
+        if (phase is not ("intent" or "started" or "failed" or "completed"))
             throw new ArgumentOutOfRangeException(nameof(phase));
-        var entry = new JournalEntry(Schema, phase, operation, record.Action, record.Profile, record.StartExe,
-            record.RequestedAtUtc, record.Process);
+        var entry = new JournalEntry(record.Schema, phase, operation, record.Action, record.Profile, record.StartExe,
+            record.RequestedAtUtc, record.Process, record.RecoveryContext, phase == "failed" ? record.Failure : null);
         var temporary = Path.Combine(journalDirectory, $".{operation}.{phase}.{Guid.NewGuid():N}.tmp");
         var final = Path.Combine(journalDirectory, $"{operation}.{phase}.json");
         try
@@ -318,13 +366,32 @@ public sealed class CommandJournal
 
     private void ValidateEntry(JournalEntry entry, string filenameOperation, string filenamePhase)
     {
-        if (entry.Schema != Schema || string.IsNullOrEmpty(entry.Phase) || string.IsNullOrEmpty(entry.OperationId) ||
+        if (entry.Schema is not (1 or CurrentSchema) || string.IsNullOrEmpty(entry.Phase) || string.IsNullOrEmpty(entry.OperationId) ||
             string.IsNullOrEmpty(entry.StartExe) || !OperationIdPattern.IsMatch(entry.OperationId) ||
             !entry.OperationId.Equals(filenameOperation, StringComparison.Ordinal) ||
             !entry.Phase.Equals(filenamePhase, StringComparison.Ordinal) ||
             entry.Profile is null || !Enum.IsDefined(entry.Action) ||
             entry.RequestedAtUtc.Offset != TimeSpan.Zero || entry.RequestedAtUtc.UtcTicks <= DateTime.MinValue.Ticks)
             throw new InvalidDataException("명령 기록의 식별자 또는 버전이 유효하지 않습니다.");
+
+        if (entry.Schema == 1 && entry.RecoveryContext is not null)
+            throw new InvalidDataException("이전 버전 명령 기록에 새 복구 근거가 포함되어 있습니다.");
+        if (entry.RecoveryContext is { } context)
+        {
+            if (context.UserSid != entry.Profile.UserSid || context.SessionId < 0 ||
+                context.Boot is { } boot && (string.IsNullOrWhiteSpace(boot.ProtectedWitness) || boot.ProtectedWitness.Length > 22000))
+                throw new InvalidDataException("명령 기록의 사용자·세션·부팅 근거가 유효하지 않습니다.");
+        }
+        if (entry.Phase == "failed")
+        {
+            if (entry.Schema != CurrentSchema || entry.Failure is not { } failure ||
+                string.IsNullOrWhiteSpace(failure.Stage) || failure.Stage.Length > 128 || failure.Stage.Any(char.IsControl) ||
+                string.IsNullOrWhiteSpace(failure.ErrorType) || failure.ErrorType.Length > 256 ||
+                failure.Message is null || failure.Message.Length > 4096 || failure.InnerCause?.Length > 4096)
+                throw new InvalidDataException("명령 실패 기록의 단계 또는 원인이 유효하지 않습니다.");
+        }
+        else if (entry.Failure is not null)
+            throw new InvalidDataException("명령 실패 원인은 failed 이벤트에만 기록할 수 있습니다.");
 
         var expectedStart = ValidateProfileAndStart(entry.Profile, entry.StartExe);
         if (!SamePath(entry.StartExe, expectedStart))
@@ -377,7 +444,7 @@ public sealed class CommandJournal
     private static bool SameRecordMetadata(PendingCommandRecord first, JournalEntry second) =>
         first.OperationId.Equals(second.OperationId, StringComparison.Ordinal) && first.Action == second.Action &&
         SameProfile(first.Profile, second.Profile) && SamePath(first.StartExe, second.StartExe) &&
-        first.RequestedAtUtc == second.RequestedAtUtc;
+        first.RequestedAtUtc == second.RequestedAtUtc && first.Schema == second.Schema && first.RecoveryContext == second.RecoveryContext;
 
     private static bool SameProfile(BoxProfile first, BoxProfile second) =>
         first.Schema == second.Schema && first.BoxName.Equals(second.BoxName, StringComparison.Ordinal) &&
@@ -420,6 +487,7 @@ public sealed class CommandJournal
         public string OperationId { get; } = operationId;
         public JournalEntry? Intent { get; private set; }
         public JournalEntry? Started { get; private set; }
+        public JournalEntry? Failed { get; private set; }
         public JournalEntry? Completed { get; private set; }
         public bool IsCompleted => Completed is not null;
 
@@ -429,6 +497,7 @@ public sealed class CommandJournal
             {
                 case "intent" when Intent is null: Intent = entry; break;
                 case "started" when Started is null: Started = entry; break;
+                case "failed" when Failed is null: Failed = entry; break;
                 case "completed" when Completed is null: Completed = entry; break;
                 default: throw new InvalidDataException("명령 기록에 중복된 상태 파일이 있습니다.");
             }
@@ -440,6 +509,8 @@ public sealed class CommandJournal
                 throw new InvalidDataException("명령 기록에 intent가 없어 상태를 확정할 수 없습니다.");
             if (Started is not null && !SameMetadata(Intent, Started))
                 throw new InvalidDataException("intent와 started 명령 기록이 일치하지 않습니다.");
+            if (Failed is not null && (!SameMetadata(Intent, Failed) || !SameIdentity(Started?.Process, Failed.Process)))
+                throw new InvalidDataException("미완료 명령과 실패 이벤트의 신원이 일치하지 않습니다.");
             if (Completed is not null)
             {
                 if (Started is not null && (!SameMetadata(Started, Completed) || !SameIdentity(Started.Process, Completed.Process)))
@@ -450,12 +521,13 @@ public sealed class CommandJournal
         }
 
         public PendingCommandRecord ToPending() =>
-            new(OperationId, Intent!.Action, Intent.Profile, Intent.StartExe, Intent.RequestedAtUtc, Started?.Process);
+            new(OperationId, Intent!.Action, Intent.Profile, Intent.StartExe, Intent.RequestedAtUtc, Started?.Process)
+            { Schema = Intent.Schema, RecoveryContext = Intent.RecoveryContext, Failure = Failed?.Failure };
 
         private static bool SameMetadata(JournalEntry first, JournalEntry second) =>
             first.Schema == second.Schema && first.Phase != second.Phase && first.OperationId.Equals(second.OperationId, StringComparison.Ordinal) &&
             first.Action == second.Action && SameProfile(first.Profile, second.Profile) && SamePath(first.StartExe, second.StartExe) &&
-            first.RequestedAtUtc == second.RequestedAtUtc;
+            first.RequestedAtUtc == second.RequestedAtUtc && first.RecoveryContext == second.RecoveryContext;
     }
 
     private sealed record JournalEntry(
@@ -466,7 +538,9 @@ public sealed class CommandJournal
         BoxProfile Profile,
         string StartExe,
         DateTimeOffset RequestedAtUtc,
-        CommandProcessIdentity? Process);
+        CommandProcessIdentity? Process,
+        CommandRecoveryContext? RecoveryContext = null,
+        CommandFailure? Failure = null);
 
     private static bool SameIdentity(CommandProcessIdentity? first, CommandProcessIdentity? second) =>
         first is null && second is null || first is not null && second is not null && first.ProcessId == second.ProcessId &&

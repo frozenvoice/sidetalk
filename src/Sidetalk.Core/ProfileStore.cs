@@ -47,6 +47,8 @@ public sealed class ProfileStore
         if (existing is not null) return existing;
         Directory.CreateDirectory(Root);
         RejectReparseAncestors(Root);
+        if (Directory.EnumerateFiles(Root, ".profile.*.tmp", SearchOption.TopDirectoryOnly).Any())
+            throw new InvalidDataException("중단된 프로필 생성 원본이 있습니다. 앱에서 원본을 보존하고 같은 승인 후보를 다시 확인해야 합니다.");
         var id = Guid.NewGuid().ToString("N");
         var name = "SideTalk_" + id[..23];
         var profile = new BoxProfile(1, name, Guid.NewGuid().ToString("N"), CurrentSid(), Path.Combine(Root, "Boxes", name));
@@ -88,8 +90,25 @@ public sealed class ProfileStore
         Directory.CreateDirectory(Root);
         RejectReparseAncestors(Root);
         var temporaryPath = Path.Combine(Root, $".profile.{candidate.OwnerToken}.tmp");
-        using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        if (Directory.EnumerateFiles(Root, ".profile.*.tmp", SearchOption.TopDirectoryOnly).Any(path =>
+            !path.Equals(temporaryPath, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("다른 중단 프로필 원본이 있습니다. 새 후보로 대체하지 않습니다.");
+        RejectReparseAncestors(temporaryPath);
+        if (File.Exists(temporaryPath))
         {
+            BoxProfile? staged;
+            try { staged = JsonSerializer.Deserialize<BoxProfile>(File.ReadAllBytes(temporaryPath), RecoveryJson.Options); }
+            catch (JsonException error)
+            {
+                throw new InvalidDataException("중단된 승인 프로필 원본을 보존한 뒤 앱에서 다시 확인해야 합니다.", error);
+            }
+            if (staged != candidate)
+                throw new InvalidDataException("중단된 프로필이 승인 후보와 다릅니다. 기존 원본을 보존합니다.");
+            Validate(staged);
+        }
+        else
+        {
+            using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             profileWriter(stream, candidate);
             stream.Flush(true);
         }

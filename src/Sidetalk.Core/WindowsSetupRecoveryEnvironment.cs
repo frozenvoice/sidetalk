@@ -136,13 +136,18 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
                 candidateGlobal,
                 candidateEffectiveGlobal)).Safe);
         var processIds = profile is null ? Array.Empty<int>() : api.Processes(profile).Select(process => process.Id).ToArray();
-        var managers = CaptureManagementProcesses(folder, sid);
-        var activeSbieIni = CaptureActiveSbieIni(folder, sid).Count != 0;
+        var management = CaptureManagementProcesses(folder, sid);
+        var tools = CaptureActiveSbieIni(folder, sid);
+        var activeSbieIni = tools.HasAny;
         var ui = new SetupRecoveryUiState(
-            Fresh: !activeSbieIni,
-            ApprovedManagementProcesses: managers,
+            Fresh: !activeSbieIni && !management.HasUnsafe,
+            ApprovedManagementProcesses: management.Current,
             CompatibilityDialogObserved: false,
-            Detail: activeSbieIni ? "SbieIni.exe 실행 중에는 복구를 진행하지 않습니다." : "관리 UI와 설정 도구의 상태를 확인했습니다.");
+            Detail: activeSbieIni ? "SbieIni.exe 실행 중에는 복구를 진행하지 않습니다."
+                : management.HasUnsafe ? "다른 사용자·세션 또는 신원 조회 불가 관리 도구 때문에 공유 설정 복구를 차단했습니다. 현재 격리 정책의 실행 판단은 별도로 확인합니다."
+                : "현재 사용자·세션의 관리 UI와 설정 도구 상태를 확인했습니다.")
+        { ForeignManagementProcesses = management.Foreign.Concat(tools.Foreign).ToArray(),
+          UnqueryableManagementProcessIds = management.Unqueryable.Concat(tools.Unqueryable).ToArray() };
         var finalBytes = ReadStableBytes(configPath);
         if (!iniBytes.SequenceEqual(finalBytes)) throw new IOException("Sandboxie 설정이 전체 검사 도중 변경되었습니다.");
         var finalSections = api.ReadAllSections(includeTemplates: false);
@@ -178,16 +183,16 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
         cancellationToken.ThrowIfCancellationRequested();
         var folder = observation.Install.SandboxiePath;
         var current = CaptureManagementProcesses(folder, observation.UserSid ?? ProfileStore.CurrentSid());
-        if (CaptureActiveSbieIni(folder, observation.UserSid ?? ProfileStore.CurrentSid()).Count != 0)
+        if (current.HasUnsafe || CaptureActiveSbieIni(folder, observation.UserSid ?? ProfileStore.CurrentSid()).HasAny)
             return new(false, "SbieIni.exe가 실행 중입니다. 설정 도구를 닫고 다시 조회하세요.");
         var approved = observation.Ui.ApprovedManagementProcesses.Select(item => item.Normalize())
             .ToDictionary(item => (item.ProcessId, item.CreationTimeUtcTicks));
-        if (current.Any(item => !approved.ContainsKey((item.ProcessId, item.CreationTimeUtcTicks))))
+        if (current.Current.Any(item => !approved.ContainsKey((item.ProcessId, item.CreationTimeUtcTicks))))
             return new(false, "새 Sandboxie 관리 UI가 발견되어 안전한 복구를 진행할 수 없습니다. 자동 복구를 중단하고 현재 상태를 다시 확인하세요.");
-        foreach (var item in current)
+        foreach (var item in current.Current)
             if (!TerminateApprovedManagementProcess(item, observation.Ui.ApprovedManagementProcesses, folder, observation.UserSid ?? ProfileStore.CurrentSid()))
                 return new(false, "승인된 Sandboxie 관리 UI를 정확한 프로세스 신원으로 종료하지 못했습니다.");
-        if (CaptureManagementProcesses(folder, observation.UserSid ?? ProfileStore.CurrentSid()).Count != 0)
+        if (CaptureManagementProcesses(folder, observation.UserSid ?? ProfileStore.CurrentSid()).HasAny)
             return new(false, "승인된 Sandboxie 관리 UI가 종료되지 않았습니다.");
         return SetupRecoveryUiResult.NoUi;
     }
@@ -214,8 +219,8 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
         var folder = observation.Install.SandboxiePath;
         var exe = Path.Combine(folder, "SbieIni.exe");
         RuntimeVerifier.RequireComponent(exe);
-        if (CaptureManagementProcesses(folder, ProfileStore.CurrentSid()).Count != 0 ||
-            CaptureActiveSbieIni(folder, ProfileStore.CurrentSid()).Count != 0)
+        if (CaptureManagementProcesses(folder, ProfileStore.CurrentSid()).HasAny ||
+            CaptureActiveSbieIni(folder, ProfileStore.CurrentSid()).HasAny)
             return new(false, false, "Sandboxie 관리 UI 또는 SbieIni.exe가 실행 중입니다.");
         if (isUserSetting)
         {
@@ -338,55 +343,74 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
         !name.StartsWith("Template_", StringComparison.OrdinalIgnoreCase) &&
         !name.Equals("DefaultTemplates", StringComparison.OrdinalIgnoreCase);
 
-    private static IReadOnlyList<SetupRecoveryProcessIdentity> CaptureManagementProcesses(string folder, string sid)
+    private sealed record ManagementProcessObservation(
+        IReadOnlyList<SetupRecoveryProcessIdentity> Current,
+        IReadOnlyList<SetupRecoveryProcessIdentity> Foreign,
+        IReadOnlyList<int> Unqueryable)
     {
-        var result = new List<SetupRecoveryProcessIdentity>();
-        var session = Process.GetCurrentProcess().SessionId;
-        foreach (var name in ManagementNames)
-        {
+        public bool HasUnsafe => Foreign.Count != 0 || Unqueryable.Count != 0;
+        public bool HasAny => Current.Count != 0 || HasUnsafe;
+    }
+
+    private static ManagementProcessObservation CaptureManagementProcesses(string folder, string sid) =>
+        CaptureTools(folder, sid, ManagementNames);
+
+    private static ManagementProcessObservation CaptureActiveSbieIni(string folder, string sid) =>
+        CaptureTools(folder, sid, ["SbieIni"]);
+
+    private static ManagementProcessObservation CaptureTools(string folder, string sid, IReadOnlyList<string> names)
+    {
+        var candidates = new List<(int Id, string ImageName)>();
+        foreach (var name in names)
             foreach (var process in Process.GetProcessesByName(name))
-            {
-                using (process)
-                {
-                    var identity = CaptureProcess(process, folder, sid, session);
-                    result.Add(identity);
-                }
-            }
-        }
-        return result;
+                using (process) candidates.Add((process.Id, name + ".exe"));
+        using var ownProcess = Process.GetCurrentProcess();
+        var observation = ClassifyManagementProcesses(candidates.Select(item => item.Id).ToArray(),
+            pid => CaptureProcess(pid, folder, candidates.Single(item => item.Id == pid).ImageName), sid, ownProcess.SessionId);
+        return new(observation.ApprovedManagementProcesses, observation.ForeignManagementProcesses, observation.UnqueryableManagementProcessIds);
     }
 
-    private static IReadOnlyList<SetupRecoveryProcessIdentity> CaptureActiveSbieIni(string folder, string sid)
+    /// <summary>Classifies identities only after the native capture has verified the
+    /// installed image. An inaccessible identity stays a shared-INI blocker.</summary>
+    internal static SetupRecoveryUiState ClassifyManagementProcesses(IReadOnlyList<int> processIds,
+        Func<int, SetupRecoveryProcessIdentity> capture, string currentSid, int currentSession)
     {
-        var result = new List<SetupRecoveryProcessIdentity>();
-        var session = Process.GetCurrentProcess().SessionId;
-        foreach (var process in Process.GetProcessesByName("SbieIni"))
+        var current = new List<SetupRecoveryProcessIdentity>();
+        var foreign = new List<SetupRecoveryProcessIdentity>();
+        var unqueryable = new List<int>();
+        foreach (var pid in processIds)
         {
-            using (process)
+            try
             {
-                var identity = CaptureProcess(process, folder, sid, session, "SbieIni.exe");
-                result.Add(identity);
+                var identity = capture(pid).Normalize();
+                if (identity.ProcessId != pid || identity.UserSid is null || identity.SessionId is null)
+                    throw new InvalidDataException("관리 도구의 사용자·세션 신원이 불완전합니다.");
+                if (identity.UserSid == currentSid && identity.SessionId == currentSession) current.Add(identity);
+                else foreign.Add(identity);
+            }
+            catch (Exception error) when (error is InvalidOperationException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+            {
+                unqueryable.Add(pid);
             }
         }
-        return result;
+        return new(foreign.Count == 0 && unqueryable.Count == 0, current)
+        { ForeignManagementProcesses = foreign, UnqueryableManagementProcessIds = unqueryable };
     }
 
-    private static SetupRecoveryProcessIdentity CaptureProcess(Process process, string folder, string sid, int session, string? expectedName = null)
+    private static SetupRecoveryProcessIdentity CaptureProcess(int processId, string folder, string expectedName)
     {
-        var path = QueryProcessPath(process.Id);
+        var path = QueryProcessPath(processId);
         var full = Path.GetFullPath(path);
-        var fileName = expectedName ?? Path.GetFileName(full);
+        var fileName = expectedName;
         var expected = Path.Combine(folder, fileName);
         if (!full.Equals(expected, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Sandboxie 관리 도구 경로가 검토된 설치 폴더와 다릅니다.");
-        if (!ProcessIdToSessionId((uint)process.Id, out var actualSession) || actualSession != session)
-            throw new InvalidDataException("Sandboxie 관리 도구의 세션이 현재 사용자 세션과 다릅니다.");
-        var actualSid = QueryProcessSid(process.Id);
-        if (!actualSid.Equals(sid, StringComparison.Ordinal))
-            throw new InvalidDataException("Sandboxie 관리 도구의 사용자 SID가 현재 사용자와 다릅니다.");
+        if (!ProcessIdToSessionId((uint)processId, out var actualSession))
+            throw new InvalidDataException("Sandboxie 관리 도구의 세션을 조회하지 못했습니다.");
+        var actualSid = QueryProcessSid(processId);
         VerifyManagerImage(full);
-        var creationTicks = QueryCreationTicks(process.Id);
-        return new SetupRecoveryProcessIdentity(process.Id, creationTicks, full, actualSid, checked((int)actualSession));
+        var creationTicks = QueryCreationTicks(processId);
+        return new SetupRecoveryProcessIdentity(processId, creationTicks, full, actualSid, checked((int)actualSession));
     }
 
     private static string QueryProcessPath(int pid)
@@ -419,6 +443,7 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
             if (fileName.Equals("SbieCtrl.exe", StringComparison.OrdinalIgnoreCase) == false && fileName.Equals("SandMan.exe", StringComparison.OrdinalIgnoreCase) == false) return false;
             if (!ProcessIdToSessionId((uint)candidate.ProcessId, out var session) || session != (uint)Process.GetCurrentProcess().SessionId) return false;
             var actualSid = QueryProcessSid(handle);
+            if (!actualSid.Equals(sid, StringComparison.Ordinal)) return false;
             var creation = QueryCreationTicks(handle);
             VerifyManagerImage(full);
             var actual = new SetupRecoveryProcessIdentity(candidate.ProcessId, creation, full, actualSid, checked((int)session));

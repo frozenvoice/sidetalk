@@ -7,7 +7,7 @@ namespace Sidetalk.Core;
 /// whole Sandboxie INI.  Every mutation is supplied by the verified native boundary
 /// as one named setting and is checked against a fresh file/API capture afterwards.
 /// </summary>
-internal sealed class SetupRecovery
+internal sealed partial class SetupRecovery
 {
     private const int PlanRevision = 1;
     private readonly ProfileStore store;
@@ -16,11 +16,14 @@ internal sealed class SetupRecovery
     private readonly string historyRoot;
     private readonly string operationsRoot;
     private readonly string consentRoot;
+    private readonly Action<string, string>? beforePreservationRename;
 
-    public SetupRecovery(ProfileStore store, ISetupRecoveryEnvironment environment)
+    public SetupRecovery(ProfileStore store, ISetupRecoveryEnvironment environment,
+        Action<string, string>? beforePreservationRename = null)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.environment = environment ?? throw new ArgumentNullException(nameof(environment));
+        this.beforePreservationRename = beforePreservationRename;
         recoveryRoot = Path.Combine(store.Root, "setup-recovery");
         historyRoot = Path.Combine(recoveryRoot, "history");
         operationsRoot = Path.Combine(recoveryRoot, "operations");
@@ -33,7 +36,7 @@ internal sealed class SetupRecovery
     public string RecoveryHistoryPath => historyRoot;
 
     /// <summary>True when a durable recovery operation is not completed.</summary>
-    public bool HasUnfinishedRecovery => ReadInterruptedOperation() is not null;
+    public bool HasUnfinishedRecovery => DiscoverInterruptedEvidence().Any(item => item.BlocksExecution) || ReadInterruptedOperation() is not null;
 
     public SetupRecoveryPlan Inspect(CancellationToken cancellationToken = default)
     {
@@ -69,6 +72,10 @@ internal sealed class SetupRecovery
         BoxProfile? savedCandidate;
         try
         {
+            var interruptedFiles = DiscoverInterruptedEvidence();
+            if (interruptedFiles.Any(item => item.PreservationPath is null || item.BlocksExecution))
+                return BlockedPlan("중단된 파일의 원본을 보존하고 다시 확인해야 합니다.",
+                    interruptedFiles.Where(item => item.PreservationPath is null || item.BlocksExecution).Select(item => item.Detail + " " + item.OriginalPath).ToArray(), historyRoot);
             interrupted = ReadInterruptedOperation();
             savedCandidate = interrupted is null ? null : LoadCandidate(interrupted.OperationId);
         }
@@ -85,7 +92,7 @@ internal sealed class SetupRecovery
         var firstSetupPolicySafe = proposedProfile is not null && IsFirstSetupCandidateSafe(observation, proposedProfile);
         if (profile is null)
         {
-            if (HasPreexistingProfileEvidence(observation) || HasFilesystemEvidence(interrupted?.OperationId))
+            if ((!resumingFirstSetup && HasPreexistingProfileEvidence(observation)) || HasFilesystemEvidence(interrupted?.OperationId))
                 blockers.Add("기존 전용 환경 또는 설정 흔적이 있어 새 프로필을 자동으로 만들 수 없습니다.");
             if (interrupted is not null && savedCandidate is null)
                 blockers.Add("중단된 최초 설정의 승인 후보를 확인할 수 없습니다. 기존 기록을 보존합니다.");
@@ -103,7 +110,11 @@ internal sealed class SetupRecovery
         if (!observation.OfficialTemplateBaselineVerified) blockers.Add("공식 Sandboxie 1.18.4 템플릿 기준을 확인하지 못했습니다.");
         if (firstSetup ? !firstSetupPolicySafe : !observation.PolicySafe) blockers.Add("전용 환경에 검토되지 않은 설정이 있어 복구를 차단했습니다.");
         if (!observation.ProcessesQueried) blockers.Add("전용 환경 프로세스를 조회하지 못했습니다.");
-        if (!observation.Ui.Fresh) blockers.Add("관리 UI 또는 설정 도구의 상태를 새로 확인하지 못했습니다.");
+        if (!observation.Ui.Fresh) blockers.Add("관리 UI 또는 설정 도구 때문에 공유 설정을 안전하게 변경할 수 없습니다. " + observation.Ui.Detail);
+        if (observation.Ui.ForeignManagementProcesses.Count != 0)
+            evidence.Add("다른 사용자/세션의 관리 프로세스: " + observation.Ui.ForeignManagementProcesses.Count + "개. 종료하지 않습니다.");
+        if (observation.Ui.UnqueryableManagementProcessIds.Count != 0)
+            evidence.Add("신원 조회 불가 관리 PID: " + string.Join(", ", observation.Ui.UnqueryableManagementProcessIds));
         if (observation.UnknownTemplateNames.Count != 0)
             blockers.Add("검토되지 않은 전역 템플릿: " + string.Join(", ", observation.UnknownTemplateNames));
         if (proposedProfile is not null)
@@ -153,7 +164,9 @@ internal sealed class SetupRecovery
             return NewPlan(SetupRecoveryState.Healthy, "Sandboxie 전용 환경이 검증된 상태입니다.", changes, blockers, evidence,
                 requiresApproval: false, allowAutomatic: consent, observation, fingerprint, false);
         var state = consent ? SetupRecoveryState.AutomaticallyApplicable : (firstSetup ? SetupRecoveryState.FirstSetup : SetupRecoveryState.ApprovalRequired);
-        var summary = firstSetup
+        var summary = !firstSetup && changes.All(change => change.Kind == SetupRecoveryChangeKind.SetUserSetting)
+            ? "현재 격리 정책이 정상이라면 실행할 수 있습니다. 현재 사용자 자동 호환성 검사 재발 방지는 선택적 준비입니다."
+            : firstSetup
             ? "SIDETALK 전용 환경을 처음 준비하려면 설정 변경을 승인해야 합니다."
             : consent
                 ? "승인된 범위와 동일한 Sandboxie 충돌을 자동으로 복구할 수 있습니다."
@@ -187,6 +200,13 @@ internal sealed class SetupRecovery
         string? backupPath = null;
         FileStream? recoveryLease = null;
         var intentPublished = false;
+        var stage = "승인 범위 확인";
+        SetupRecoveryApplyResult Fail(string id, string detail, string? backup)
+        {
+            if (intentPublished && !TryPublishFailure(id, journalPlanId, journalScopeFingerprint, stage + ": " + detail))
+                detail += " 실패 기록 저장도 완료하지 못했습니다. 시작 기록과 원본 근거를 보존합니다.";
+            return Failed(id, detail, backup) with { HistoryPath = historyRoot };
+        }
         try
         {
             // Controller callers already hold CommandJournal's shared lease. This
@@ -198,14 +218,14 @@ internal sealed class SetupRecovery
             }
             catch (IOException)
             {
-                return Failed(operationId, "다른 SIDETALK 복구가 진행 중이어서 현재 요청을 중단했습니다.", null);
+                return Fail(operationId, "다른 SIDETALK 복구가 진행 중이어서 현재 요청을 중단했습니다.", null);
             }
             cancellationToken.ThrowIfCancellationRequested();
             var profile = store.Load();
             original = environment.Inspect(store, profile, cancellationToken).Normalize();
             var originalFingerprint = SetupRecoveryFingerprint.FromObservation(original, profile);
             if (!string.Equals(plan.ScopeFingerprint, originalFingerprint.ScopeKey, StringComparison.Ordinal))
-                return Failed(operationId, "승인 후 Sandboxie 설정이 변경되어 복구 계획을 다시 확인해야 합니다.", null);
+                return Fail(operationId, "승인 후 Sandboxie 설정이 변경되어 복구 계획을 다시 확인해야 합니다.", null);
 
             // Never trust a caller supplied plan or change list. Rebuild the plan from
             // the fresh native capture and require an exact semantic match.
@@ -219,20 +239,23 @@ internal sealed class SetupRecovery
                 freshPlan.IsReconciliation != plan.IsReconciliation ||
                 !string.Equals(freshPlan.InterruptedOperationId, plan.InterruptedOperationId, StringComparison.Ordinal) ||
                 !SameChanges(freshPlan.Changes, plan.Changes))
-                return Failed(operationId, "복구 승인 범위가 현재 새로 조회한 상태와 다릅니다.", null);
+                return Fail(operationId, "복구 승인 범위가 현재 새로 조회한 상태와 다릅니다.", null);
 
             PublishEvent(new RecoveryEvent(operationId, 0, "Started", journalPlanId, journalScopeFingerprint, "복구 의도를 기록했습니다.", DateTimeOffset.UtcNow));
             intentPublished = true;
-            progress?.Report("설정 백업");
+            stage = "설정 백업";
+            progress?.Report(stage);
             backupPath = Backup(original, plan, operationId);
             PublishEvent(new RecoveryEvent(operationId, 1, "BackupCreated", journalPlanId, journalScopeFingerprint, backupPath, DateTimeOffset.UtcNow));
 
             if (plan.IsFirstSetup && profile is null)
             {
-                if (HasPreexistingProfileEvidence(original) || HasFilesystemEvidence(operationId))
-                    return Failed(operationId, "승인 이후 기존 환경 흔적이 발견되어 새 프로필 생성을 중단했습니다.", backupPath);
+                if ((!plan.IsReconciliation && HasPreexistingProfileEvidence(original)) ||
+                    HasFilesystemEvidence(plan.InterruptedOperationId ?? operationId, operationId))
+                    return Fail(operationId, "승인 이후 기존 환경 흔적이 발견되어 새 프로필 생성을 중단했습니다.", backupPath);
                 if (plan.ProposedProfile is null)
-                    return Failed(operationId, "첫 설정 프로필 후보가 없어 생성하지 않았습니다.", backupPath);
+                    return Fail(operationId, "첫 설정 프로필 후보가 없어 생성하지 않았습니다.", backupPath);
+                stage = "승인된 프로필 게시";
                 profile = store.CreateCandidate(plan.ProposedProfile);
                 original = environment.Inspect(store, profile, cancellationToken).Normalize();
                 // First setup is the one place where the new box settings are derived
@@ -240,7 +263,7 @@ internal sealed class SetupRecovery
                 // user approved this plan and before any Sandboxie setting is written.
                 var firstSetupChanges = original.ProposedChanges.Concat(FirstSetupChanges(original, profile)).Where(change => !change.Normalize().IsNoOp).ToArray();
                 if (!SameChanges(firstSetupChanges, plan.Changes))
-                    return Failed(operationId, "첫 설정 승인 범위와 현재 프로필 설정이 달라 생성 후 적용을 중단했습니다.", backupPath);
+                    return Fail(operationId, "첫 설정 승인 범위와 현재 프로필 설정이 달라 생성 후 적용을 중단했습니다.", backupPath);
                 plan = plan with
                 {
                     Changes = firstSetupChanges,
@@ -256,23 +279,24 @@ internal sealed class SetupRecovery
                 var noOpFinal = environment.Inspect(store, profile, cancellationToken).Normalize();
                 if (!SameProfile(profile, store.Load()) || !CaptureIsSafe(noOpFinal) || profile is null || !IsolationPolicy.Validate(profile, noOpFinal.Configuration).Safe ||
                     !OnlyApprovedSettingChanged(original, noOpFinal, Array.Empty<string>()))
-                    return Failed(operationId, "변경할 설정이 없어도 최종 안전 검증을 통과하지 못했습니다.", backupPath);
+                    return Fail(operationId, "변경할 설정이 없어도 최종 안전 검증을 통과하지 못했습니다.", backupPath);
                 PublishEvent(new RecoveryEvent(operationId, 2, "Completed", journalPlanId, journalScopeFingerprint, "변경할 설정이 없습니다.", DateTimeOffset.UtcNow));
-                if (grantAutomaticConsent) RecordConsent(plan, profile, noOpFinal);
                 if (plan.IsReconciliation) ReconcilePrevious(plan, operationId, journalPlanId, journalScopeFingerprint);
-                return new(operationId, SetupRecoveryState.Applied, "변경할 설정이 없어 검증을 완료했습니다.", true, backupPath, historyRoot, noOpFinal);
+                var consentDetail = grantAutomaticConsent ? RecordOptionalConsent(plan, profile, noOpFinal, operationId, 3, journalPlanId, journalScopeFingerprint) : string.Empty;
+                return new(operationId, SetupRecoveryState.Applied, "변경할 설정이 없어 검증을 완료했습니다." + consentDetail, true, backupPath, historyRoot, noOpFinal);
             }
 
+            stage = "승인된 관리 UI 정리";
             var ui = environment.QuiesceManagementUi(original, plan, cancellationToken);
             if (!ui.SafeToProceed)
-                return Failed(operationId, "호환성 관리 UI를 안전하게 정리하지 못해 복구를 중단했습니다: " + ui.Detail, backupPath);
+                return Fail(operationId, "호환성 관리 UI를 안전하게 정리하지 못해 복구를 중단했습니다: " + ui.Detail, backupPath);
             var afterUi = environment.Inspect(store, profile, cancellationToken).Normalize();
             if (!SameProfile(profile, store.Load()) || !CapturePermitsRepair(afterUi, profile, plan))
-                return Failed(operationId, "복구 UI 정리 후 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
+                return Fail(operationId, "복구 UI 정리 후 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
             if (!IsApprovedUiTransition(original.Ui, afterUi.Ui))
-                return Failed(operationId, "복구 UI 정리 후 승인되지 않은 관리 프로세스 변화가 발견되어 중단했습니다.", backupPath);
+                return Fail(operationId, "복구 UI 정리 후 승인되지 않은 관리 프로세스 변화가 발견되어 중단했습니다.", backupPath);
             if (!original.IniBytes.SequenceEqual(afterUi.IniBytes) || !OnlyApprovedSettingChanged(original, afterUi, Array.Empty<string>()))
-                return Failed(operationId, "복구 UI 정리 과정에서 설정 의미가 변경되어 중단했습니다.", backupPath);
+                return Fail(operationId, "복구 UI 정리 과정에서 설정 의미가 변경되어 중단했습니다.", backupPath);
 
             // The UI transition changes the observation fingerprint. It is safe only
             // after the fresh capture proves the exact approved identities disappeared.
@@ -281,67 +305,67 @@ internal sealed class SetupRecovery
             var sequence = 2;
             foreach (var change in changes)
             {
+                stage = "설정 적용: " + change.Section + "." + change.Key;
                 cancellationToken.ThrowIfCancellationRequested();
                 var before = environment.Inspect(store, profile, cancellationToken).Normalize();
                 if (!SameProfile(profile, store.Load()) || !CapturePermitsRepair(before, profile, plan))
-                    return Failed(operationId, "복구 중 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
+                    return Fail(operationId, "복구 중 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
                 var beforeFingerprint = SetupRecoveryFingerprint.FromObservation(before, profile);
                 if (!string.Equals(beforeFingerprint.ScopeKey, SetupRecoveryFingerprint.FromObservation(baseline, profile).ScopeKey, StringComparison.Ordinal))
-                    return Failed(operationId, "복구 중 설정 경합이 발견되어 현재 상태를 보존한 채 중단했습니다.", backupPath);
+                    return Fail(operationId, "복구 중 설정 경합이 발견되어 현재 상태를 보존한 채 중단했습니다.", backupPath);
                 var actual = ReadValue(before, change.Section, change.Key);
                 if (!actual.SequenceEqual(change.CurrentValues, StringComparer.Ordinal))
-                    return Failed(operationId, $"복구 전 설정이 계획과 달라졌습니다: {change.Section}.{change.Key}", backupPath);
+                    return Fail(operationId, $"복구 전 설정이 계획과 달라졌습니다: {change.Section}.{change.Key}", backupPath);
 
                 PublishEvent(new RecoveryEvent(operationId, sequence++, "ChangeIntent", journalPlanId, journalScopeFingerprint,
                     change.Identity, DateTimeOffset.UtcNow));
                 progress?.Report(change.Description.Length == 0 ? $"복구: {change.Section}.{change.Key}" : change.Description);
                 var command = environment.ApplyChange(before, plan, change, cancellationToken);
                 if (!command.CommandSucceeded)
-                    return Failed(operationId, "Sandboxie 설정 변경 명령이 성공하지 못했습니다: " + command.Detail, backupPath);
+                    return Fail(operationId, "Sandboxie 설정 변경 명령이 성공하지 못했습니다: " + command.Detail, backupPath);
 
                 var after = environment.Inspect(store, profile, cancellationToken).Normalize();
                 if (!SameProfile(profile, store.Load()) || !CapturePermitsRepair(after, profile, plan))
-                    return Failed(operationId, "설정 적용 후 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
+                    return Fail(operationId, "설정 적용 후 프로필 또는 설치 검증이 변해 중단했습니다.", backupPath);
                 if (before.IniBytes.SequenceEqual(after.IniBytes))
-                    return Failed(operationId, "설정 변경 명령은 완료됐지만 실제 INI가 바뀌지 않았습니다.", backupPath);
+                    return Fail(operationId, "설정 변경 명령은 완료됐지만 실제 INI가 바뀌지 않았습니다.", backupPath);
                 var observed = ReadValue(after, change.Section, change.Key);
                 if (!observed.SequenceEqual(change.DesiredValues, StringComparer.Ordinal))
-                    return Failed(operationId, "설정 변경 명령은 완료됐지만 Sandboxie API 결과가 목표와 다릅니다.", backupPath);
+                    return Fail(operationId, "설정 변경 명령은 완료됐지만 Sandboxie API 결과가 목표와 다릅니다.", backupPath);
                 if (!OnlyApprovedSettingChanged(baseline, after, [change.Identity]) ||
                     applied.Any(identity => !changes.First(candidate => string.Equals(candidate.Identity, identity, StringComparison.OrdinalIgnoreCase)).DesiredValues
                         .SequenceEqual(ReadIdentity(after, identity), StringComparer.Ordinal)))
-                    return Failed(operationId, "복구 범위 밖의 Sandboxie 설정 변경이 발견되어 중단했습니다.", backupPath);
+                    return Fail(operationId, "복구 범위 밖의 Sandboxie 설정 변경이 발견되어 중단했습니다.", backupPath);
                 applied.Add(change.Identity);
                 baseline = after;
                 PublishEvent(new RecoveryEvent(operationId, sequence++, "ChangeVerified", journalPlanId, journalScopeFingerprint,
                     change.Identity, DateTimeOffset.UtcNow));
             }
 
+            stage = "최종 재검사";
             progress?.Report("재검사");
             var final = environment.Inspect(store, profile, cancellationToken).Normalize();
             if (!SameProfile(profile, store.Load()) || !CaptureIsSafe(final) || profile is null || !IsolationPolicy.Validate(profile, final.Configuration).Safe)
-                return Failed(operationId, "복구 후 정책·프로필·설치 검증을 통과하지 못했습니다.", backupPath);
+                return Fail(operationId, "복구 후 정책·프로필·설치 검증을 통과하지 못했습니다.", backupPath);
             foreach (var change in changes)
                 if (!ReadValue(final, change.Section, change.Key).SequenceEqual(change.DesiredValues, StringComparer.Ordinal))
-                    return Failed(operationId, "복구 후 재검사에서 목표 설정을 확인하지 못했습니다.", backupPath);
+                    return Fail(operationId, "복구 후 재검사에서 목표 설정을 확인하지 못했습니다.", backupPath);
             if (!OnlyApprovedSettingChanged(original, final, changes.Select(change => change.Identity)))
-                return Failed(operationId, "복구 후 허용하지 않은 설정 의미 변경이 발견되었습니다.", backupPath);
+                return Fail(operationId, "복구 후 허용하지 않은 설정 의미 변경이 발견되었습니다.", backupPath);
 
             PublishEvent(new RecoveryEvent(operationId, sequence, "Completed", journalPlanId, journalScopeFingerprint,
                 "파일과 Sandboxie API의 복구 결과를 확인했습니다.", DateTimeOffset.UtcNow));
-            if (grantAutomaticConsent) RecordConsent(plan, profile, final);
             if (plan.IsReconciliation) ReconcilePrevious(plan, operationId, journalPlanId, journalScopeFingerprint);
-            return new(operationId, SetupRecoveryState.Applied, "복구와 재검사를 완료했습니다.", true, backupPath, historyRoot, final);
+            var optionalConsentDetail = grantAutomaticConsent ? RecordOptionalConsent(plan, profile, final, operationId, sequence + 1, journalPlanId, journalScopeFingerprint) : string.Empty;
+            return new(operationId, SetupRecoveryState.Applied, "복구와 재검사를 완료했습니다." + optionalConsentDetail, true, backupPath, historyRoot, final);
         }
         catch (OperationCanceledException error)
         {
-            if (intentPublished) TryPublishFailure(operationId, journalPlanId, journalScopeFingerprint, error.Message);
-            return Failed(operationId, "복구가 중단되었습니다. 백업과 미완료 기록을 확인해야 합니다.", backupPath);
+            return Fail(operationId, "복구가 중단되었습니다. 백업과 미완료 기록을 확인해야 합니다: " + error.Message, backupPath);
         }
-        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException)
+        catch (Exception error)
         {
-            if (intentPublished) TryPublishFailure(operationId, journalPlanId, journalScopeFingerprint, error.Message);
-            return Failed(operationId, "복구에 실패했습니다. 현재 설정과 백업을 보존했습니다: " + error.Message, backupPath);
+            return Fail(operationId, "복구에 실패했습니다. 현재 설정과 백업을 보존했습니다: " + error.Message, backupPath);
         }
         finally
         {
@@ -459,11 +483,29 @@ internal sealed class SetupRecovery
             plan.ConfigPath, observation.Install.Version, scopeHash));
     }
 
+    private string RecordOptionalConsent(SetupRecoveryPlan plan, BoxProfile? profile, SetupRecoveryObservation observation,
+        string operationId, int sequence, string planId, string scopeFingerprint)
+    {
+        try
+        {
+            RecordConsent(plan, profile, observation);
+            return string.Empty;
+        }
+        catch (Exception error)
+        {
+            var detail = " 자동 복구 동의를 저장하지 못했습니다. 검증된 설정 복구 결과를 유지합니다: " + error.Message;
+            try { PublishEvent(new RecoveryEvent(operationId, sequence, "ConsentFailed", planId, scopeFingerprint, detail, DateTimeOffset.UtcNow)); }
+            catch { detail += " 동의 저장 실패 기록도 게시하지 못했습니다. 원본 기록을 보존합니다."; }
+            return detail;
+        }
+    }
+
     private bool HasCurrentConsent(SetupRecoveryObservation observation, SetupRecoveryFingerprint fingerprint,
         BoxProfile? profile, SetupRecoveryInstallContext install, IReadOnlyList<SetupRecoveryChange> changes)
     {
         var latest = ReadConsentRecords().OrderByDescending(consent => consent.Sequence).FirstOrDefault();
         return latest is { Granted: true } &&
+            latest.Sequence > ReadPreservedConsentSequenceFloor() &&
             string.Equals(latest.ScopeFingerprint, fingerprint.ConsentKey, StringComparison.Ordinal) &&
             string.Equals(latest.UserSid, profile?.UserSid ?? fingerprint.UserSid, StringComparison.Ordinal) &&
             string.Equals(latest.BoxName, profile?.BoxName ?? fingerprint.BoxName, StringComparison.Ordinal) &&
@@ -478,7 +520,7 @@ internal sealed class SetupRecovery
     private long NextConsentSequence()
     {
         var records = ReadConsentRecords();
-        var maximum = records.Count == 0 ? 0 : records.Max(consent => consent.Sequence);
+        var maximum = Math.Max(records.Count == 0 ? 0 : records.Max(consent => consent.Sequence), ReadPreservedConsentSequenceFloor());
         if (maximum == long.MaxValue)
             throw new InvalidDataException("자동 복구 동의 기록 순서가 허용 범위를 벗어났습니다.");
         return maximum + 1;
@@ -555,13 +597,12 @@ internal sealed class SetupRecovery
         observation.ExplicitSections.Keys.FirstOrDefault(section => section.StartsWith("UserSettings_", StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
     private RecoveryEvent? ReadInterruptedOperation()
     {
-        if (Directory.Exists(recoveryRoot) && Directory.EnumerateFiles(recoveryRoot, "*.tmp", SearchOption.AllDirectories).Any())
-            throw new InvalidDataException("미완료 복구 임시 파일이 있습니다. 원본을 보존하며 자동 처리를 차단합니다.");
         if (!Directory.Exists(operationsRoot)) return null;
         ProfileStore.RejectReparseAncestors(operationsRoot);
         var operations = new Dictionary<string, List<RecoveryEvent>>(StringComparer.Ordinal);
         foreach (var path in Directory.EnumerateFileSystemEntries(operationsRoot, "*", SearchOption.TopDirectoryOnly))
         {
+            if (Path.GetExtension(path).Equals(".tmp", StringComparison.OrdinalIgnoreCase)) continue;
             if (!File.Exists(path) || !string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("복구 기록 폴더에 알 수 없는 항목이 있습니다.");
             ProfileStore.RejectReparseAncestors(path);
@@ -597,14 +638,14 @@ internal sealed class SetupRecovery
             if (string.IsNullOrWhiteSpace(reconciled.RelatedOperationId) ||
                 string.Equals(reconciled.OperationId, reconciled.RelatedOperationId, StringComparison.Ordinal) ||
                 !states.TryGetValue(reconciled.RelatedOperationId, out var related) ||
-                related.Latest.Kind != "Completed" ||
+                related.Latest.Kind is not "Completed" and not "ConsentFailed" ||
                 !string.Equals(reconciled.PlanId, related.Latest.PlanId, StringComparison.Ordinal) ||
                 !string.Equals(reconciled.ScopeFingerprint, related.Latest.ScopeFingerprint, StringComparison.Ordinal))
                 throw new InvalidDataException("이전 복구 기록의 재조정 참조가 유효한 완료 작업과 일치하지 않습니다.");
         }
 
         // Failed and partial operations remain unfinished until their evidence is reviewed.
-        return states.Values.Where(state => state.Latest.Kind is not "Completed" and not "Reconciled")
+        return states.Values.Where(state => state.Latest.Kind is not "Completed" and not "ConsentFailed" and not "Reconciled")
             .OrderBy(state => state.Started.RecordedAtUtc).ThenBy(state => state.Started.OperationId, StringComparer.Ordinal)
             .Select(state => state.Latest).FirstOrDefault();
     }
@@ -645,6 +686,12 @@ internal sealed class SetupRecovery
                 failed = true;
                 continue;
             }
+            if (entry.Kind == "ConsentFailed")
+            {
+                if (!completed || failed || entry.Sequence != expectedSequence++ || index != entries.Length - 1)
+                    throw new InvalidDataException("선택적 동의 저장 실패 이벤트가 검증된 완료 뒤에 있지 않습니다.");
+                continue;
+            }
             if (failed || completed || entry.Sequence != expectedSequence++)
                 throw new InvalidDataException("복구 기록의 연속 순서가 유효하지 않습니다.");
             switch (entry.Kind)
@@ -682,11 +729,15 @@ internal sealed class SetupRecovery
             "사용자가 새로 조회한 상태를 승인하여 이전 미완료 기록을 재조정했습니다.", DateTimeOffset.UtcNow, operationId));
     }
 
-    private void TryPublishFailure(string operationId, string planId, string scopeFingerprint, string detail)
+    private bool TryPublishFailure(string operationId, string planId, string scopeFingerprint, string detail)
     {
-        if (string.IsNullOrWhiteSpace(operationId)) return;
-        try { PublishEvent(new RecoveryEvent(operationId, 999999, "Failed", planId, scopeFingerprint, detail, DateTimeOffset.UtcNow)); }
-        catch { /* Preserve the original failure; a missing record is itself surfaced by the result. */ }
+        if (string.IsNullOrWhiteSpace(operationId)) return false;
+        try
+        {
+            PublishEvent(new RecoveryEvent(operationId, 999999, "Failed", planId, scopeFingerprint, detail, DateTimeOffset.UtcNow));
+            return true;
+        }
+        catch { return false; /* The original failure is retained in the returned detail. */ }
     }
 
     private static void WriteImmutable<T>(string path, T value)
@@ -711,7 +762,7 @@ internal sealed class SetupRecovery
     private static SetupRecoveryApplyResult Failed(string operationId, string detail, string? backupPath) =>
         new(operationId, SetupRecoveryState.Failed, detail, false, backupPath, string.Empty);
 
-    private bool HasFilesystemEvidence(string? allowedOperationId = null)
+    private bool HasFilesystemEvidence(string? allowedOperationId = null, string? currentOperationId = null)
     {
         if (string.IsNullOrWhiteSpace(allowedOperationId))
         {
@@ -720,6 +771,7 @@ internal sealed class SetupRecovery
         }
 
         if (!Directory.Exists(store.Root)) return false;
+        if (DiscoverInterruptedEvidence().Any(item => item.BlocksExecution && item.PreservationPath is not null)) return true;
         if (Directory.EnumerateFiles(store.Root, ".profile.*.tmp", SearchOption.TopDirectoryOnly).Any()) return true;
         var boxes = Path.Combine(store.Root, "Boxes");
         if (Directory.Exists(boxes) && Directory.EnumerateFileSystemEntries(boxes).Any()) return true;
@@ -730,6 +782,7 @@ internal sealed class SetupRecovery
         {
             if (string.Equals(Path.GetFileName(path), "recovery.lock", StringComparison.OrdinalIgnoreCase)) continue;
             if (!string.IsNullOrWhiteSpace(allowedOperationId) && IsOwnedRecoveryEvidence(path, allowedOperationId)) continue;
+            if (!string.IsNullOrWhiteSpace(currentOperationId) && IsOwnedRecoveryEvidence(path, currentOperationId)) continue;
             return true;
         }
         return false;

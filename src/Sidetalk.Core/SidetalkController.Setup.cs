@@ -20,6 +20,49 @@ public sealed partial class SidetalkController
         finally { ReleaseGate(); }
     }
 
+    public async Task<SetupRecoveryEvidenceInspection> InspectInterruptedEvidenceAsync()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        await gate.WaitAsync();
+        try
+        {
+            using var lease = journal.TryAcquireInspectionLease(recoverMissingLock: false);
+            return await Task.Run(() =>
+            {
+                var inspection = RequireSetupRecovery().InspectInterruptedEvidence(setupCancellation.Token);
+                if (!inspection.CanPreserve) return inspection;
+                try { RequireNoPendingCommandForSetup(writeCompletion: false); }
+                catch (Exception error) when (error is InvalidDataException or InvalidOperationException or IOException or UnauthorizedAccessException)
+                {
+                    return inspection with { CanPreserve = false, Detail = inspection.Detail + " " + InspectionFailure.Sanitize(error.Message) };
+                }
+                return inspection;
+            });
+        }
+        finally { ReleaseGate(); }
+    }
+
+    public async Task<AppSnapshot> ReconcileInterruptedEvidenceAsync(SetupRecoveryEvidenceInspection approvedInspection,
+        IProgress<string>? progress = null)
+    {
+        RequireWritable();
+        await gate.WaitAsync();
+        try
+        {
+            RequireSetupHost();
+            using var lease = journal.AcquireLease();
+            var result = await Task.Run(() =>
+            {
+                RequireNoPendingCommandForSetup();
+                var applied = RequireSetupRecovery().ReconcileInterruptedEvidence(approvedInspection, progress, setupCancellation.Token);
+                if (!applied.Succeeded) throw new InvalidOperationException(applied.Detail);
+                return applied;
+            });
+            return (await Task.Run(() => Inspect(leaseHeld: true))) with { RecoveryResultDetail = result.Detail };
+        }
+        finally { ReleaseGate(); }
+    }
+
     public Task<AppSnapshot> PrepareAsync(SetupRecoveryPlan approvedPlan, bool allowAutomatic,
         IProgress<string>? progress = null) => PrepareCoreAsync(approvedPlan, allowAutomatic, progress);
 
@@ -48,19 +91,20 @@ public sealed partial class SidetalkController
             // recovery engine has its own durable step journal, never a Start record.
             RequireSetupHost();
             using var lease = journal.AcquireLease();
-            await Task.Run(() =>
+            var result = await Task.Run(() =>
             {
                 runtime.RequireHost();
                 RequireNoPendingCommandForSetup();
-                var result = approvedPlan is null
+                var applied = approvedPlan is null
                     ? preparation.TryAutomatic(progress, setupCancellation.Token)
                     : preparation.Apply(approvedPlan, allowAutomatic, progress, setupCancellation.Token);
-                if (result is not null && !result.Succeeded)
-                    throw new InvalidOperationException(result.Detail);
+                if (applied is not null && !applied.Succeeded)
+                    throw new InvalidOperationException(applied.Detail);
+                return applied;
             });
             ObjectDisposedException.ThrowIf(disposed, this);
             automaticRecoveryFailureScope = null;
-            return await Task.Run(() => Inspect(leaseHeld: true));
+            return (await Task.Run(() => Inspect(leaseHeld: true))) with { RecoveryResultDetail = result?.Detail };
         }
         catch
         {
@@ -70,12 +114,12 @@ public sealed partial class SidetalkController
         finally { ReleaseGate(); }
     }
 
-    private void RequireNoPendingCommandForSetup()
+    private void RequireNoPendingCommandForSetup(bool writeCompletion = true)
     {
         var profile = store.Load();
         if (profile is null)
         {
-            if (Directory.EnumerateFiles(journal.JournalDirectory).Any(path => !Path.GetFileName(path).Equals("command.lock", StringComparison.Ordinal)))
+            if (Directory.Exists(journal.JournalDirectory) && Directory.EnumerateFiles(journal.JournalDirectory).Any(path => !Path.GetFileName(path).Equals("command.lock", StringComparison.Ordinal)))
                 throw new InvalidDataException("프로필 없이 기존 명령 기록이 있습니다. 새 환경으로 덮어쓸 수 없습니다.");
             return;
         }
@@ -95,7 +139,7 @@ public sealed partial class SidetalkController
         var (lifecycle, _) = commandLifecycle.InspectProcesses(() => session.Processes(profile));
         if (lifecycle.IsPending)
             throw new InvalidOperationException("미완료 SIDETALK 실행·종료 명령이 있습니다. 명령 완료와 전용 환경 상태 확인 전에는 설정을 복구하지 않습니다.");
-        if (pendingRecord is not null)
+        if (pendingRecord is not null && writeCompletion)
         {
             journal.Complete(pendingRecord);
             pendingRecord = null;

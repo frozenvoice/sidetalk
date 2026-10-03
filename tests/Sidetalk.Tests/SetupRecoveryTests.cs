@@ -17,7 +17,10 @@ internal static class SetupRecoveryTests
         ("Setup recovery rejects exit zero without file/API change", ExitZeroWithoutMutationFailsClosed),
         ("Setup recovery handles multiple approved settings", MultipleSettingsAreVerified),
         ("Setup recovery rejects UI replacement race", UiReplacementRaceFailsClosed),
-        ("Setup recovery records cancellation as unfinished", CancellationLeavesEvidence)
+        ("Setup recovery records cancellation as unfinished", CancellationLeavesEvidence),
+        ("Setup verified mutation remains executable after optional consent failure", VerifiedMutationConsentFailureIsOptional),
+        ("Setup consent failure retains prior verified reconciliation", ConsentFailureRetainsReconciliation),
+        ("Setup informational consent event publication interruption stays optional", ConsentEventPublicationStaysOptional)
     ];
 
     private static void HealthyNoOp()
@@ -108,6 +111,8 @@ internal static class SetupRecoveryTests
         Assert.False(result.Succeeded);
         Assert.True(service.HasUnfinishedRecovery);
         Assert.Equal(0, harness.Environment.ApplyCount);
+        var failure = Directory.EnumerateFiles(Path.Combine(harness.Root, "setup-recovery", "operations"), "*.Failed.json").Single();
+        Assert.Contains("설정 적용", System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(failure))!["Detail"]!.GetValue<string>());
     }
 
     private static void MultipleSettingsAreVerified()
@@ -139,6 +144,62 @@ internal static class SetupRecoveryTests
         var result = service.Apply(service.Inspect(), allowAutomatic: false, progress: progress, cancellationToken: cancellation.Token);
         Assert.False(result.Succeeded);
         Assert.True(service.HasUnfinishedRecovery);
+        Assert.Equal(1, Directory.EnumerateFiles(Path.Combine(harness.Root, "setup-recovery", "operations"), "*.Failed.json").Count());
+    }
+
+    private static InlineProgress FailConsentAfterVerification(Harness harness) => new(stage =>
+    {
+        if (stage == "재검사")
+            File.WriteAllText(Path.Combine(harness.Root, "setup-recovery", "consents"), "preserve unrelated blocking file");
+    });
+
+    private static void VerifiedMutationConsentFailureIsOptional()
+    {
+        var harness = Harness.Create(conflict: true);
+        var service = new SetupRecovery(harness.Store, harness.Environment);
+        var result = service.Apply(service.Inspect(), true, FailConsentAfterVerification(harness));
+        Assert.True(result.Succeeded, result.Detail);
+        Assert.Contains("동의를 저장하지 못했습니다", result.Detail);
+        Assert.Empty(harness.Environment.CurrentGlobal("Template"));
+        Assert.False(service.HasUnfinishedRecovery);
+        Assert.Equal(1, Directory.EnumerateFiles(Path.Combine(harness.Root, "setup-recovery", "operations"), "*.ConsentFailed.json").Count());
+        Assert.Equal("preserve unrelated blocking file", File.ReadAllText(Path.Combine(harness.Root, "setup-recovery", "consents")));
+    }
+
+    private static void ConsentFailureRetainsReconciliation()
+    {
+        var harness = Harness.Create(conflict: true);
+        var service = new SetupRecovery(harness.Store, harness.Environment);
+        using var cancellation = new CancellationTokenSource();
+        Assert.False(service.Apply(service.Inspect(), false, new InlineProgress(_ => cancellation.Cancel()), cancellation.Token).Succeeded);
+        var interrupted = service.Inspect();
+        Assert.Equal(SetupRecoveryState.Interrupted, interrupted.State);
+        var result = service.Apply(interrupted, true, FailConsentAfterVerification(harness));
+        Assert.True(result.Succeeded, result.Detail);
+        Assert.Contains("동의를 저장하지 못했습니다", result.Detail);
+        Assert.False(service.HasUnfinishedRecovery);
+        Assert.Equal(1, Directory.EnumerateFiles(Path.Combine(harness.Root, "setup-recovery", "operations"), "*.Reconciled.json").Count());
+    }
+
+    private static void ConsentEventPublicationStaysOptional()
+    {
+        var harness = Harness.Create(conflict: true);
+        var service = new SetupRecovery(harness.Store, harness.Environment);
+        var result = service.Apply(service.Inspect(), true, FailConsentAfterVerification(harness));
+        Assert.True(result.Succeeded);
+        var target = Directory.EnumerateFiles(Path.Combine(harness.Root, "setup-recovery", "operations"), "*.ConsentFailed.json").Single();
+        File.Move(target, target + "." + Guid.NewGuid().ToString("N") + ".tmp");
+        Assert.False(service.HasUnfinishedRecovery);
+        Assert.False(service.InspectInterruptedEvidence().BlocksExecution);
+        Assert.True(service.ReconcileInterruptedEvidence(service.InspectInterruptedEvidence()).Succeeded);
+        File.Delete(target); // simulate restart between archive move and event publication
+        var inspection = service.InspectInterruptedEvidence();
+        Assert.True(inspection.CanPreserve);
+        Assert.True(inspection.Items.Single().NeedsPublication);
+        Assert.False(inspection.BlocksExecution);
+        Assert.False(service.HasUnfinishedRecovery);
+        Assert.True(service.ReconcileInterruptedEvidence(inspection).Succeeded);
+        Assert.False(service.HasUnfinishedRecovery);
     }
     private sealed class Harness
     {

@@ -84,7 +84,22 @@ public sealed record SetupRecoveryUiState(
     string Detail = "")
 {
     public static SetupRecoveryUiState Empty { get; } = new(true, Array.Empty<SetupRecoveryProcessIdentity>());
+    public IReadOnlyList<SetupRecoveryProcessIdentity> ForeignManagementProcesses { get; init; } = Array.Empty<SetupRecoveryProcessIdentity>();
+    public IReadOnlyList<int> UnqueryableManagementProcessIds { get; init; } = Array.Empty<int>();
 }
+
+public enum SetupRecoveryEvidenceKind
+{
+    CompleteRecord, ApprovedProfileCandidate, IncompleteRecord, ConflictingRecord, UnknownSource, ConsentRecord
+}
+
+public sealed record SetupRecoveryEvidenceItem(string OriginalPath, string Sha256, long Length,
+    SetupRecoveryEvidenceKind Kind, string? OperationId, bool BlocksExecution, string Detail,
+    string? PreservationPath = null, bool NeedsPublication = false);
+
+public sealed record SetupRecoveryEvidenceInspection(IReadOnlyList<SetupRecoveryEvidenceItem> Items,
+    bool CanPreserve, bool BlocksExecution, string Detail, string HistoryPath,
+    string SnapshotFingerprint, string ScopeFingerprint);
 
 /// <summary>
 /// A scope identity covers every input that can make a repair unsafe: the actual

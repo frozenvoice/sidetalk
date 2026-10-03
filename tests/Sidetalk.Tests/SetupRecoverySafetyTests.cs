@@ -11,6 +11,8 @@ internal static class SetupRecoverySafetyTests
     [
         ("Setup safety: first setup keeps exact candidate approval before profile publish", FirstSetupRequiresExactCandidate),
         ("Setup safety: profile publish failure resumes with the same profile", ProfilePublishFailureResumesWithSameProfile),
+        ("Setup safety: complete staged profile preserves original approved identity", CompleteProfileStagePreservesApproval),
+        ("Setup safety: truncated staged profile preserves original approved identity", TruncatedProfileStagePreservesApproval),
         ("Setup safety: healthy consent survives recurrence and revocation", HealthyConsentIsRetainedAndRevoked),
         ("Setup safety: every reviewed template subset recurs within scope", EveryReviewedTemplateSubsetIsRepairable),
         ("Setup safety: backup failure performs no environment writes", BackupFailureDoesNotWrite),
@@ -18,6 +20,41 @@ internal static class SetupRecoverySafetyTests
         ("Setup safety: tampered baseline and unknown template never write", TamperedBaselineAndUnknownTemplateDoNotWrite),
         ("Setup safety: temporary operation evidence blocks first setup", TemporaryOperationEvidenceBlocks)
     ];
+
+    private static void CompleteProfileStagePreservesApproval() => StagedProfilePreservesApproval(truncated: false);
+    private static void TruncatedProfileStagePreservesApproval() => StagedProfilePreservesApproval(truncated: true);
+
+    private static void StagedProfilePreservesApproval(bool truncated)
+    {
+        var harness = Harness.FirstSetup("setup-safety-staged-profile-" + truncated, needsRepair: true);
+        var originalService = harness.Service();
+        var approved = originalService.Inspect();
+        var failingStore = truncated
+            ? new ProfileStore(harness.Store.Root, profileWriter: (stream, _) =>
+            {
+                stream.Write(Encoding.UTF8.GetBytes("{\"Schema\":1,"));
+                throw new IOException("interrupted profile serialization");
+            })
+            : new ProfileStore(harness.Store.Root, beforePublish: (_, _) => throw new IOException("interrupted profile publication"));
+        var failingService = new SetupRecovery(failingStore, harness.Environment);
+        Assert.False(failingService.Apply(approved, false).Succeeded);
+        var staged = Directory.EnumerateFiles(harness.Store.Root, ".profile.*.tmp").Single();
+        var bytes = File.ReadAllBytes(staged);
+        Assert.True(harness.Store.Load() is null);
+        Assert.Equal(SetupRecoveryState.Blocked, originalService.Inspect().State);
+        var inspection = originalService.InspectInterruptedEvidence();
+        Assert.Equal(SetupRecoveryEvidenceKind.ApprovedProfileCandidate, inspection.Items.Single().Kind);
+        Assert.True(originalService.ReconcileInterruptedEvidence(inspection).Succeeded);
+        Assert.Equal(approved.ProposedProfile, harness.Store.Load());
+        Assert.SequenceEqual(bytes, File.ReadAllBytes(originalService.InspectInterruptedEvidence().Items.Single().PreservationPath!));
+        Assert.True(originalService.HasUnfinishedRecovery);
+        var resumedPlan = originalService.Inspect();
+        Assert.Equal(SetupRecoveryState.Interrupted, resumedPlan.State);
+        Assert.Equal(approved.ProposedProfile, resumedPlan.ProposedProfile);
+        var completed = originalService.Apply(resumedPlan, false);
+        Assert.True(completed.Succeeded, completed.Detail);
+        Assert.False(originalService.HasUnfinishedRecovery);
+    }
 
     private static void FirstSetupRequiresExactCandidate()
     {

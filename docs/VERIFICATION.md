@@ -1,3 +1,53 @@
+# 중단 복구·실행 권한 분리 검증 — 2026-10-04
+
+시작 시 실제 원격 `origin/main`, 로컬 main과 리뷰 기준은 모두 `e906cfe78f3ebc8601f4769434aae10f15ed8007`이었다. 작업 트리는 깨끗했으며 별도 `codex/recovery-reconciliation`에서 수정했다. main 병합·릴리스·기존 배포본 교체는 하지 않았다. 아래 결과는 이번 소스로 실행한 결과이며 과거 사용자 성공 보고를 재사용하지 않는다.
+
+## 변경 동작과 보존 경계
+
+현재 정책·공식 설치·일반 사용자 컨텍스트·전용 소유 정보/경로·명령 상태를 새로 확인하여 실행 권한을 계산한다. 선택적 재발 방지 옵션, 자동 복구 동의, 다른 세션 관리 UI와 복구 전용 조회 실패는 그 자체로 정상 실행을 차단하지 않는다. 실제 정책 충돌·소유 불일치·미완료 명령·결과가 불명확한 설정 변경은 계속 차단한다. 공유 INI 복구에는 다른 사용자/세션 및 조회 불가 관리 프로세스 검사를 유지한다.
+
+앱의 **원본을 보존하고 다시 확인**은 설정 복구 권한과 별도로 조건을 확인한다. 원본 바이트와 SHA-256, 원래/보존 위치, 관련 작업을 `recovery-evidence`에 덮어쓰지 않고 저장한다. 보존 파일도 경로·해시·구조를 검증하며 unknown/충돌 근거는 계속 차단한다. 중단한 최초 프로필은 같은 승인 후보를 유지한다. 검증 완료 후 동의 저장만 실패하면 실행을 막지 않고 안내하며, 철회 저장 흔적을 보존해도 과거 자동 동의가 되살아나지 않는다.
+
+명령 저널 schema 2는 사용자·세션 및 머신 DPAPI로 보호한 네이티브 uptime 근거를 선택적으로 기록한다. schema 1은 값을 추측해 채우지 않고 호환한다. PID 부재·재사용·실제 종료·신원 미확인을 구분하며 접근 거부와 종료 코드 미확인을 성공으로 만들지 않는다. 이전 부팅 증명은 현재 uptime이 인증된 기록값보다 작은 경우에 한정된다. [Windows API 의미와 제한](windows-command-recovery-api.md)을 참고한다.
+
+## 이번 로컬 검증
+
+- `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`: **성공**, Release 앱·IsolationProbe 빌드 경고/오류 0, 자체 콘솔 회귀 **167/167**, 합성 WPF 검사와 **14개 fixture** 생성. 최종 소요 17.69초.
+- `pwsh -NoProfile -File tests/Sidetalk.BuildChecks/Program.ps1`: **9개 검사 그룹 / 19개 임시 저장소 fixture 성공**. 실제 publish나 앱 실행 없이 실패 전파·패키징 보호·롤백을 검사했다.
+- 콘솔의 실제 Windows API 검사: 현재 토큰/세션·생성 시각·이미지·네이티브 uptime·머신 DPAPI와 변조 거부, 부재 PID, PID 4 접근 거부, 무해한 실제 자식의 종료 코드 17, 다른 경로의 동명 Start 및 관련 후보 구분. 로컬 이전 부팅 분기는 합성 검사다. 다른 사용자/세션의 실제 관리 UI와 실제 VM 재부팅에 따른 명령 복구는 아래 VM에서 별도로 확인했다. PID 재사용 접근 거부의 실제 실측으로 확대하지 않는다.
+- 합성 회귀: 선택적 준비와 실행 권한 분리, 다른 세션 복구 차단/다른 사용자 종료 0회, 실제 정책/소유 불일치 차단, 잘린·완전한·충돌·출처 불명 기록, 같은 프로필 후보, 보존 중 재시작·경로 이탈 거부·변경 경합, 실패/취소 원인 보존, 읽기 전용 무쓰기, 새 결과로만 UI 권한 복원과 선택적 동의 실패 안내 유지.
+- 최종 독립 리뷰에서 원본 해시 확인과 경로 기반 이동 사이의 외부 파일 교체 경합을 발견했다. 배타적 읽기/DELETE 핸들로 동일 파일을 이름 변경하며 기존 보존본을 덮어쓰지 않도록 수정했다. 실제 Windows 파일 API 경합·중단·보존본 충돌 검사 3개를 추가한 후 위 통합 검사를 다시 수행했다.
+
+초기 WPF restore는 제한 실행 환경에서 진단 없는 MSBuild 실패를 반환했다. 일반 실행 권한으로 restore 후 위 최종 통합 검사는 통과했다. 이 환경 오류를 성공으로 계산하거나 제품 검사를 완화하지 않았다. 로컬 근거는 `artifacts/verification/recovery-20261004/race-fixed-verify.log`, `build-checks.log`와 로그에 표시된 새 임시 WPF 폴더다. 개인 환경·시험 VM 자료는 Git/CI artifact에 포함하지 않는다.
+
+## 별도 Windows 시험 환경
+
+사용자의 추가 설치 승인으로 VirtualBox 7.2.20과 공식 Windows 11 Enterprise 평가판 VM을 설치했다. 게스트 실제 버전은 **10.0.26300.9457 x64**이며 호스트와 사용자 폴더·클립보드를 공유하지 않는다. 공식 Sandboxie Plus **1.18.4**의 사용자 구성 요소 **5.73.4**, 드라이버 **5.73.2**, .NET Desktop Runtime 8.0.30과 공식 카카오톡을 설치하고 서명·검토 기준을 확인했다. 복구 시험은 `sidetest` 표준 권한으로 수행했다. 호스트의 정상 Sandboxie 설정이나 카카오톡 계정은 실패 fixture로 사용하지 않았다. 실행 절차와 opt-in 도구는 [WINDOWS-RECOVERY-TEST.md](WINDOWS-RECOVERY-TEST.md)에 있다.
+
+다음은 합성 외부 경계가 아닌 실제 Windows·Sandboxie 파일/API·공식 SbieIni 경로에서 확인한 결과다. 중단 시점 주입은 각 항목에 구분했다.
+
+- 최초 준비에서 `crash-profile`은 실제 승인 후보의 프로필 임시 파일 저장 뒤 게시 직전에 예상 종료 코드 **77**로 중단했다. 이후 읽기 전용 `--diagnose`, `--render`, `--render-setup`, `--render-small`을 수행하는 동안 원본·프로필·INI 해시가 변하지 않았다. `reconcile`은 원본 **1개**를 보존하고 **같은 승인 후보**로 최초 설정을 완료했다.
+- `seed-six`와 `seed-subset`으로 재발시킨 여섯 템플릿 및 부분 집합을 승인 범위의 `repair-auto`로 복구했다. 실제 공식 SbieIni 변경 뒤 파일과 API의 목표 값을 대조했다. 이미 정상인 상태의 자동 재조회에서는 추가 백업이 **0개**였다.
+- 현재 사용자 `SbieCtrl_AutoRunSoftCompat=y`만 남은 상태에서 실제 실행 판단은 **`CanLaunch=true`**였다. 이후 승인 복구로 **`n`** 적용을 확인했다.
+- `management-ui`는 승인한 **같은 사용자·세션의 SandMan**만 정확한 신원으로 종료하고 복구했다. `seed-six → crash-change → reconcile`도 성공했다. `crash-change`는 실제 SbieIni 변경과 검증 직후에 종료 코드 **77**을 주입한 시험이며, 자연 발생한 앱 장애로 취급하지 않는다.
+- 다른 사용자 `sidelab`, 세션 **0**의 SandMan **PID 8012**는 처음에 표준 `sidetest`에서 신원을 조회할 수 없었다. 복구는 **Blocked**였고 실제 앱의 `--diagnose`는 **Ready / `CanLaunch=true`**였다. 조회 실패를 다른 사용자 신원 확인 성공으로 계산하지 않았다.
+- 대상 소유자가 정확한 PID·실행 경로·생성 시각·SID·세션을 확인한 뒤 시험 fixture의 DACL에서 **`PROCESS_QUERY_LIMITED_INFORMATION` / `TOKEN_QUERY` 읽기 권한만** 임시로 부여했다. 실제 `inspect-foreign`은 **Foreign 1 / Unknown 0 / Blocked**였으며 원래 PID가 살아 있음을 확인했다. 원래 ACL 복원도 성공했다. 제품의 신원 검사나 종료 권한을 완화한 결과가 아니다.
+- 처음 Task Scheduler의 다른 세션 fixture 실행 실패와 이후 신원 조회 불가로 인한 `inspect-foreign` 실패 보고서는 별도로 보존했으며 성공 결과에 포함하지 않았다.
+- 다른 사용자 SandMan의 정상 VM 재부팅 종료 뒤 `DefaultBox`와 그 사용자의 `AutoStartAgent`/`BoxGrouping`이 INI에 추가됐다. 기존 불변 기준의 기타 설정 해시 비교는 실패했고 `post-foreign-repair`는 변경 전에 중단됐다. 해당 실패·원래 기준·새 설정을 보존한 채 별도 외부 변경 checkpoint로 후속 시험 구간을 나눴다. 이 checkpoint는 복구 성공으로 계산하지 않으며, 이후에는 현재 사용자 옵션만 변경하고 새로 생긴 다른 box와 사용자 설정의 보존도 비교한다.
+- 표준 사용자 컨텍스트에서 `run-local.cmd`를 **CLI로 실행**하여 실제 GUI의 **Ready 상태와 버튼 활성화**를 관찰했다. 탐색기 더블클릭과 GUI 승인 버튼 클릭은 미수행이다. 키 입력 전달 문제 때문에 GUI 승인 흐름을 시험한 것으로 계산하지 않는다.
+
+보존 sentinel의 실제 범위는 **profile.json 바이트·소유 정보, 전용 box의 일반 파일, 무관한 HKCU 시험 값, 무관한 Sandboxie 설정**이다. 실제 box 레지스트리 hive, 다른 box의 데이터, 계정 데이터 보존 검증으로 확대하지 않는다. 카카오톡 계정 로그인·송수신·계정 데이터 접근은 **0회**다. 개인 환경 정보가 있는 최종 원본 보고서와 두 불변 기준은 Git에서 제외되는 `artifacts/vm-lab/collected-final`에 보존하며 CI artifact에 넣지 않는다.
+
+`seed-optional → crash-record → crash-preserve → reconcile`도 실제 VM에서 성공했다. 실제 SbieIni 변경을 검증한 뒤 잘린 이벤트 바이트를 주입해 종료 코드 77로 중단했고, 다음 프로세스는 불변 보존 메타데이터 게시와 원본의 동일 핸들 이동 사이에서 다시 77로 중단했다. 최종 재조정은 누적 원본 **2개**, **같은 승인 후보**, 실제 INI/API 일치와 sentinel 보존을 확인했다. 부분 바이트와 중단 위치는 시험 도구가 주입했으며 실제 전원 장애 전체 조건의 검증으로 확대하지 않는다. VM 연결 서비스가 멈춰 정상 종료에 반응하지 않은 별도 환경 장애는 보고서를 보존한 뒤 VM reset으로 복구했으며 제품 복구 성공에 포함하지 않았다.
+
+실제 PID 없는 명령 intent 저장 뒤 정상 VM 재부팅을 수행했고 `command-reconcile`도 성공했다. 전후 보고서의 operationId와 인증된 기록값을 대조했다. 저장한 native uptime **126421ms**보다 재부팅 후 **51234ms**가 작다는 근거로 **PreviousBoot**를 확인했고, 제품 컨트롤러가 새로 조회한 빈 전용 box·정상 정책·동일 프로필을 확인한 뒤 명령 기록을 재조정하여 **CanLaunch=true**가 됐다. 종료 코드는 **null(미확인)**을 유지했다. Start.exe를 만들기 전 intent 단계에서 중단한 시험이며 카카오톡 실행이나 실제 명령의 성공 종료를 주장하지 않는다.
+
+## Windows CI
+
+PR과 main push에서 PowerShell 7과 `global.json`으로 검증·WPF·빌드 스크립트 회귀를 순차 실행하는 workflow를 추가했다. 기본 `contents: read`, 공식 Actions 커밋 고정, checkout 자격 증명 미보존, 로그/합성 PNG만 7일간 업로드한다. 실제 hosted 실행 상태와 로그는 [작업 브랜치의 Actions 결과](https://github.com/frozenvoice/sidetalk/actions?query=branch%3Acodex%2Frecovery-reconciliation)에서 확인한다. Windows Server 2022 CI 성공은 Sandboxie 복구 통합 시험 결과가 아니다.
+
+제품·회귀 소스 `21edcfa`의 [첫 PR CI](https://github.com/frozenvoice/sidetalk/actions/runs/37146806599)는 모든 단계가 **성공(1분 33초)**했다. 이 실행에서 발생한 Node 20 폐기 경고를 반영하여 공식 Node 24 Actions의 고정 커밋으로 갱신했다(checkout 7.0.1, setup-dotnet 6.0.0, upload-artifact 7.0.1). 최종 브랜치의 재검증 결과는 위 Actions 링크에 별도 실행으로 남는다.
+
 # 검증 결과 — 0.1.6 / 2026-09-22
 
 ## 토큰 핸들·조회 오류 구분·앱 아이콘 후속 수정
