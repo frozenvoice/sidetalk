@@ -44,6 +44,12 @@
 
 관리 UI의 정상 종료 등 외부 동작이 다른 설정을 새로 저장하면 기존 보존 기준 비교는 실패해야 한다. 원래 기준이나 새 box를 지워 시험을 계속하지 않는다. `checkpoint-external-settings <새 보고서> <새 baseline.json>`은 기존 프로필·소유 정보·파일/HKCU sentinel이 그대로인지 확인하고, 현재 정책·빈 전용 box·INI/API 일치를 검증한 뒤 외부 설정 차이만 별도 불변 시험 기준에 기록한다. 원래 기준의 바이트/해시와 관찰한 설정을 보고서에 남기며 설정 쓰기나 복구 성공으로 계산하지 않는다. 이후 각 phase의 선택적 네 번째 인자로 그 기준을 명시한다. 다른 box가 생긴 구간에서는 `seed-optional → crash-record → crash-preserve → reconcile`로 현재 사용자 옵션만 시험한다. 전역 템플릿 재발 주입은 다른 box가 있으면 계속 거부한다.
 
+`seed-optional → crash-completed → reconcile-completed → inspect-completed`는 현재 사용자 재발 방지 옵션만 사용해 완전한 Completed 임시 기록이 남는 중단을 검사한다. 각 phase에는 같은 불변 baseline을 네 번째 인자로 명시할 수 있다. `crash-completed`는 실제 변경·파일/API 검증·Completed JSON 직렬화와 `Flush(true)`가 끝난 뒤, 최종 파일의 덮어쓰기 없는 게시 직전에 `Environment.Exit(77)`로 시험 프로세스만 중단한다. 최종 Completed와 Failed가 모두 없고 기존 Started·BackupCreated·ChangeIntent·ChangeVerified가 연속인지 확인하며, 원본 바이트·해시와 기존 기록 해시를 별도 새 시험 근거 파일에 기록한다. 중단 시점은 주입이며 전원 장애 실측은 아니다. 이 hook는 일반 앱 UI에 노출하지 않는다.
+
+새 프로세스의 `reconcile-completed`는 보존 전 읽기 전용 컨트롤러 조회·진단을 세 번 수행한 뒤, 생산 코드로 정확한 Completed 원본을 보존한다. 보존만으로 완료되지 않는지 확인하고 새 SetupRecovery 인스턴스로 현재 상태를 재검증하여 새 작업 B를 완료하며, A의 Reconciled가 B와 승인 범위를 참조하는지 검사한다. 원본 original.bin·메타데이터·기존 정상 기록의 바이트/해시, 프로필·소유 정보·파일/HKCU sentinel·무관한 설정을 보존하고 A의 Completed 재게시 및 Failed 추가는 모두 0이어야 한다. 추가 작업과 백업은 B의 한 개씩으로 제한한다.
+
+`inspect-completed`는 이미 보존·재조정된 파일 구성을 처음 읽는 별도 시험 프로세스에서 실행한다. 새 읽기 전용 컨트롤러 세 개의 `InspectAsync`, `InspectInterruptedEvidenceAsync`, 진단 내보내기 후 검사 대상 파일·INI 해시가 그대로이며 작업·백업·보존본이 늘어나지 않는지 확인한다. 필요한 새 진단 출력만 허용하고 설정 쓰기·프로세스 종료·원본 이동·이벤트 게시·새 완료 기록 생성은 수행하지 않는다. 같은 phase를 새 보고서 이름으로 여러 번 실행하여 프로세스 재시작을 반복한다. 공식 카카오톡 설치가 없는 fixture에서는 실행 권한을 미검증으로 표시하며 설치가 있으면 현재 `CanLaunch` 복원을 확인한다. 실제 카카오톡 실행이나 계정 접근은 수행하지 않는다. 도구는 같은 store/baseline에 속하는 최신 중단 근거를 사용하고, 기존 중단·재조정 근거와 보고서를 덮어쓰지 않는다.
+
 원본 보존의 파일 교체 경합은 실제 Windows API로 별도 검사한다. [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)의 배타적 읽기/DELETE 핸들을 유지하고 [FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)로 동일 파일만 덮어쓰기 없이 이동한다. 원본 경로에 새 파일이 끼어들거나 기존 보존본이 덮어써지지 않는지 확인한다.
 
 ## CI 범위

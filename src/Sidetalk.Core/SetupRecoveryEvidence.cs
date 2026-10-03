@@ -204,7 +204,7 @@ internal sealed partial class SetupRecovery
             {
                 operationId = parts[0];
                 var entry = DeserializeEvidence<RecoveryEvent>(bytes);
-                if (entry is not null && EventMatchesTarget(entry, target) && CanRestoreEvent(entry))
+                if (entry is not null && EventMatchesTarget(entry, target) && IsEventOriginValid(entry))
                 {
                     kind = SetupRecoveryEvidenceKind.CompleteRecord;
                     detail = "완전한 복구 이벤트입니다. 완료 이벤트는 게시하지 않고 현재 상태 재조정을 요구합니다.";
@@ -319,8 +319,70 @@ internal sealed partial class SetupRecovery
         return candidate.BoxName == name && candidate.OwnerToken == token;
     }
 
+    private bool IsEventOriginValid(RecoveryEvent entry) =>
+        entry.Kind == "Completed" ? IsCompletedOriginValid(entry) : CanRestoreEvent(entry);
+
+    private bool IsCompletedOriginValid(RecoveryEvent entry)
+    {
+        try
+        {
+            // The original Completed proves only its historical prefix. Later Failed
+            // or Reconciled records belong to the current published chain, which is
+            // checked separately before accepting an archived Completed below.
+            var prefix = new Dictionary<int, RecoveryEvent>();
+            void AddPrefix(RecoveryEvent record, string target)
+            {
+                if (record.OperationId != entry.OperationId || !EventMatchesTarget(record, target))
+                    throw new InvalidDataException("과거 완료 기록의 작업과 원래 위치가 일치하지 않습니다.");
+                if (record.Sequence > entry.Sequence) return;
+                if (prefix.TryGetValue(record.Sequence, out var existing) && existing != record)
+                    throw new InvalidDataException("과거 완료 기록에 충돌하는 순서가 있습니다.");
+                prefix[record.Sequence] = record;
+            }
+
+            if (Directory.Exists(operationsRoot))
+            {
+                foreach (var path in Directory.EnumerateFiles(operationsRoot, entry.OperationId + ".*.json"))
+                {
+                    ProfileStore.RejectReparseAncestors(path);
+                    var record = DeserializeEvidence<RecoveryEvent>(File.ReadAllBytes(path))
+                        ?? throw new InvalidDataException("복구 이벤트가 비어 있거나 손상되었습니다.");
+                    AddPrefix(record, path);
+                }
+                foreach (var path in Directory.EnumerateFiles(operationsRoot, entry.OperationId + ".*.tmp"))
+                {
+                    ProfileStore.RejectReparseAncestors(path);
+                    var record = DeserializeEvidence<RecoveryEvent>(File.ReadAllBytes(path));
+                    var match = ImmutableTemporaryName.Match(Path.GetFileName(path));
+                    if (record is not null && match.Success) AddPrefix(record, match.Groups["target"].Value);
+                }
+            }
+            if (Directory.Exists(EvidenceRoot))
+                foreach (var directory in Directory.EnumerateDirectories(EvidenceRoot))
+                {
+                    if (!File.Exists(Path.Combine(directory, "metadata.json"))) continue;
+                    var manifest = ReadEvidenceManifest(directory);
+                    if (manifest.Kind != SetupRecoveryEvidenceKind.CompleteRecord || manifest.OperationId != entry.OperationId ||
+                        !File.Exists(manifest.PreservationPath)) continue;
+                    var bytes = File.ReadAllBytes(manifest.PreservationPath);
+                    if (bytes.LongLength != manifest.Length || HashBytes(bytes) != manifest.Sha256)
+                        throw new InvalidDataException("보존 원본의 바이트가 기록과 다릅니다.");
+                    var record = DeserializeEvidence<RecoveryEvent>(bytes)
+                        ?? throw new InvalidDataException("보존된 복구 이벤트가 손상되었습니다.");
+                    var match = ImmutableTemporaryName.Match(Path.GetFileName(manifest.OriginalPath));
+                    if (!match.Success) throw new InvalidDataException("보존 이벤트의 원래 파일 이름이 유효하지 않습니다.");
+                    AddPrefix(record, match.Groups["target"].Value);
+                }
+            AddPrefix(entry, $"{entry.OperationId}.{entry.Sequence:D6}.{entry.Kind}.json");
+            ValidateOperation(prefix.Values.ToArray());
+            return true;
+        }
+        catch (Exception error) when (error is InvalidDataException or JsonException or InvalidOperationException) { return false; }
+    }
+
     private bool CanRestoreEvent(RecoveryEvent entry)
     {
+        if (entry.Kind == "Completed") return false;
         try
         {
             var records = Directory.Exists(operationsRoot)
@@ -425,9 +487,15 @@ internal sealed partial class SetupRecovery
         {
             var entry = DeserializeEvidence<RecoveryEvent>(bytes);
             var eventTarget = Path.Combine(Path.GetDirectoryName(manifest.OriginalPath)!, match.Groups["target"].Value);
-            if (entry is null || entry.OperationId != manifest.OperationId || !EventMatchesTarget(entry, eventTarget) || !CanRestoreEvent(entry))
+            if (entry is null || entry.OperationId != manifest.OperationId || !EventMatchesTarget(entry, eventTarget) || !IsEventOriginValid(entry))
                 throw new InvalidDataException("보존 이벤트의 현재 체인과 원래 위치를 확인할 수 없습니다.");
-            if (entry.Kind == "Completed") return; // fresh Apply reconciliation must prove completion
+            if (entry.Kind == "Completed")
+            {
+                // Validate the actual publication order and every reconciliation
+                // reference. The archived prefix never supplies completion authority.
+                _ = ReadInterruptedOperation();
+                return;
+            }
             target = Path.Combine(Path.GetDirectoryName(manifest.OriginalPath)!, match.Groups["target"].Value);
         }
         else if (manifest.Kind == SetupRecoveryEvidenceKind.ApprovedProfileCandidate)
