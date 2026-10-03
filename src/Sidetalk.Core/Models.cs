@@ -13,6 +13,7 @@ public sealed record AppSnapshot(
     bool ActionsPermitted = true)
 {
     public InspectionFailure? InspectionFailure { get; init; }
+    public string? RecoveryResultDetail { get; init; }
 }
 
 public interface ISidetalkController : IDisposable
@@ -23,6 +24,8 @@ public interface ISidetalkController : IDisposable
     Task StopAsync();
     Task<string> ExportDiagnosticsAsync(string path);
     Task<SetupRecoveryPlan> InspectSetupRecoveryAsync();
+    Task<SetupRecoveryEvidenceInspection> InspectInterruptedEvidenceAsync();
+    Task<AppSnapshot> ReconcileInterruptedEvidenceAsync(SetupRecoveryEvidenceInspection approvedInspection, IProgress<string>? progress = null);
     Task<AppSnapshot> PrepareAsync(SetupRecoveryPlan approvedPlan, bool allowAutomatic, IProgress<string>? progress = null);
     Task<AppSnapshot> PrepareAutomaticallyAsync(IProgress<string>? progress = null);
     Task RevokeAutomaticRecoveryAsync();

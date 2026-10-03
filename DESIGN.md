@@ -37,7 +37,7 @@ Use Segoe UI with Malgun Gothic fallback. Body is 14 DIPs, regular weight, 23 DI
 - The visible amber explanation distinguishes current configuration verification from the unverified rules applied at process start. Full policy wording remains in diagnostics. Only the exact standard explanation is condensed; lifecycle feedback and unfamiliar detail remain on the primary screen.
 - Blocked, setup-required and unknown states retain the controller's explanation. Application errors clear stale availability and disable actions.
 - Normal exit is KakaoTalk's own tray command. 보조 카카오톡 강제 종료 clearly names SIDETALK's owned-environment-wide force-stop, which retains its confirmation dialog.
-- Controls and event handlers both require ActionsPermitted and their CanLaunch/CanStop flag. Busy actions disable competing actions. Policy checks, storage preservation and command lifecycle belong to Core. Approved setup is a separate planner/executor and shares the command lock. Launch also requires a healthy preparation plan.
+- Controls and event handlers both require ActionsPermitted and their freshly computed CanLaunch/CanStop flag. Busy actions disable competing actions. Policy checks, storage preservation and command lifecycle belong to Core. Approved setup is a separate planner/executor and shares the command lock. Optional recurrence prevention and repair availability do not gate a verified launch; unresolved actual setup changes and command identity still do.
 
 ## Interaction and verification
 
@@ -49,4 +49,6 @@ The native WPF client area was rendered at default and minimum dimensions. Separ
 
 The existing diagnostics tab now starts with a preparation panel when setup or recovery is needed. The first approval-required plan opens this tab once. It names the actual global selectors to remove, the current-user recurrence option, verified management-window termination targets, preserved data and blocking reasons. Automatic recurrence repair is opt-in and revocable. Semantic plan changes reset an unsaved consent choice.
 
-Preparation shows backup, prevention, repair and reinspection progress. Competing actions are disabled; closing is deferred during a write. Failures clear stale launch readiness. Inspection, diagnose and render paths never apply recovery. The recovery panel uses existing colors, typography and scroll behavior; no account or login success is inferred.
+Preparation shows backup, prevention, repair and reinspection progress. Competing actions are disabled; closing is deferred during a write. Mutation failures clear stale launch readiness. A repair-only inspection failure retains execution permission only from the current successful execution inspection. Inspection, diagnose and render paths never apply recovery. The recovery panel uses existing colors, typography and scroll behavior; no account or login success is inferred.
+
+Interrupted evidence has its own read-only classification and explicitly approved preservation action, independent of whether a settings plan can apply. Original bytes, hashes, locations and operation relationships are retained. Preserving evidence is not proof of completion. Unknown evidence remains a blocker and the same approved first-setup candidate is reused after fresh validation.

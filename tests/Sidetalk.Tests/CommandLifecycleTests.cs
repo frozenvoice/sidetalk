@@ -26,13 +26,55 @@ public static class CommandLifecycleTests
         ("Command lifecycle: production inspection waits for exit before querying", InspectionWaitsForExit),
         ("Command lifecycle: production query failure is recoverable", InspectionQueryFailureRecovers),
         ("Command lifecycle: zero exit stop with residual is retryable", ZeroExitStopResidual),
-        ("Command lifecycle: nonzero exit with empty box records actual state", NonzeroEmptyStop)
+        ("Command lifecycle: nonzero exit with empty box records actual state", NonzeroEmptyStop),
+        ("Command lifecycle: access-denied boundary stays pending until fresh recovery", AccessDeniedCanRetryWithoutCompleting),
+        ("Command lifecycle: retry preserves original live command", RetryPreservesLiveCommand)
     ];
 
     public static void Run()
     {
         foreach (var test in Cases)
             test.Run();
+    }
+
+    private static void AccessDeniedCanRetryWithoutCompleting()
+    {
+        using var lifecycle = new CommandLifecycle();
+        var unknown = new DeniedRecoveredHandle();
+        lifecycle.Begin(SidetalkCommandAction.Stop, unknown);
+        var queries = 0;
+        var result = lifecycle.InspectProcesses(() => { queries++; return Array.Empty<BoxProcess>(); });
+        Assert.Equal(0, queries);
+        Assert.True(result.State.IsPending);
+        Assert.True(result.State.ExitCode is null);
+        lifecycle.RetryUncertainRecovery();
+        Assert.Equal(1, unknown.DisposeCount);
+        Assert.False(lifecycle.IsPending);
+        // Only a newly acquired exit proof plus fresh box query can finish the retry.
+        lifecycle.Begin(SidetalkCommandAction.Stop, new FakeHandle(true, 0));
+        Assert.True(lifecycle.Observe(null).IsPending);
+        Assert.False(lifecycle.InspectProcesses(() => { queries++; return Array.Empty<BoxProcess>(); }).State.IsPending);
+        Assert.Equal(1, queries);
+    }
+
+    private static void RetryPreservesLiveCommand()
+    {
+        using var lifecycle = new CommandLifecycle();
+        var live = new FakeHandle(false, 0);
+        lifecycle.Begin(SidetalkCommandAction.Launch, live);
+        lifecycle.RetryUncertainRecovery();
+        Assert.True(lifecycle.IsPending);
+        Assert.Equal(0, live.DisposeCount);
+    }
+
+    private sealed class DeniedRecoveredHandle : ISidetalkCommandHandle
+    {
+        public int DisposeCount { get; private set; }
+        public CommandRecoveryState RecoveryState => CommandRecoveryState.IdentityUnavailable;
+        public bool HasExited => throw new System.ComponentModel.Win32Exception(5);
+        public int ExitCode => throw new InvalidOperationException("unknown");
+        public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public void Dispose() => DisposeCount++;
     }
 
     private static void InspectionWaitsForExit()

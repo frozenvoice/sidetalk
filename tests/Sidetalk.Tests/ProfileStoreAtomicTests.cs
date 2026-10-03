@@ -12,8 +12,59 @@ internal static class ProfileStoreAtomicTests
         ("ProfileStore fails closed when the profile path is a directory", DirectoryProfilePathFailsClosed),
         ("ProfileStore leaves a failed staged write for diagnosis and retry", FailedStageIsRetainedForRetry),
         ("ProfileStore does not overwrite a profile published by a race", PublishedRaceIsLoadedWithoutOverwrite),
-        ("ProfileStore rejects a corrupt racing winner and preserves both files", CorruptRacingWinnerFailsClosed)
+        ("ProfileStore rejects a corrupt racing winner and preserves both files", CorruptRacingWinnerFailsClosed),
+        ("ProfileStore reuses the exact complete approved staged candidate", ApprovedCandidateRetry),
+        ("ProfileStore preserves a conflicting approved staging file", ApprovedCandidateConflict),
+        ("ProfileStore preserves a truncated approved staging file", ApprovedCandidateTruncated)
     ];
+
+    private static BoxProfile Candidate(string root, char token = 'c')
+    {
+        var name = "SideTalk_" + new string('a', 23);
+        return new(1, name, new string(token, 32), ProfileStore.CurrentSid(), Path.Combine(root, "Boxes", name));
+    }
+
+    private static void ApprovedCandidateRetry()
+    {
+        var root = TestContext.CreateRunDirectory("profile-approved-retry");
+        var candidate = Candidate(root);
+        var store = new ProfileStore(root, beforePublish: (_, _) => throw new InvalidOperationException("interrupted before publish"));
+        Assert.Throws<InvalidOperationException>(() => store.CreateCandidate(candidate));
+        var staged = GetStagedFiles(root).Single();
+        var originalBytes = File.ReadAllBytes(staged);
+        var retry = new ProfileStore(root, profileWriter: (_, _) => throw new InvalidOperationException("must reuse approval"));
+        Assert.Equal(candidate, retry.CreateCandidate(candidate));
+        Assert.Equal(candidate, retry.Load());
+        Assert.SequenceEqual(originalBytes, File.ReadAllBytes(retry.ProfilePath));
+    }
+
+    private static void ApprovedCandidateConflict()
+    {
+        var root = TestContext.CreateRunDirectory("profile-approved-conflict");
+        Directory.CreateDirectory(root);
+        var candidate = Candidate(root);
+        var staged = Path.Combine(root, $".profile.{candidate.OwnerToken}.tmp");
+        var conflicting = Candidate(root, 'd');
+        File.WriteAllText(staged, JsonSerializer.Serialize(conflicting));
+        var bytes = File.ReadAllBytes(staged);
+        var store = new ProfileStore(root);
+        Assert.Throws<InvalidDataException>(() => store.CreateCandidate(candidate));
+        Assert.SequenceEqual(bytes, File.ReadAllBytes(staged));
+        Assert.False(File.Exists(store.ProfilePath));
+    }
+
+    private static void ApprovedCandidateTruncated()
+    {
+        var root = TestContext.CreateRunDirectory("profile-approved-truncated");
+        Directory.CreateDirectory(root);
+        var candidate = Candidate(root);
+        var staged = Path.Combine(root, $".profile.{candidate.OwnerToken}.tmp");
+        File.WriteAllText(staged, "{\"Schema\":");
+        var store = new ProfileStore(root);
+        Assert.Throws<InvalidDataException>(() => store.CreateCandidate(candidate));
+        Assert.Equal("{\"Schema\":", File.ReadAllText(staged));
+        Assert.False(File.Exists(store.ProfilePath));
+    }
 
     private static void MissingProfileReturnsNull()
     {
@@ -55,8 +106,8 @@ internal static class ProfileStoreAtomicTests
         Assert.Equal("{\"Schema\":1", File.ReadAllText(staged[0], Encoding.UTF8));
 
         var retry = new ProfileStore(root);
-        var profile = retry.Create();
-        Assert.Equal(profile, retry.Load());
+        Assert.Throws<InvalidDataException>(() => retry.Create());
+        Assert.Equal<BoxProfile?>(null, retry.Load());
         Assert.True(File.Exists(staged[0]), "Failed staged data must be retained for diagnosis.");
     }
 

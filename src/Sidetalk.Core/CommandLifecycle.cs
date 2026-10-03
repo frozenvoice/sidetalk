@@ -13,9 +13,21 @@ public enum SidetalkCommandAction
 public interface ISidetalkCommandHandle : IDisposable
 {
     CommandProcessIdentity? Identity => null;
+    CommandRecoveryState RecoveryState => CommandRecoveryState.NotRecovered;
     bool HasExited { get; }
     int ExitCode { get; }
     Task WaitForExitAsync(CancellationToken cancellationToken);
+}
+
+public enum CommandRecoveryState
+{
+    NotRecovered,
+    SameProcessAlive,
+    SameProcessExited,
+    MissingOrReused,
+    IdentityUnavailable,
+    IntentWithoutPid,
+    PreviousBoot
 }
 
 /// <summary>Starts a Sandboxie command. The seam keeps lifecycle tests process-free.</summary>
@@ -84,6 +96,22 @@ public sealed class CommandLifecycle : IDisposable
     public bool IsPending => pending is not null;
     public SidetalkCommandAction? PendingAction => pending?.Action;
     public CommandLifecycleResult LastResult => lastResult;
+
+    /// <summary>
+    /// Allows fresh read-only identity inspection after a recovered ambiguous handle.
+    /// Does not complete the durable intent or release a known live original handle.
+    /// </summary>
+    public void RetryUncertainRecovery()
+    {
+        if (pending?.Handle.RecoveryState is not (CommandRecoveryState.IdentityUnavailable or CommandRecoveryState.IntentWithoutPid)) return;
+        try { if (pending.Handle.HasExited) return; }
+        catch
+        {
+            pending.Handle.Dispose();
+            pending = null;
+            lastResult = IdleResult();
+        }
+    }
 
     public void Begin(SidetalkCommandAction action, ISidetalkCommandHandle handle)
     {

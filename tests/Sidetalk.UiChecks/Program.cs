@@ -244,7 +244,9 @@ internal static class Program
                      "ExportDiagnosticsButton",
                      "PrepareRecoveryButton",
                      "RevokeAutomaticButton",
-                     "OpenRecoveryHistoryButton"
+                     "OpenRecoveryHistoryButton",
+                     "PreserveEvidenceButton",
+                     "OpenEvidenceHistoryButton"
                  })
         {
             Assert(!((Button)window.FindName(controlName)).IsEnabled, "Render action is enabled: " + controlName);
@@ -338,7 +340,7 @@ internal static class Program
             Assert(((TextBlock)window.FindName("ProcessIdsText")).Text.Contains("12345", StringComparison.Ordinal), "Recovery failure lost the observed process");
             Assert(((TextBlock)window.FindName("BoxNameText")).Text == actionableSnapshot.BoxName, "Recovery inspection failure discarded fresh box evidence");
             Assert(((TextBlock)window.FindName("CheckedAtText")).Text == actionableSnapshot.CheckedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"), "Recovery inspection failure discarded fresh timestamp");
-            Assert(!((Button)window.FindName("StopButton")).IsEnabled, "Recovery inspection failure left stop enabled");
+            Assert(((Button)window.FindName("StopButton")).IsEnabled, "Optional recovery inspection failure blocked freshly verified stop");
             Assert(!((Button)window.FindName("PrepareRecoveryButton")).IsEnabled, "Recovery inspection failure left recovery enabled");
 
             recoveryController.FailRecoveryInspect = false;
@@ -346,6 +348,44 @@ internal static class Program
             Assert(((Button)window.FindName("StopButton")).IsEnabled, "Recovery inspection retry did not restore stop");
             Assert(((Button)window.FindName("PrepareRecoveryButton")).IsEnabled, "Recovery inspection retry did not restore recovery");
             Assert(recoveryController.RecoveryInspectCount >= 2, "Recovery inspection retry did not call controller again");
+        }
+
+        using (var controller = new PreviewController(actionableSnapshot, CreateApprovalPlan()))
+        {
+            var window = new MainWindow(controller, isRenderMode: false);
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((Button)window.FindName("LaunchButton")).IsEnabled, "Optional prevention preparation blocked current launch");
+            Assert(controller.RecoveryInspectCount == 1, "Refresh repeated full recovery inspection");
+            controller.FailRecoveryInspect = true;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((Button)window.FindName("LaunchButton")).IsEnabled, "Fresh healthy execution depended on recovery query success");
+            Assert(!((Button)window.FindName("PrepareRecoveryButton")).IsEnabled, "Failed recovery query retained repair authority");
+            controller.FailInspect = true;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(!((Button)window.FindName("LaunchButton")).IsEnabled, "Failed execution query reused old launch authority");
+            controller.FailRecoveryInspect = false;
+            window.ApplyRecoveryPlan(CreateHealthyPlan());
+            Assert(!((Button)window.FindName("LaunchButton")).IsEnabled, "Recovery plan restored stale launch authority without a new execution observation");
+            window.ApplyInterruptedEvidence(new([new("original.tmp", "A", 1, SetupRecoveryEvidenceKind.IncompleteRecord, null, true, "잘린 기록")],
+                true, true, "원본 보존 가능", "preserved", "snapshot", "scope"));
+            Assert(((Button)window.FindName("PreserveEvidenceButton")).IsEnabled, "Blocked normal repair disabled independently verified preservation");
+            controller.FailInspect = false;
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((Button)window.FindName("LaunchButton")).IsEnabled, "New execution observation did not restore launch authority");
+            Assert(controller.WritableCallCount == 0, "Refresh performed a write");
+        }
+
+        const string optionalConsentWarning = "설정 복구는 검증됐지만 자동 복구 동의를 저장하지 못했습니다. 원본 기록을 보존했습니다.";
+        using (var warningController = new PreviewController(actionableSnapshot with { RecoveryResultDetail = optionalConsentWarning }, CreateHealthyPlan()))
+        {
+            var window = new MainWindow(warningController, isRenderMode: false);
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((TextBlock)window.FindName("RecoveryResultText")).Text.Contains(optionalConsentWarning, StringComparison.Ordinal), "Successful repair discarded optional consent persistence warning");
+            Assert(((Border)window.FindName("RecoveryPanel")).Visibility == Visibility.Visible, "Healthy preparation hid the optional consent persistence warning");
+            Assert(((Button)window.FindName("LaunchButton")).IsEnabled, "Optional persistence warning blocked fresh verified launch");
+            window.RefreshNowAsync().GetAwaiter().GetResult();
+            Assert(((TextBlock)window.FindName("RecoveryResultText")).Text.Contains(optionalConsentWarning, StringComparison.Ordinal), "Healthy refresh removed the completed repair warning");
+            Assert(warningController.WritableCallCount == 0, "Warning display retried configuration writes");
         }
 
         var failures = InspectionDiagnostics.Snapshot();
@@ -549,6 +589,14 @@ internal sealed class PreviewController : ISidetalkController
         if (FailRecoveryInspect)
             throw new InvalidOperationException("preview recovery inspect failure");
         return Task.FromResult(_plan);
+    }
+
+    public SetupRecoveryEvidenceInspection EvidenceInspection { get; set; } = new([], false, false, "중단 흔적 없음", "", "", "");
+    public Task<SetupRecoveryEvidenceInspection> InspectInterruptedEvidenceAsync() => Task.FromResult(EvidenceInspection);
+    public Task<AppSnapshot> ReconcileInterruptedEvidenceAsync(SetupRecoveryEvidenceInspection approvedInspection, IProgress<string>? progress = null)
+    {
+        WritableCallCount++;
+        return Task.FromResult(_snapshot);
     }
 
     public Task<AppSnapshot> PrepareAsync(

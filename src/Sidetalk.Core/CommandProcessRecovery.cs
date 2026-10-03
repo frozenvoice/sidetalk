@@ -17,6 +17,8 @@ public sealed record CommandProcessIdentity(int ProcessId, long CreationTimeUtcT
 public interface ICommandProcessRecovery
 {
     ISidetalkCommandHandle Recover(CommandProcessIdentity identity);
+    ISidetalkCommandHandle Recover(PendingCommandRecord record) => record.Process is { } identity
+        ? Recover(identity) : RecoverUnidentified(record.StartExe);
 
     /// <summary>
     /// Reconciles an intent that was persisted before its PID could be recorded.
@@ -32,6 +34,13 @@ public interface ICommandProcessRecovery
 /// </summary>
 public sealed class ProcessCommandRecovery : ICommandProcessRecovery
 {
+    private readonly Func<string, CommandRecoveryContext?, bool> previousBoot;
+
+    public ProcessCommandRecovery(Func<string, CommandRecoveryContext?, bool>? previousBoot = null)
+    {
+        this.previousBoot = previousBoot ?? WindowsCommandEvidence.ProvesPreviousBoot;
+    }
+
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint Synchronize = 0x00100000;
     private const uint ProcessAccess = ProcessQueryLimitedInformation | Synchronize;
@@ -39,9 +48,18 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
     private const uint WaitTimeout = 0x102;
     private const uint WaitFailed = 0xFFFFFFFF;
     private const uint StillActive = 259;
-    private const int ErrorFileNotFound = 2;
-    private const int ErrorInvalidHandle = 6;
     private const int ErrorInvalidParameter = 87;
+
+    public ISidetalkCommandHandle Recover(PendingCommandRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (previousBoot(record.OperationId, record.RecoveryContext))
+            return new MissingCommandHandle(record.Process, CommandRecoveryState.PreviousBoot);
+        var context = record.RecoveryContext;
+        if (context?.Boot is not null && !WindowsCommandEvidence.AuthenticatesBootEvidence(record.OperationId, context))
+            context = null; // Failed authentication must not narrow intent candidate scope.
+        return record.Process is { } identity ? Recover(identity) : RecoverUnidentified(record.StartExe, context);
+    }
 
     public ISidetalkCommandHandle Recover(CommandProcessIdentity identity)
     {
@@ -52,13 +70,16 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
         {
             if (IsMissingPid(openError))
                 return new MissingCommandHandle(identity);
-            throw Win32Failure("명령 프로세스를 다시 열 수 없습니다", openError);
+            return new UnavailableCommandHandle(identity, Win32Failure("명령 프로세스를 다시 열 수 없습니다", openError));
         }
 
         try
         {
             if (!TryGetCreationTicks(handle, out var actualTicks, out var creationError))
-                throw Win32Failure("명령 프로세스 생성 시각을 확인할 수 없습니다", creationError);
+            {
+                handle.Dispose();
+                return new UnavailableCommandHandle(identity, Win32Failure("명령 프로세스 생성 시각을 확인할 수 없습니다", creationError));
+            }
 
             // A different creation time means that the recorded PID has already been
             // reused.  Do not retain or observe the replacement process.
@@ -70,12 +91,16 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
 
             if (!TryGetImagePath(handle, out var actualPath, out var imageError))
             {
-                if (IsProcessGone(imageError) && IsExited(handle))
+                if (IsExited(handle))
                 {
-                    handle.Dispose();
-                    return new MissingCommandHandle(identity);
+                    // An exact creation-time match on this retained, signaled handle
+                    // proves the original process has exited. Windows may already
+                    // release image information (including ERROR_GEN_FAILURE 31).
+                    // Preserve its handle so the real exit code remains observable.
+                    return new RecoveredProcessHandle(handle, identity);
                 }
-                throw Win32Failure("명령 프로세스 실행 파일을 확인할 수 없습니다", imageError);
+                handle.Dispose();
+                return new UnavailableCommandHandle(identity, Win32Failure("명령 프로세스 실행 파일을 확인할 수 없습니다", imageError));
             }
 
             if (!SameImagePath(actualPath, identity.ImagePath))
@@ -91,6 +116,9 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
     }
 
     public ISidetalkCommandHandle RecoverUnidentified(string expectedStartExe)
+        => RecoverUnidentified(expectedStartExe, null);
+
+    private static ISidetalkCommandHandle RecoverUnidentified(string expectedStartExe, CommandRecoveryContext? context)
     {
         var expected = ValidateImagePath(expectedStartExe);
         if (!Path.GetFileName(expected).Equals("Start.exe", StringComparison.OrdinalIgnoreCase))
@@ -102,19 +130,46 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
             {
                 var pid = candidate.Id;
                 var handle = Open(pid, out var openError);
+                var canWait = handle is not null;
                 if (handle is null)
-                    throw Win32Failure("후보 명령 프로세스를 확인할 수 없습니다", openError);
+                {
+                    if (IsMissingPid(openError)) continue;
+                    // SYNCHRONIZE may be denied while exact image/token queries are
+                    // permitted. Query-only fallback can exclude a reliably unrelated
+                    // candidate; it cannot use wait state or assume command exit.
+                    handle = Open(pid, out openError, ProcessQueryLimitedInformation);
+                    if (handle is null)
+                    {
+                        if (IsMissingPid(openError)) continue;
+                        return new UnavailableCommandHandle(null, Win32Failure("후보 명령 프로세스를 확인할 수 없습니다", openError));
+                    }
+                }
 
                 using (handle)
                 {
                     if (!TryGetImagePath(handle, out var actualPath, out var imageError))
-                        throw Win32Failure("후보 명령 실행 파일을 확인할 수 없습니다", imageError);
+                    {
+                        if (CandidateHasExited(handle, canWait)) continue;
+                        return new UnavailableCommandHandle(null, Win32Failure("후보 명령 실행 파일을 확인할 수 없습니다", imageError));
+                    }
 
-                    // The exact candidate is considered ambiguous even if it exits while
-                    // this inspection is running. A fresh inspection can be attempted
-                    // once the process snapshot no longer contains it.
-                    if (SameImagePath(actualPath, expected))
-                        throw new InvalidOperationException("동일한 Start.exe 명령이 실행 중인지 식별할 수 없어 복구를 차단했습니다.");
+                    // A retained, signaled candidate cannot still start box children.
+                    // Live exact-image candidates need independently reliable scope.
+                    if (!SameImagePath(actualPath, expected)) continue;
+                    if (CandidateHasExited(handle, canWait)) continue;
+                    try
+                    {
+                        // Compare token user/session only after exact image identity.
+                        // Metadata absent in schema 1 cannot be filled from this app's
+                        // current context: the original command remains ambiguous.
+                        var token = WindowsCommandEvidence.ReadTokenContext(handle);
+                        if (CandidateIsUnrelated(expected, context, actualPath, token.UserSid, token.SessionId)) continue;
+                    }
+                    catch (Exception error) when (error is Win32Exception or InvalidDataException)
+                    {
+                        return new UnavailableCommandHandle(null, error);
+                    }
+                    return new UnavailableCommandHandle(null, new InvalidOperationException("같은 사용자·세션의 Start.exe가 이전 명령일 가능성이 남아 있어 복구를 차단했습니다."), CommandRecoveryState.IntentWithoutPid);
                 }
             }
         }
@@ -125,7 +180,16 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
         }
         // There is no PID or exit code to trust in this branch.  The controller must
         // perform a fresh, validated box enumeration before completing the journal.
-        return new MissingCommandHandle(null);
+        return new MissingCommandHandle(null, CommandRecoveryState.IntentWithoutPid);
+    }
+
+    /// <summary>No command-line or timestamp guesses: same-scope candidates remain possible commands.</summary>
+    public static bool CandidateIsUnrelated(string expectedImage, CommandRecoveryContext? recordedContext,
+        string actualImage, string? actualUserSid, int? actualSessionId)
+    {
+        if (!SameImagePath(actualImage, expectedImage)) return true;
+        if (recordedContext is null || string.IsNullOrWhiteSpace(actualUserSid) || actualSessionId is null) return false;
+        return recordedContext.UserSid != actualUserSid || recordedContext.SessionId != actualSessionId;
     }
 
     /// <summary>
@@ -149,7 +213,7 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
             if (!SameImagePath(actualPath, expected))
                 throw new InvalidDataException("시작된 명령의 실행 파일이 요청한 Start.exe와 다릅니다.");
         }
-        else if (!IsExited(handle) || !IsProcessGone(imageError))
+        else if (!IsExited(handle))
         {
             // A live command with an unreadable image is unsafe to journal.  A fast
             // exited command is allowed to use the already verified expected path.
@@ -159,9 +223,9 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
         return new CommandProcessIdentity(process.Id, creationTicks, expected);
     }
 
-    private static SafeProcessHandle? Open(int processId, out int error)
+    private static SafeProcessHandle? Open(int processId, out int error, uint access = ProcessAccess)
     {
-        var handle = OpenProcess(ProcessAccess, inheritHandle: false, checked((uint)processId));
+        var handle = OpenProcess(access, inheritHandle: false, checked((uint)processId));
         if (!handle.IsInvalid)
         {
             error = 0;
@@ -251,8 +315,14 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
         throw Win32Failure("명령 프로세스 상태를 확인할 수 없습니다", Marshal.GetLastWin32Error());
     }
 
+    private static bool CandidateHasExited(SafeProcessHandle handle, bool canWait) => canWait
+        ? IsExited(handle)
+        // GetExitCodeProcess accepts limited-query handles. STILL_ACTIVE remains
+        // ambiguous (including a process actually returning 259); do not synthesize
+        // success or request additional rights simply to eliminate that ambiguity.
+        : GetExitCodeProcess(handle, out var code) && code != StillActive;
+
     private static bool IsMissingPid(int error) => error == ErrorInvalidParameter;
-    private static bool IsProcessGone(int error) => error is ErrorInvalidParameter or ErrorInvalidHandle or ErrorFileNotFound;
 
     private static InvalidOperationException Win32Failure(string action, int error) =>
         new($"{action} (Win32 {error}: {new Win32Exception(error).Message})");
@@ -260,6 +330,7 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
     private sealed class RecoveredProcessHandle(SafeProcessHandle processHandle, CommandProcessIdentity identity) : ISidetalkCommandHandle
     {
         public CommandProcessIdentity? Identity => identity;
+        public CommandRecoveryState RecoveryState => HasExited ? CommandRecoveryState.SameProcessExited : CommandRecoveryState.SameProcessAlive;
         public bool HasExited
         {
             get
@@ -301,11 +372,22 @@ public sealed class ProcessCommandRecovery : ICommandProcessRecovery
         public void Dispose() => processHandle.Dispose();
     }
 
-    private sealed class MissingCommandHandle(CommandProcessIdentity? identity) : ISidetalkCommandHandle
+    private sealed class MissingCommandHandle(CommandProcessIdentity? identity, CommandRecoveryState state = CommandRecoveryState.MissingOrReused) : ISidetalkCommandHandle
     {
         public CommandProcessIdentity? Identity => identity;
+        public CommandRecoveryState RecoveryState => state;
         public bool HasExited => true;
         public int ExitCode => throw new InvalidOperationException("이전 명령 프로세스의 종료 코드를 확인할 수 없습니다.");
+        public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public void Dispose() { }
+    }
+
+    private sealed class UnavailableCommandHandle(CommandProcessIdentity? identity, Exception error, CommandRecoveryState state = CommandRecoveryState.IdentityUnavailable) : ISidetalkCommandHandle
+    {
+        public CommandProcessIdentity? Identity => identity;
+        public CommandRecoveryState RecoveryState => state;
+        public bool HasExited => throw new InvalidOperationException("이전 명령의 신원을 확인할 근거가 부족합니다.", error);
+        public int ExitCode => throw new InvalidOperationException("이전 명령의 종료 코드는 미확인입니다.", error);
         public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public void Dispose() { }
     }

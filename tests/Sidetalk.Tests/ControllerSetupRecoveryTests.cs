@@ -11,8 +11,13 @@ internal static class ControllerSetupRecoveryTests
         ("Setup controller: diagnostics and render authority never write", ReadOnlyNeverWrites),
         ("Setup controller: failed recovery removes launch readiness across restart", FailureBlocksAcrossRestart),
         ("Setup controller: unfinished Start command prevents configuration writes", PendingCommandBlocks),
+        ("Setup controller: staged recovery and terminated command reconcile without circular block", TerminatedCommandAndStagedEvidence),
         ("Setup controller: two instances serialize repair with command lease", TwoInstancesSerialize),
-        ("Setup controller: launch requires recurrence prevention approval", LaunchRequiresPreparation),
+        ("Setup controller: optional recurrence prevention never gates healthy launch", LaunchAllowsOptionalPreparation),
+        ("Setup controller: foreign management UI blocks repair only", ForeignManagementBlocksRepairOnly),
+        ("Management identity classifier: current, foreign and inaccessible remain distinct", ClassifiesManagementIdentities),
+        ("Setup controller: optional recovery inspection failure permits current verified execution", OptionalInspectionFailure),
+        ("Setup controller: policy conflict and ownership mismatch remain execution blockers", PolicyStillBlocks),
         ("Setup controller: revocation verifies host before creating journals", RevocationRequiresHost),
         ("Setup controller: diagnostic preserves running observation when recovery fails", DiagnosticPreservesRunningObservation)
     ];
@@ -28,6 +33,8 @@ internal static class ControllerSetupRecoveryTests
         Assert.Throws<InvalidOperationException>(() => controller.PrepareAsync(plan, true).GetAwaiter().GetResult());
         Assert.Throws<InvalidOperationException>(() => controller.PrepareAutomaticallyAsync().GetAwaiter().GetResult());
         Assert.Throws<InvalidOperationException>(() => controller.RevokeAutomaticRecoveryAsync().GetAwaiter().GetResult());
+        var evidence = controller.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+        Assert.Throws<InvalidOperationException>(() => controller.ReconcileInterruptedEvidenceAsync(evidence).GetAwaiter().GetResult());
         controller.ExportDiagnosticsAsync(Path.Combine(h.Store.Root, "diagnostics.json")).GetAwaiter().GetResult();
         Assert.Equal(0, h.Environment.WriteCount);
         Assert.Equal(0, h.Runner.Starts);
@@ -68,6 +75,44 @@ internal static class ControllerSetupRecoveryTests
         Assert.Equal(0, h.Runner.Starts);
     }
 
+    private static void TerminatedCommandAndStagedEvidence()
+    {
+        foreach (var exited in new[] { false, true })
+        {
+            var h = new Harness("setup-controller-staged-and-command-" + exited);
+            h.Recovery.Exited = exited;
+            var journal = new CommandJournal(h.Store.Root);
+            using (journal.AcquireLease()) journal.Prepare(h.Profile, SidetalkCommandAction.Launch, h.Runtime.StartExe);
+            var stagingFolder = Path.Combine(h.Store.Root, "setup-recovery", "operations");
+            Directory.CreateDirectory(stagingFolder);
+            var original = Path.Combine(stagingFolder, "unknown.json." + Guid.NewGuid().ToString("N") + ".tmp");
+            File.WriteAllText(original, "{broken");
+            var bytes = File.ReadAllBytes(original);
+            using var controller = h.Controller();
+            Assert.False(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+            Assert.False(controller.InspectSetupRecoveryAsync().GetAwaiter().GetResult().CanApply);
+            var inspection = controller.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+            Assert.Equal(exited, inspection.CanPreserve);
+            Assert.Equal(0, Directory.GetFiles(journal.JournalDirectory, "*.completed.json").Length);
+            Assert.SequenceEqual(bytes, File.ReadAllBytes(original));
+            if (exited)
+            {
+                controller.ReconcileInterruptedEvidenceAsync(inspection).GetAwaiter().GetResult();
+                Assert.Equal(1, Directory.GetFiles(journal.JournalDirectory, "*.completed.json").Length);
+                Assert.False(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+                Assert.True(controller.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult().Items.Count != 0);
+            }
+            else
+            {
+                Assert.Throws<InvalidOperationException>(() => controller.ReconcileInterruptedEvidenceAsync(inspection).GetAwaiter().GetResult());
+                Assert.SequenceEqual(bytes, File.ReadAllBytes(original));
+                Assert.Equal(0, Directory.GetFiles(journal.JournalDirectory, "*.completed.json").Length);
+            }
+            Assert.Equal(0, h.Environment.WriteCount);
+            Assert.Equal(0, h.Runner.Starts);
+        }
+    }
+
     private static void TwoInstancesSerialize()
     {
         var h = new Harness("setup-controller-concurrent");
@@ -89,17 +134,94 @@ internal static class ControllerSetupRecoveryTests
             Assert.False(second.InspectAsync().GetAwaiter().GetResult().CanLaunch);
         }
         finally { release.Set(); }
-        Assert.True(pending.GetAwaiter().GetResult().CanLaunch);
+        var recovered = pending.GetAwaiter().GetResult();
+        Assert.True(recovered.CanLaunch);
+        Assert.False(string.IsNullOrWhiteSpace(recovered.RecoveryResultDetail));
         Assert.Equal(1, h.Environment.WriteCount);
         Assert.Equal(0, h.Runner.Starts);
     }
 
-    private static void LaunchRequiresPreparation()
+    private static void LaunchAllowsOptionalPreparation()
     {
         var h = new Harness("setup-controller-launch-block");
         using var controller = h.Controller();
-        Assert.False(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        Assert.Equal(0, h.Environment.InspectCount);
+        var plan = controller.InspectSetupRecoveryAsync().GetAwaiter().GetResult();
+        Assert.True(plan.RequiresApproval);
+        Assert.True(plan.CanApply);
+        Assert.Equal(0, h.Environment.WriteCount);
+        Assert.Equal(0, h.Runner.Starts);
+        Assert.False(Directory.Exists(controller.RecoveryHistoryPath));
+        // The fake runner throws at process creation; reaching it proves the fresh
+        // execution gate accepted the current policy without recurrence consent.
         Assert.Throws<InvalidOperationException>(() => controller.LaunchAsync().GetAwaiter().GetResult());
+        Assert.Equal(1, h.Runner.Starts);
+        Assert.Equal(0, h.Environment.WriteCount);
+        var failed = Directory.GetFiles(Path.Combine(h.Store.Root, "command-journal"), "*.failed.json");
+        Assert.Equal(1, failed.Length);
+        Assert.True(File.ReadAllText(failed[0]).Contains("Must not launch.", StringComparison.Ordinal));
+        Assert.Equal(0, Directory.GetFiles(Path.Combine(h.Store.Root, "command-journal"), "*.completed.json").Length);
+    }
+
+    private static void ClassifiesManagementIdentities()
+    {
+        var image = Path.Combine(TestContext.CreateRunDirectory("management-classification"), "SandMan.exe");
+        var classification = WindowsSetupRecoveryEnvironment.ClassifyManagementProcesses([1, 2, 3, 4, 5], pid => pid switch
+        {
+            1 => new(pid, 100, image, "CURRENT", 1),
+            2 => new(pid, 200, image, "CURRENT", 2),
+            3 => new(pid, 300, image, "FOREIGN", 1),
+            4 => throw new UnauthorizedAccessException("Cannot open manager."),
+            _ => new(pid, 500, image)
+        }, "CURRENT", 1);
+        Assert.False(classification.Fresh);
+        Assert.SequenceEqual(new[] { 1 }, classification.ApprovedManagementProcesses.Select(item => item.ProcessId));
+        Assert.SequenceEqual(new[] { 2, 3 }, classification.ForeignManagementProcesses.Select(item => item.ProcessId));
+        Assert.SequenceEqual(new[] { 4, 5 }, classification.UnqueryableManagementProcessIds);
+        var onlyCurrent = WindowsSetupRecoveryEnvironment.ClassifyManagementProcesses([1],
+            pid => new(pid, 100, image, "CURRENT", 1), "CURRENT", 1);
+        Assert.True(onlyCurrent.Fresh);
+        Assert.Equal(1, onlyCurrent.ApprovedManagementProcesses.Count);
+    }
+
+    private static void ForeignManagementBlocksRepairOnly()
+    {
+        var h = new Harness("setup-controller-foreign-ui");
+        h.Environment.ForeignManager = true;
+        using var controller = h.Controller();
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        var plan = controller.InspectSetupRecoveryAsync().GetAwaiter().GetResult();
+        Assert.False(plan.CanApply);
+        Assert.Throws<InvalidOperationException>(() => controller.PrepareAsync(plan, false).GetAwaiter().GetResult());
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        Assert.Equal(0, h.Environment.WriteCount);
+        Assert.Equal(0, h.Environment.CloseCount);
+        Assert.Equal(0, h.Runner.Starts);
+    }
+
+    private static void OptionalInspectionFailure()
+    {
+        var h = new Harness("setup-controller-optional-inspection");
+        h.Environment.InspectionError = new InvalidOperationException("Optional recurrence inspection failed.");
+        using var controller = h.Controller();
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        Assert.False(controller.InspectSetupRecoveryAsync().GetAwaiter().GetResult().CanApply);
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        Assert.Equal(0, h.Environment.WriteCount);
+    }
+
+    private static void PolicyStillBlocks()
+    {
+        var h = new Harness("setup-controller-policy-safety");
+        using var controller = h.Controller();
+        h.Runtime.UnsafePolicy = true;
+        Assert.False(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        h.Runtime.UnsafePolicy = false;
+        h.Runtime.WrongOwner = true;
+        Assert.False(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
+        h.Runtime.WrongOwner = false;
+        Assert.True(controller.InspectAsync().GetAwaiter().GetResult().CanLaunch);
         Assert.Equal(0, h.Runner.Starts);
         Assert.Equal(0, h.Environment.WriteCount);
     }
@@ -140,6 +262,7 @@ internal static class ControllerSetupRecoveryTests
         public FakeEnvironment Environment { get; }
         public FakeRuntime Runtime { get; }
         public FakeRunner Runner { get; } = new();
+        public PendingRecovery Recovery { get; } = new();
         public Harness(string name, bool needsRepair = true)
         {
             Store = new ProfileStore(TestContext.CreateRunDirectory(name));
@@ -148,18 +271,22 @@ internal static class ControllerSetupRecoveryTests
             Runtime = new FakeRuntime(Store.Root, Profile);
         }
         public SidetalkController Controller(bool readOnly = false) =>
-            new(Store, Runner, Runtime, new PendingRecovery(), readOnly: readOnly, setupEnvironment: Environment);
+            new(Store, Runner, Runtime, Recovery, readOnly: readOnly, setupEnvironment: Environment);
     }
 
     private sealed class FakeEnvironment(ProfileStore store, BoxProfile profile, bool needsRepair) : ISetupRecoveryEnvironment
     {
         private string option = needsRepair ? "y" : "n";
         public int WriteCount { get; private set; }
+        public int InspectCount { get; private set; }
+        public int CloseCount { get; private set; }
+        public bool ForeignManager { get; set; }
         public bool IgnoreWrite { get; set; }
         public Exception? InspectionError { get; set; }
         public Action? BeforeWrite { get; set; }
         public SetupRecoveryObservation Inspect(ProfileStore requested, BoxProfile? observed, CancellationToken cancellationToken = default)
         {
+            InspectCount++;
             if (InspectionError is not null) throw InspectionError;
             Assert.Equal(store, requested);
             Assert.Equal(profile, observed);
@@ -179,7 +306,14 @@ internal static class ControllerSetupRecoveryTests
                 new(box, box, globals, BuiltinTemplates.ExpectedGlobals(globals)), sections, changes,
                 profile.BoxName, profile.UserSid, profile.StoragePath, [], [], [], true,
                 new(Path.Combine(store.Root, "SandMan.exe"), Path.Combine(store.Root, "Start.exe"), "1.18.4", true),
-                new(true, []), true, true, true, "시험", DateTimeOffset.UtcNow);
+                new(!ForeignManager, []) { ForeignManagementProcesses = ForeignManager
+                    ? [new(8765, DateTime.UtcNow.Ticks, Path.Combine(store.Root, "SandMan.exe"), "S-1-5-21-FOREIGN", 99)] : [] },
+                true, true, true, "시험", DateTimeOffset.UtcNow);
+        }
+        public SetupRecoveryUiResult QuiesceManagementUi(SetupRecoveryObservation observation, SetupRecoveryPlan plan, CancellationToken cancellationToken = default)
+        {
+            CloseCount++;
+            return SetupRecoveryUiResult.NoUi;
         }
         public SetupRecoveryChangeResult ApplyChange(SetupRecoveryObservation observation, SetupRecoveryPlan plan,
             SetupRecoveryChange change, CancellationToken cancellationToken = default)
@@ -197,16 +331,20 @@ internal static class ControllerSetupRecoveryTests
         public DependencyInfo Kakao() => new("카카오톡", Path.Combine(root, "KakaoTalk.exe"), "26.8", "시험", true);
         public DependencyInfo Sandboxie() => new("Sandboxie", Path.Combine(root, "SandMan.exe"), "1.18.4", "시험", true);
         public bool RejectHost { get; set; }
+        public bool UnsafePolicy { get; set; }
+        public bool WrongOwner { get; set; }
         public int[] ProcessIds { get; set; } = [];
         public void RequireHost() { if (RejectHost) throw new InvalidOperationException("Unverified host."); }
         public void VerifyCommandFiles(string startExe, string kakaoExe) { }
-        public ISidetalkRuntimeSession Open(DependencyInfo sandboxie) => new Session(profile, ProcessIds);
-        private sealed class Session(BoxProfile profile, int[] processIds) : ISidetalkRuntimeSession
+        public ISidetalkRuntimeSession Open(DependencyInfo sandboxie) => new Session(profile, ProcessIds, UnsafePolicy, WrongOwner);
+        private sealed class Session(BoxProfile profile, int[] processIds, bool unsafePolicy, bool wrongOwner) : ISidetalkRuntimeSession
         {
             public RuntimeVerifier.ServiceVerification ServiceIdentity => new(9999, false, "시험", "시험");
             public ConfigurationLayers ReadConfiguration(string boxName)
             {
                 var box = IsolationPolicy.Expected(profile);
+                if (unsafePolicy) box["OpenFilePath"] = ["C:\\Users\\*"];
+                if (wrongOwner) box["BoxInfo"] = ["foreign-owner"];
                 var globals = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
                 return new(box, box, globals, BuiltinTemplates.ExpectedGlobals(globals));
             }
@@ -222,13 +360,14 @@ internal static class ControllerSetupRecoveryTests
     }
     private sealed class PendingRecovery : ICommandProcessRecovery
     {
-        public ISidetalkCommandHandle Recover(CommandProcessIdentity identity) => new PendingHandle();
-        public ISidetalkCommandHandle RecoverUnidentified(string expectedStartExe) => new PendingHandle();
+        public bool Exited { get; set; }
+        public ISidetalkCommandHandle Recover(CommandProcessIdentity identity) => new PendingHandle(Exited);
+        public ISidetalkCommandHandle RecoverUnidentified(string expectedStartExe) => new PendingHandle(Exited);
     }
-    private sealed class PendingHandle : ISidetalkCommandHandle
+    private sealed class PendingHandle(bool exited = false) : ISidetalkCommandHandle
     {
         public CommandProcessIdentity? Identity => null;
-        public bool HasExited => false;
+        public bool HasExited => exited;
         public int ExitCode => throw new InvalidOperationException("Still running.");
         public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.Delay(Timeout.Infinite, cancellationToken);
         public void Dispose() { }

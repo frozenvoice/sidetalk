@@ -110,12 +110,9 @@ public sealed partial class SidetalkController : ISidetalkController
                     detail, checks, processes, canStop: true);
             }
             processPolicy = ProcessPolicyStatus.NoProcesses;
-            if (setupRecovery is not null)
-            {
-                var preparation = setupRecovery.Inspect();
-                if (!preparation.IsHealthy)
-                    return Blocked("설정 준비를 확인해주세요", preparation.Summary, preparation.Blockers.Concat(preparation.Evidence).ToArray());
-            }
+            // Current policy, ownership and command evidence determine execution.
+            // Optional recurrence prevention and shared-INI repair permissions are
+            // inspected separately; unfinished mutation evidence is checked above.
             return Snapshot(Readiness.Ready,
                 lifecycle.Outcome == CommandLifecycleOutcome.LaunchFailed ? "보조 카카오톡을 실행하지 못했어요" : "보조 카카오톡 실행 준비",
                 lifecycle.Action is not null ? lifecycle.Message : "현재 구성과 빈 상자를 확인했습니다. 새 실행 전 설정을 다시 검사합니다.",
@@ -147,13 +144,15 @@ public sealed partial class SidetalkController : ISidetalkController
             pendingRecord = null;
         if (pendingRecord is not null && (saved is null || saved.OperationId != pendingRecord.OperationId ||
             saved.Action != pendingRecord.Action || saved.Profile != pendingRecord.Profile ||
+            saved.Schema != pendingRecord.Schema || saved.RecoveryContext != pendingRecord.RecoveryContext ||
             saved.StartExe != pendingRecord.StartExe || saved.RequestedAtUtc != pendingRecord.RequestedAtUtc ||
             (pendingRecord.Process is not null && saved.Process != pendingRecord.Process)))
             throw new InvalidDataException("명령 기록이 확인 중 변경됐습니다. 새 명령을 차단했습니다.");
         if (saved is null) return;
+        commandLifecycle.RetryUncertainRecovery();
         if (!commandLifecycle.IsPending)
         {
-            var handle = saved.Process is null ? recovery.RecoverUnidentified(startExe) : recovery.Recover(saved.Process);
+            var handle = recovery.Recover(saved);
             commandLifecycle.Begin(saved.Action, handle);
         }
         pendingRecord = saved;
@@ -185,11 +184,14 @@ public sealed partial class SidetalkController : ISidetalkController
     {
         RequireWritable();
         await gate.WaitAsync();
+        PendingCommandRecord? attemptedCommand = null;
+        IDisposable? commandLease = null;
+        var stage = "실행 권한 확인";
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             var profile = store.Load() ?? throw new InvalidOperationException("전용 환경 정보가 없습니다.");
-            using var lease = journal.AcquireLease();
+            commandLease = journal.AcquireLease();
             var snapshot = await Task.Run(() => Inspect(leaseHeld: true));
             if (!(launch ? snapshot.CanLaunch : snapshot.CanStop)) throw new InvalidOperationException(snapshot.Detail);
             var startExe = Path.Combine(Path.GetDirectoryName(snapshot.Sandboxie.Path!)!, "Start.exe");
@@ -205,13 +207,18 @@ public sealed partial class SidetalkController : ISidetalkController
             // The durable intent exists before ANY process creation. A crash at this point
             // leaves a recoverable uncertain operation, never an apparently idle launcher.
             pendingRecord = journal.Prepare(profile, action, startExe);
+            attemptedCommand = pendingRecord;
+            stage = "명령 프로세스 생성";
             var handle = commandRunner.Start(command);
             commandLifecycle.Begin(action, handle);
+            stage = "명령 PID·생성 시각 확인";
             var identity = handle.Identity ?? throw new InvalidOperationException("시작한 명령의 PID·생성 시각을 기록하지 못했습니다. 완료 확인 전 새 명령을 차단합니다.");
+            stage = "명령 신원 기록 저장";
             journal.RecordStarted(pendingRecord, identity);
             pendingRecord = pendingRecord with { Process = identity };
 
             CommandWaitOutcome waitOutcome;
+            stage = "명령 종료 확인";
             try { waitOutcome = await commandLifecycle.WaitForExitAsync(commandTimeout); }
             catch (Exception error)
             {
@@ -220,6 +227,7 @@ public sealed partial class SidetalkController : ISidetalkController
             if (waitOutcome != CommandWaitOutcome.Completed)
                 throw new InvalidOperationException("Sandboxie 명령 응답 시간이 초과되었거나 종료 상태가 미확인입니다. 기록은 보존되며 새로고침 또는 앱 재시작 후 완료를 다시 확인합니다.");
             ObjectDisposedException.ThrowIf(disposed, this);
+            stage = "전용 환경 프로세스 재조회";
             for (var attempt = 0; attempt < 12; attempt++)
             {
                 var observed = await Task.Run(() => Inspect(leaseHeld: true));
@@ -234,7 +242,18 @@ public sealed partial class SidetalkController : ISidetalkController
             }
             throw new InvalidOperationException("명령 기록을 보존했습니다. 명령 종료와 전용 상자 상태가 함께 확인될 때까지 새 명령을 차단합니다.");
         }
-        finally { ReleaseGate(); }
+        catch (Exception error)
+        {
+            if (attemptedCommand is not null)
+            {
+                // The failure event is evidence only; it never closes an uncertain
+                // intent and cannot replace the original failure if storage fails.
+                var recordingError = journal.TryRecordFailure(pendingRecord ?? attemptedCommand, stage, error);
+                if (recordingError is not null) error.Data["CommandFailureRecording"] = InspectionFailure.Capture("명령 실패 기록 저장", recordingError);
+            }
+            throw;
+        }
+        finally { try { commandLease?.Dispose(); } finally { ReleaseGate(); } }
     }
 
     public async Task<string> ExportDiagnosticsAsync(string path)
@@ -243,12 +262,15 @@ public sealed partial class SidetalkController : ISidetalkController
         var failures = new List<InspectionFailure>();
         AppSnapshot? snapshot = null;
         SetupRecoveryPlan? preparation = null;
+        SetupRecoveryEvidenceInspection? interruptedEvidence = null;
         try { snapshot = await InspectAsync(); if (snapshot.InspectionFailure is { } failure) failures.Add(failure); }
         catch (Exception error) { failures.Add(InspectionFailure.Capture("상태 조회", error)); }
         if (setupRecovery is not null)
         {
             try { preparation = await InspectSetupRecoveryAsync(); }
             catch (Exception error) { failures.Add(InspectionFailure.Capture("복구 상태 조회", error)); }
+            try { interruptedEvidence = await InspectInterruptedEvidenceAsync(); }
+            catch (Exception error) { failures.Add(InspectionFailure.Capture("중단 흔적 조회", error)); }
         }
         var setupReport = preparation is null ? null : new
         {
@@ -256,7 +278,7 @@ public sealed partial class SidetalkController : ISidetalkController
             Changes = preparation.Changes.Select(change => new { change.Section, change.Key, change.Description }).ToArray(),
             preparation.Blockers, preparation.BackupPath, preparation.HistoryPath
         };
-        var report = new { InspectionFailures = failures, SetupRecovery = setupReport, SidetalkVersion = "0.1.6", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { InspectionFailures = failures, SetupRecovery = setupReport, InterruptedEvidence = interruptedEvidence, SidetalkVersion = "0.1.6", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, RunningProcessEffectiveRulesVerified = false, AccountLogin = "미검증",
                 SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증",
                 MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };

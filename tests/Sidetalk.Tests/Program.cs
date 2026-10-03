@@ -9,6 +9,8 @@ internal static class Program
     {
         if (args.Length > 0)
         {
+            if (args[0] == "--windows-recovery-integration")
+                return WindowsRecoveryIntegration.Run(args);
             if (args.Length == 3 && args[0] == "--sandboxie-readonly")
                 return NativeConfigurationProbe.Run(args[1], args[2]);
             Console.Error.WriteLine("Usage: --sandboxie-readonly <installation-directory> <new-report.json>");

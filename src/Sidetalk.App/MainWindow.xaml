@@ -143,6 +143,17 @@
                                 <TextBlock x:Name="RecoveryResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,5,0,0" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
+                        <Border x:Name="EvidencePanel" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20,18,20,18" Margin="0,0,0,12" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="중단된 준비 확인" Style="{StaticResource SectionHeading}" FontSize="16" />
+                                <TextBlock x:Name="EvidenceSummaryText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,6,0,8" />
+                                <WrapPanel>
+                                    <Button x:Name="PreserveEvidenceButton" Content="원본을 보존하고 다시 확인" Style="{StaticResource ActionButton}" Click="PreserveEvidenceButton_Click" MinHeight="46" Margin="0,0,8,6" />
+                                    <Button x:Name="OpenEvidenceHistoryButton" Content="보존 내역 열기" Style="{StaticResource ActionButton}" Click="OpenEvidenceHistoryButton_Click" MinHeight="46" Margin="0,0,0,6" />
+                                </WrapPanel>
+                                <TextBlock x:Name="EvidenceHistoryText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
                         <TextBlock x:Name="PolicyDetailText" Text="환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,14" />
                         <Grid Margin="0,0,0,20">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
