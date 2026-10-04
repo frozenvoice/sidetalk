@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup>
+  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework></PropertyGroup>
   <ItemGroup><EmbeddedResource Include="BuiltinTemplateHashes.json" /><EmbeddedResource Include="SandboxieDefaults.json" /><EmbeddedResource Include="RecoveryTemplates.json" /></ItemGroup>
 </Project>

@@ -20,7 +20,13 @@ public static class Authenticode
             data.StateAction = 2;
             _ = WinVerifyTrust(new IntPtr(-1), ref action, ref data);
             if (result != 0) throw new InvalidDataException($"공식 서명을 검증하지 못했습니다 (0x{result:X8}): {Path.GetFileName(path)}");
-            using var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+            // X509CertificateLoader does not extract Authenticode certificates.
+            // Limit the legacy importer to signed executables, never PFX/key material.
+            if (X509Certificate2.GetCertContentType(path) != X509ContentType.Authenticode)
+                throw new InvalidDataException("실행 파일의 Authenticode 인증서를 확인하지 못했습니다.");
+#pragma warning disable SYSLIB0057 // Authenticode extraction has no X509CertificateLoader replacement.
+            using var certificate = new X509Certificate2(path);
+#pragma warning restore SYSLIB0057
             var publisher = certificate.GetNameInfo(X509NameType.SimpleName, false);
             if (!allowedPublishers.Any(allowed => publisher.Equals(allowed, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException($"확인되지 않은 배포자입니다: {publisher}");

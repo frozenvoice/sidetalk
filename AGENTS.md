@@ -2,7 +2,7 @@
 
 ## 프로젝트 범위
 
-- Windows 11 x64용 C#/.NET 8 WPF 앱이다. SDK 선택은 `global.json`을 따른다.
+- Windows 11 x64용 C#/.NET 10 LTS WPF 앱이다. SDK 선택은 `global.json`을 따른다.
 - `src/Sidetalk.App`은 한국어 UI, `src/Sidetalk.Core`는 격리 정책·설치 검증·프로필·명령 수명주기, `src/Sidetalk.IsolationProbe`는 계정 없는 격리 시험 도구다. 제품 범위는 `PRODUCT.md`, 설계는 `DESIGN.md`를 참고한다.
 
 ## 검증과 패키징

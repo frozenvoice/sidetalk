@@ -1,3 +1,36 @@
+# .NET 10 LTS 이전 — 2026-10-05
+
+시작 시 로컬 HEAD와 원격 main은 `81477439bd735bd440446bc2b3fcab163159f503`으로 같고 작업 트리는 깨끗했다. `codex/dotnet10-lts`에서 5개 프로젝트를 `net10.0-windows`, SDK를 안정 버전 `10.0.401`로 이전했다. 실제 로컬 .NET/WindowsDesktop 런타임은 `10.0.12`다. 공식 호환성 근거와 재현 명령은 [NET10-MIGRATION.md](NET10-MIGRATION.md)에 있다. 기존 CI는 이미 `global.json` 기반이므로 workflow를 중복 변경하지 않았다.
+
+## 데이터·명령·복구 호환성
+
+- 이전 HEAD의 실제 Core 모델을 SDK 8.0.424 / 런타임 8.0.30의 독립 임시 빌드에서 직렬화한 고정 fixture를 .NET 10으로 읽었다. 프로필 schema 1, 명령 저널 schema 1/2와 복구 이벤트가 호환되며, 원본 바이트·소유 식별자·저장 경로·합성 계정 표식·중단 파일을 보존했다. 기존 JSON/경로/enum 및 AppState 초기화 변경은 없다. 별도 영속 AppState 파일은 구현에 없으며 검사 결과로 상태를 계산한다.
+- 명령 중복·동시 실행 차단, timeout 미완료, 실패 원인 보존, PID/생성 시각/경로 검증, 실제 종료 후 새 box 조회, Completed 재조정과 실패 후 차단 회귀를 모두 유지했다. 기존 Completed 결함 수정은 다시 변경하지 않았다.
+- 제품 소스의 동작 변경은 Authenticode 인증서 추출의 .NET 9/10 폐기 API 대응뿐이다. `WinVerifyTrust`와 배포자 검증을 유지하고 Authenticode 형식 제한 후 해당 API 한 줄의 경고만 억제한다. 서명된 현재 런타임의 임시 복사본 허용, 다른 배포자·변조본·인증서/PFX 위장 거부를 실제 Windows API로 확인했다. 설치된 원본은 읽기만 했다.
+- 실제 카카오톡 계정·Sandboxie box·사용자 INI·설치본·프로필 데이터는 시험용으로 읽거나 변경하지 않았다. 프로세스 강제 종료, 설치, 운영 배포 교체나 릴리스는 수행하지 않았다.
+
+## 수행한 로컬 검사
+
+- `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`: 앱·IsolationProbe Release 빌드 경고/오류 0, 콘솔 **200/200** 통과. WPF 단계는 로컬 출력 디렉터리 접근 거부로 종료 코드 13이었다. 제한 실행과 일반 실행 권한의 두 로그를 보존했다. 전체 검사를 성공으로 바꿔 표시하거나 테스트를 삭제/skip하지 않았다.
+- 출력 경로를 확인·생성하고 아래 **실패한 UI 단계만** 빌드 서버 재사용 없이 단일 MSBuild로 재실행했다. 빌드 경고/오류 0, 합성 WPF **14개 fixture**와 권한·상태·아이콘·진단 검사 성공(종료 코드 0). 승인/작은 창 PNG도 육안 확인했다. 기존 프로세스 종료나 ACL 완화는 없었다.
+
+```powershell
+dotnet build tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release --nologo --disable-build-servers -m:1 -nr:false -p:BuildInParallel=false
+$uiOutput = Join-Path ([IO.Path]::GetTempPath()) ('sidetalk-ui-checks-' + [Guid]::NewGuid().ToString('N'))
+dotnet tests/Sidetalk.UiChecks/bin/Release/net10.0-windows/Sidetalk.UiChecks.dll $uiOutput
+```
+
+- `pwsh -NoProfile -File tests/Sidetalk.BuildChecks/Program.ps1`: **9개 검사 그룹 / 19개 임시 저장소 fixture 성공**(83.79초). 두 배포 모드, 실패 전파, 실행 중 출력/잠금/reparse 보호, 교체 실패 롤백과 실패 시 원본 보존을 검사했다. CMD preflight도 복사한 `global.json`으로 SDK 10.0.401을 선택했다.
+- 공백·한글을 포함한 새 임시 소스 복사본에서 앱과 Probe를 각각 framework-dependent/self-contained `win-x64`로 실제 publish했다. 두 모드의 x64 PE, `net10.0` runtimeconfig, 런타임 포함/비포함과 WPF 네이티브 DLL, README/docs 및 금지 파일 부재를 검사하고 ZIP·SHA-256을 생성했다. framework-dependent ZIP은 **25개 항목**, self-contained ZIP은 **607개 항목**이며 번들 런타임은 **10.0.12**다. 실제 `build.ps1` 배포 승격은 실행하지 않고 그 보호/롤백은 위 모의 회귀로 검증했다. 패키지 앱과 Probe를 실제 사용자 설정에 연결해 실행하지 않았다.
+- ZIP SHA-256: framework-dependent `4574D81E1BB7D71830E74FBFEE8647FB288935ADA0FB8AFEBC6939D039FE25EF`, self-contained `AC6642A10D63F7CED2909CCFB43A1A15AB6B5DD4E0FEC6A9DE651F823AAE166F`. 패키지는 결과 문서 갱신 전 소스 복사본에서 생성했으며 운영 릴리스가 아니다.
+- 근거 로그/임시 경로는 Git에서 제외되는 `artifacts/verification/net10-20261005/`에 보존한다. 기존 .NET 8 결과는 아래에 역사적 기록으로 남긴다.
+
+## 실제 Windows 11 + Sandboxie 통합의 남은 항목
+
+기존 `SIDETALK-LAB-20261004`는 등록되어 있으나 읽기 전용 `list runningvms`는 빈 결과였고 `showvminfo`는 공유 세션 잠금 오류 `E_FAIL / VBOX_E_VM_ERROR`로 실패했다. 이전 문서에서 확인되는 게스트 런타임은 8.0.30이며 현재 .NET 10 통합 시험에 사용할 수 있는 상태는 확인하지 못했다. VM 시작/reset·게스트 설정 변경을 하지 않았다.
+
+일회용 Windows 11 환경을 준비한 뒤 .NET 10 self-contained 패키지 또는 Desktop Runtime 10 x64로 [실제 복구 시험](WINDOWS-RECOVERY-TEST.md)을 수행해야 한다. 실제 서명된 Sandboxie 1.18.4 DLL/API·SbieIni 파일/API 재조회·실패 후 재시작·Completed 재조정·일반 사용자 GUI의 단일 실행과 [계정 없는 격리 시험](ISOLATION-PROBE.md)이 남아 있다. 실제 계정 로그인·동시 송수신·알림·데이터 영속성은 별도 승인과 [수용 검사](ACCEPTANCE.md)가 필요하다. 로컬 합성 WPF와 hosted Windows Server CI를 이 결과로 대체하지 않는다.
+
 # 보존된 Completed의 재조정 후 반복 조회 수정 — 2026-10-04
 
 실제 원격 `origin/main`, 로컬 HEAD와 리뷰 기준은 모두 `ee19cd4ae6587f8db0cb7b92e265bfde88f42d2d`였고 작업 트리는 깨끗했다. 별도 `codex/completed-evidence-reconciliation`에서 이번 결함과 직접 관련된 생산 코드·회귀·opt-in 시험 도구만 수정했다. main 병합·릴리스·호스트 배포본 교체는 하지 않는다. 이전 검증 결과와 이번 결과를 구분한다.

@@ -11,7 +11,7 @@
 
 ## 빌드 전제와 실패 처리
 
-빌드에는 PATH에서 찾을 수 있는 PowerShell 7 (`pwsh.exe`)과 `global.json`이 지정한 .NET 8 SDK가 필요합니다. 이미 만들어진 self-contained 배포본을 실행할 때는 두 도구가 필요하지 않습니다. 도구를 자동 설치하거나 Git pull·브랜치 전환을 하지 않습니다.
+빌드에는 PATH에서 찾을 수 있는 PowerShell 7 (`pwsh.exe`)과 `global.json`이 지정한 .NET 10 SDK가 필요합니다. 이미 만들어진 self-contained 배포본을 실행할 때는 두 도구가 필요하지 않습니다. 도구를 자동 설치하거나 Git pull·브랜치 전환을 하지 않습니다.
 
 `build-local.cmd`는 기존 `scripts/build.ps1 -SelfContained`를 재사용합니다. 콘솔 회귀 테스트와 시험 도구 빌드·publish·ZIP 단계를 생략하지 않고 기존 배포 교체·롤백 로직도 바꾸지 않습니다. 빌드가 실패하거나 취소되면 오류를 반환하며 이전 실행 파일을 대신 실행하지 않습니다. 자동 다운로드·관리자 승격·프로세스 강제 종료는 추가하지 않습니다.
 
