@@ -1,3 +1,38 @@
+# 보존된 Completed의 재조정 후 반복 조회 수정 — 2026-10-04
+
+실제 원격 `origin/main`, 로컬 HEAD와 리뷰 기준은 모두 `ee19cd4ae6587f8db0cb7b92e265bfde88f42d2d`였고 작업 트리는 깨끗했다. 별도 `codex/completed-evidence-reconciliation`에서 이번 결함과 직접 관련된 생산 코드·회귀·opt-in 시험 도구만 수정했다. main 병합·릴리스·호스트 배포본 교체는 하지 않는다. 이전 검증 결과와 이번 결과를 구분한다.
+
+## 수정 전 재현과 완료 근거
+
+`Setup preserved completed event without failure survives fresh reconciliation`은 정상 프로필과 가짜 외부 경계에서 실제 생산 코드의 설정 변경·검증·파일 저널을 사용한다. 작업 A의 정상 Started·BackupCreated·ChangeIntent·ChangeVerified 뒤 **완전한 Completed JSON 임시 파일만 남기며 최종 Completed와 Failed는 없다**. 원본 보존 후 새 작업 B의 실제 재검증·Completed와 A의 B 참조 Reconciled까지 완료한 뒤 다시 조회한다.
+
+수정 전 자체 콘솔 실행은 **167/168 통과**였고 이 테스트만 `보존 이벤트의 현재 체인과 원래 위치를 확인할 수 없습니다.`로 실패했다. 보존된 Completed를 현재 A의 Reconciled 뒤 검사를 위한 체인에 합치면서 기존 순서 검사에 걸린 것이다. 재현 로그는 Git에서 제외되는 `artifacts/verification/completed-evidence-20261004/before-reproduction-actual.log`에 보존했다. Started 임시 기록·잘린 변경 기록이나 가짜 Failed로 대체하지 않았다.
+
+과거 Completed는 원래 파일 이름·작업 ID·순서·승인 PlanId/ScopeFingerprint와 그 시점까지의 연속적인 검증 기록으로 원본 유효성을 확인한다. 보존 원본의 바이트·SHA-256·길이·메타데이터·경로 검사는 유지한다. 이어서 별도로 **실제 게시된 모든 작업 체인과 Reconciled의 다른 유효한 완료 작업 참조**를 기존 `ReadInterruptedOperation`/`ValidateOperation`으로 검사한다. 과거 Completed를 현재 체인에 삽입하거나 최종 파일로 재게시하지 않으며, 원본 보존만으로 완료되지 않는다. 순서 검사를 완화하거나 오류를 삼켜 Ready로 처리하지 않는다. 올바른 B의 Completed→ConsentFailed와 기존 Failed가 있는 A의 재조정도 유지한다.
+
+## 이번 소스의 회귀와 읽기 전용 결과
+
+- `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`: **성공**, 자체 콘솔 **193/193**, Release 앱·IsolationProbe 빌드 경고/오류 0, 합성 WPF **14개 fixture** 검사 통과(20.08초). 이전 167/167 결과를 재사용하지 않았다. 빌드 스크립트는 변경하지 않았으며 기존 CI의 모의 패키징 회귀는 유지한다.
+- 원래 실패 재현과 새 컨트롤러 회귀가 통과했다. `InspectAsync`·`InspectInterruptedEvidenceAsync`·진단 내보내기를 새 읽기/쓰기 컨트롤러 각각 세 번 수행해 **`CanLaunch=true`**, 원본·메타데이터·기존 저널 불변, 과거 Completed 재게시 0, 반복 조회에 따른 보존본·작업·백업 증가 0을 확인했다. 진단 출력은 검사 대상 폴더 밖에 저장했다.
+- 원본 보존 뒤, B 완료 전, B 완료 뒤 A Reconciled 게시 전의 재시작에서는 차단을 유지하고 새 승인 경로로 이어졌다. 원본/해시/길이·작업 ID·순서·파일 이름·경로·승인 정보 변조, 없는/자기/미완료/실패 작업 참조, PlanId/ScopeFingerprint 불일치, 고아 Completed·중복 순서·미검증 변경을 독립 사례로 거부했다. 올바른 B의 선택적 ConsentFailed와 실제 게시 실패로 Failed가 있는 A도 통과했다.
+- 보존 전과 재조정 후 읽기 전용 컨트롤러의 설정 쓰기·관리 프로세스 종료·원본 이동·이벤트 게시·추가 완료 기록 생성은 **0회**였다. 바이트·파일 목록과 재시작 fixture의 수정 시각을 비교했다. 합성 렌더 권한 검사와 아래 실제 VM의 앱 utility 모드를 구분한다.
+
+추가 테스트의 가짜 환경은 같은 저장 경로의 새 ProfileStore 인스턴스를 허용하도록 바로잡았고, 보존된 항목 자체가 실행을 막지 않아도 미완료 A가 남으면 전체 검사가 차단한다는 기대값을 수정했다. 제한 실행 환경에서는 콘솔 193/193 뒤 WPF 단계가 컴파일 진단 없이 실패했다. 의존성을 확인한 후 정상 실행 권한으로 위 최종 통합 명령을 완료했다. 제품 검사를 완화하지 않았다. 최종 로그는 Git에서 제외되는 `artifacts/verification/completed-evidence-20261004/final-verify-normal-permission.log`에 있다.
+
+## 기존 승인 Windows VM의 이번 실제 중단 시험
+
+기존의 같은 전용 Windows 11 **10.0.26300.9457** VM과 공식 Sandboxie Plus **1.18.4**를 사용했다. 새 설치·VM 생성·호스트 재부팅·호스트 배포 교체는 하지 않았다. 최초 게스트 연결/heartbeat 장애와 정상 ACPI 종료 무응답 때문에 시험 시작 전에 해당 시험 VM만 reset했고, 이후 정확한 머신·VirtualBox·승인 표식·표준 `sidetest` 사용자·서비스와 보존 기준을 다시 확인했다. 이 환경 복구는 제품 시험 성공으로 계산하지 않는다.
+
+`seed-optional → crash-completed → reconcile-completed → inspect-completed`를 수행했다. 현재 사용자 재발 방지 옵션의 실제 공식 SbieIni 변경·파일/API 검증 뒤 생산 코드의 Completed JSON 직렬화와 **Flush(true)**가 끝나고 덮어쓰기 없는 최종 게시 직전에 시험 프로세스만 **예상 코드 77**로 중단했다. **완전한 Completed 임시 JSON, 최종 Completed 없음, Failed 0개**와 연속적인 정상 A 기록을 확인했다. 중단 시점은 시험 hook의 주입이며 자연 장애·전원 장애 실측은 아니다. 이 hook는 일반 앱 기능에 노출하지 않는다.
+
+새 프로세스에서 정확한 original.bin·메타데이터를 보존하고, 보존만으로 완료되지 않는 것을 확인한 뒤 새 인스턴스의 재검증 B를 완료하여 A→B Reconciled 참조를 확인했다. **새 작업·백업은 각 1개**, 과거 Completed 재게시·가짜 Failed 추가는 **0개**다. 이어 별도 `inspect-completed` 프로세스 **3회**, 매번 새 읽기 전용 컨트롤러 **3개**로 진단·상태·보존 근거 조회를 수행했다. 모두 **CanLaunch=true**, 원본·메타데이터·기존 정상 기록·프로필·소유 정보·파일/HKCU sentinel·무관한 Sandboxie 설정 보존, 반복 작업·백업 증가 0을 확인했다.
+
+현재 소스로 빌드한 실제 앱의 `--diagnose`, `--render`, `--render-setup`, `--render-small`도 **보존 전과 재조정 후 각각 실행**했다. 모든 utility 모드가 종료 코드 0으로 출력했으며 검사 대상 파일 목록·원본·프로필·저널·보존본·INI 해시가 변하지 않았다. 탐색기 재실행/GUI 승인 클릭은 이번에 수행하지 않았다. 카카오톡 실행·로그인·송수신·계정 데이터 접근은 0회이며 실제 box 레지스트리 hive·다른 box 데이터·전원 장애 시험으로 확대하지 않는다. VM 보고서·중단/재조정 불변 witness와 실제 앱 출력은 Git에서 제외되는 `artifacts/vm-lab/collected-completed`에 보존하고 CI artifact에 포함하지 않는다.
+
+## 이번 Windows CI
+
+기존 Windows workflow를 그대로 유지하며 현재 PR 커밋의 실행 상태와 로그를 확인한다. [이번 작업 브랜치의 Actions](https://github.com/frozenvoice/sidetalk/actions?query=branch%3Acodex%2Fcompleted-evidence-reconciliation)는 이번 회귀·합성 WPF·모의 빌드 보호 검사를 실행한다. hosted Windows CI와 위 실제 Sandboxie VM 결과는 별도 근거다.
+
 # 중단 복구·실행 권한 분리 검증 — 2026-10-04
 
 시작 시 실제 원격 `origin/main`, 로컬 main과 리뷰 기준은 모두 `e906cfe78f3ebc8601f4769434aae10f15ed8007`이었다. 작업 트리는 깨끗했으며 별도 `codex/recovery-reconciliation`에서 수정했다. main 병합·릴리스·기존 배포본 교체는 하지 않았다. 아래 결과는 이번 소스로 실행한 결과이며 과거 사용자 성공 보고를 재사용하지 않는다.

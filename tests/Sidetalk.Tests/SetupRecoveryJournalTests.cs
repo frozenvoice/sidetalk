@@ -16,6 +16,31 @@ internal static class SetupRecoveryJournalTests
         ("Setup recovery revoke wins after a future-dated grant", RevokeWinsAfterFutureDatedGrant),
         ("Setup consent staging is optional and never grants approval", ConsentStagingIsOptional),
         ("Setup complete staged event reaches fresh reconciliation", CompleteStagedEventReconciles),
+        ("Setup preserved completed event without failure survives fresh reconciliation", CompletedEvidenceWithoutFailureReconciles),
+        ("Setup preserved Completed rejects malformed original bytes", () => CompletedArchiveCorruptionBlocks("original")),
+        ("Setup preserved Completed rejects changed archive hash", () => CompletedArchiveCorruptionBlocks("hash")),
+        ("Setup preserved Completed rejects changed archive length", () => CompletedArchiveCorruptionBlocks("length")),
+        ("Setup preserved Completed rejects changed operation identity", () => CompletedArchiveCorruptionBlocks("operation")),
+        ("Setup preserved Completed rejects changed sequence", () => CompletedArchiveCorruptionBlocks("sequence")),
+        ("Setup preserved Completed rejects changed original event name", () => CompletedArchiveCorruptionBlocks("name")),
+        ("Setup preserved Completed rejects changed approval PlanId", () => CompletedArchiveCorruptionBlocks("plan")),
+        ("Setup preserved Completed rejects changed approval scope", () => CompletedArchiveCorruptionBlocks("scope")),
+        ("Setup preserved Completed rejects original path outside recovery", () => CompletedArchiveCorruptionBlocks("path")),
+        ("Setup preserved Completed rejects missing reconciliation target", () => CompletedReferenceBlocks("missing")),
+        ("Setup preserved Completed rejects self reconciliation target", () => CompletedReferenceBlocks("self")),
+        ("Setup preserved Completed rejects incomplete target chain", () => CompletedReferenceBlocks("incomplete")),
+        ("Setup preserved Completed rejects failed target operation", () => CompletedReferenceBlocks("failed")),
+        ("Setup preserved Completed rejects target without Completed", () => CompletedReferenceBlocks("no-completed")),
+        ("Setup preserved Completed rejects reconciliation PlanId mismatch", () => CompletedReferenceBlocks("plan")),
+        ("Setup preserved Completed rejects reconciliation scope mismatch", () => CompletedReferenceBlocks("scope")),
+        ("Setup preserved Completed cannot hide another orphan Completed", () => CompletedWithMalformedOtherChainBlocks("orphan")),
+        ("Setup preserved Completed cannot hide another duplicate sequence", () => CompletedWithMalformedOtherChainBlocks("duplicate")),
+        ("Setup preserved Completed cannot hide another unverified change", () => CompletedWithMalformedOtherChainBlocks("unverified")),
+        ("Setup preserved Completed restarts before fresh reconciliation", () => CompletedCheckpointResumes("preserved")),
+        ("Setup preserved Completed restarts before B Completed publication", () => CompletedCheckpointResumes("before-completed")),
+        ("Setup preserved Completed restarts after B Completed before A Reconciled", () => CompletedCheckpointResumes("before-reconciled")),
+        ("Setup preserved Completed accepts verified B then optional ConsentFailed", CompletedTargetConsentFailedRemainsHealthy),
+        ("Setup preserved Completed with an older Failed still reconciles", CompletedWithOlderFailureReconciles),
         ("Setup truncated related event preserves original and rechecks", TruncatedRelatedEventReconciles),
         ("Setup conflicting temporary record remains unresolved", ConflictingRecordPreservesBoth),
         ("Setup unknown temporary source remains blocked after preservation", UnknownSourceRemainsBlocked),
@@ -168,6 +193,342 @@ internal static class SetupRecoveryJournalTests
         Assert.Equal(SetupRecoveryState.Interrupted, plan.State);
         Assert.True(harness.Service.Apply(plan, false).Succeeded);
         Assert.False(harness.Service.HasUnfinishedRecovery);
+    }
+
+    private static void CompletedEvidenceWithoutFailureReconciles()
+    {
+        var harness = Harness.Create(conflict: true);
+        var applied = harness.Service.Apply(harness.Service.Inspect(), false);
+        Assert.True(applied.Succeeded, applied.Detail);
+        var operations = Path.Combine(harness.Root, "setup-recovery", "operations");
+        var completed = Directory.EnumerateFiles(operations, applied.OperationId + ".*.Completed.json").Single();
+        var temporary = completed + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var originalBytes = File.ReadAllBytes(completed);
+        File.Move(completed, temporary);
+        Assert.False(Directory.EnumerateFiles(operations, applied.OperationId + ".*.Failed.json").Any());
+        var originalJournal = Directory.EnumerateFiles(operations, "*.json").ToDictionary(path => path, File.ReadAllBytes);
+        var evidence = harness.Service.InspectInterruptedEvidence();
+        Assert.True(evidence.CanPreserve, evidence.Detail);
+        Assert.Equal(SetupRecoveryEvidenceKind.CompleteRecord, evidence.Items.Single().Kind);
+        Assert.True(harness.Service.ReconcileInterruptedEvidence(evidence).Succeeded);
+        Assert.True(harness.Service.HasUnfinishedRecovery, "A preserved Completed cannot prove current completion.");
+        var preserved = harness.Service.InspectInterruptedEvidence().Items.Single();
+        var metadata = Path.Combine(Path.GetDirectoryName(preserved.PreservationPath!)!, "metadata.json");
+        var metadataBytes = File.ReadAllBytes(metadata);
+        var plan = harness.Service.Inspect();
+        Assert.True(plan.IsReconciliation);
+        Assert.Equal(applied.OperationId, plan.InterruptedOperationId);
+        var reconciled = harness.Service.Apply(plan, false);
+        Assert.True(reconciled.Succeeded, reconciled.Detail);
+        Assert.True(reconciled.OperationId != applied.OperationId);
+        var reference = JsonNode.Parse(File.ReadAllBytes(
+            Path.Combine(operations, applied.OperationId + ".1000000.Reconciled.json")))!;
+        Assert.Equal(reconciled.OperationId, reference["RelatedOperationId"]!.GetValue<string>());
+        Assert.True(Directory.EnumerateFiles(operations, reconciled.OperationId + ".*.Completed.json").Any());
+        Assert.False(Directory.EnumerateFiles(operations, applied.OperationId + ".*.Failed.json").Any());
+        var fileCount = Directory.EnumerateFiles(harness.Root, "*", SearchOption.AllDirectories).Count();
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            var restarted = new SetupRecovery(new ProfileStore(harness.Root), harness.Environment);
+            Assert.False(restarted.HasUnfinishedRecovery);
+            Assert.True(restarted.Inspect().IsHealthy);
+            var current = restarted.InspectInterruptedEvidence();
+            Assert.False(current.BlocksExecution, current.Detail);
+            Assert.False(current.CanPreserve);
+            Assert.False(current.Items.Single().NeedsPublication);
+            Assert.SequenceEqual(originalBytes, File.ReadAllBytes(preserved.PreservationPath!));
+            Assert.SequenceEqual(metadataBytes, File.ReadAllBytes(metadata));
+            foreach (var record in originalJournal) Assert.SequenceEqual(record.Value, File.ReadAllBytes(record.Key));
+            Assert.False(File.Exists(completed));
+            Assert.Equal(fileCount, Directory.EnumerateFiles(harness.Root, "*", SearchOption.AllDirectories).Count());
+        }
+    }
+
+    private static void CompletedArchiveCorruptionBlocks(string fault)
+    {
+        var fixture = CompletedFixture.Create(reconcile: true);
+        var metadata = JsonNode.Parse(File.ReadAllBytes(fixture.MetadataPath))!.AsObject();
+        var entry = JsonNode.Parse(File.ReadAllBytes(fixture.OriginalPath))!.AsObject();
+        switch (fault)
+        {
+            case "original":
+                File.WriteAllText(fixture.OriginalPath, "{\"OperationId\":");
+                UpdateArchiveContentMetadata(fixture, metadata);
+                break;
+            case "hash": metadata["Sha256"] = new string('F', 64); break;
+            case "length": metadata["Length"] = metadata["Length"]!.GetValue<long>() + 1; break;
+            case "operation": metadata["OperationId"] = Guid.NewGuid().ToString("N"); break;
+            case "sequence":
+                entry["Sequence"] = entry["Sequence"]!.GetValue<int>() + 1;
+                metadata["OriginalPath"] = Path.Combine(fixture.Operations,
+                    $"{fixture.OperationA}.{entry["Sequence"]!.GetValue<int>():D6}.Completed.json.{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(fixture.OriginalPath, entry.ToJsonString(RecoveryJson.Options));
+                UpdateArchiveContentMetadata(fixture, metadata);
+                break;
+            case "name":
+                metadata["OriginalPath"] = metadata["OriginalPath"]!.GetValue<string>().Replace(".Completed.json.", ".Started.json.", StringComparison.Ordinal);
+                break;
+            case "plan":
+            case "scope":
+                entry[fault == "plan" ? "PlanId" : "ScopeFingerprint"] = fault == "plan" ? Guid.NewGuid().ToString("N") : "different-approved-scope";
+                File.WriteAllText(fixture.OriginalPath, entry.ToJsonString(RecoveryJson.Options));
+                UpdateArchiveContentMetadata(fixture, metadata);
+                break;
+            case "path": metadata["OriginalPath"] = Path.Combine(fixture.Harness.Root, "outside-operations.tmp"); break;
+            default: throw new InvalidOperationException(fault);
+        }
+        // Keep the archive's ID and content hash internally consistent for semantic
+        // tampering, so event-name/chain/approval validation must reject the bytes.
+        var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            metadata["OriginalPath"]!.GetValue<string>() + "|" + metadata["Sha256"]!.GetValue<string>()))).ToLowerInvariant()[..32];
+        var archive = Path.Combine(fixture.Harness.Root, "recovery-evidence", id);
+        if (archive != Path.GetDirectoryName(fixture.MetadataPath))
+            Directory.Move(Path.GetDirectoryName(fixture.MetadataPath)!, archive);
+        metadata["PreservationPath"] = Path.Combine(archive, "original.bin");
+        File.WriteAllText(Path.Combine(archive, "metadata.json"), metadata.ToJsonString(RecoveryJson.Options));
+        AssertBlockedWithoutWrites(fixture.Harness);
+    }
+
+    private static void UpdateArchiveContentMetadata(CompletedFixture fixture, JsonObject metadata)
+    {
+        var bytes = File.ReadAllBytes(fixture.OriginalPath);
+        metadata["Length"] = bytes.LongLength;
+        metadata["Sha256"] = Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    private static void CompletedReferenceBlocks(string fault)
+    {
+        var fixture = CompletedFixture.Create(reconcile: true);
+        var referencePath = Path.Combine(fixture.Operations, fixture.OperationA + ".1000000.Reconciled.json");
+        var reference = JsonNode.Parse(File.ReadAllBytes(referencePath))!.AsObject();
+        switch (fault)
+        {
+            case "missing": reference["RelatedOperationId"] = Guid.NewGuid().ToString("N"); break;
+            case "self": reference["RelatedOperationId"] = fixture.OperationA; break;
+            case "incomplete": SuspendRecord(fixture, EventPath(fixture, fixture.OperationB!, "BackupCreated")); break;
+            case "failed":
+            case "no-completed":
+                SuspendRecord(fixture, EventPath(fixture, fixture.OperationB!, "Completed"));
+                if (fault == "failed") AppendFromStarted(fixture, fixture.OperationB!, 999999, "Failed");
+                break;
+            case "plan": reference["PlanId"] = Guid.NewGuid().ToString("N"); break;
+            case "scope": reference["ScopeFingerprint"] = "different-approved-scope"; break;
+            default: throw new InvalidOperationException(fault);
+        }
+        File.WriteAllText(referencePath, reference.ToJsonString(RecoveryJson.Options));
+        AssertBlockedWithoutWrites(fixture.Harness);
+        fixture.AssertArchiveUnchanged();
+    }
+
+    private static void CompletedWithMalformedOtherChainBlocks(string fault)
+    {
+        var fixture = CompletedFixture.Create(reconcile: true);
+        var id = Guid.NewGuid().ToString("N");
+        var plan = Guid.NewGuid().ToString("N");
+        if (fault != "orphan")
+        {
+            WriteEvent(fixture.Harness.Root, id, 0, "Started", plan, "scope-a");
+            WriteEvent(fixture.Harness.Root, id, 1, "BackupCreated", plan, "scope-a");
+        }
+        if (fault == "duplicate") WriteEvent(fixture.Harness.Root, id, 1, "ChangeIntent", plan, "scope-a");
+        else
+        {
+            if (fault == "unverified") WriteEvent(fixture.Harness.Root, id, 2, "ChangeIntent", plan, "scope-a");
+            WriteEvent(fixture.Harness.Root, id, fault == "unverified" ? 3 : 2, "Completed", plan, "scope-a");
+        }
+        AssertBlockedWithoutWrites(fixture.Harness);
+        fixture.AssertArchiveUnchanged();
+    }
+
+    private static void CompletedCheckpointResumes(string checkpoint)
+    {
+        var fixture = CompletedFixture.Create(reconcile: checkpoint != "preserved");
+        if (checkpoint != "preserved")
+        {
+            SuspendRecord(fixture, Path.Combine(fixture.Operations, fixture.OperationA + ".1000000.Reconciled.json"));
+            if (checkpoint == "before-completed") SuspendRecord(fixture, EventPath(fixture, fixture.OperationB!, "Completed"));
+        }
+        for (var restart = 0; restart < 2; restart++)
+        {
+            var service = new SetupRecovery(new ProfileStore(fixture.Harness.Root), fixture.Harness.Environment);
+            var snapshot = SnapshotFiles(fixture.Harness.Root);
+            Assert.True(service.HasUnfinishedRecovery);
+            var plan = service.Inspect();
+            Assert.Equal(SetupRecoveryState.Interrupted, plan.State);
+            Assert.True(plan.IsReconciliation);
+            Assert.Equal(fixture.OperationA, plan.InterruptedOperationId);
+            Assert.False(plan.AllowAutomatic);
+            var evidence = service.InspectInterruptedEvidence();
+            Assert.True(evidence.BlocksExecution, "An unfinished operation still requires fresh approval.");
+            Assert.False(evidence.Items.Single().BlocksExecution, "The valid archived Completed itself is preserved evidence, not a corrupt record.");
+            Assert.False(service.TryAutomatic().Succeeded);
+            AssertFilesUnchanged(fixture.Harness.Root, snapshot);
+        }
+        var restarted = new SetupRecovery(new ProfileStore(fixture.Harness.Root), fixture.Harness.Environment);
+        // Both A and an interrupted B need their own freshly inspected approval.
+        var continuations = checkpoint == "before-completed" ? 2 : 1;
+        for (var index = 0; index < continuations; index++)
+        {
+            var plan = restarted.Inspect();
+            Assert.Equal(index == 0 ? fixture.OperationA : fixture.OperationB, plan.InterruptedOperationId);
+            var result = restarted.Apply(plan, false);
+            Assert.True(result.Succeeded, result.Detail);
+            fixture.AssertArchiveUnchanged();
+        }
+        Assert.False(restarted.HasUnfinishedRecovery);
+        Assert.True(restarted.Inspect().IsHealthy);
+        var healthySnapshot = SnapshotFiles(fixture.Harness.Root);
+        var finalRestart = new SetupRecovery(new ProfileStore(fixture.Harness.Root), fixture.Harness.Environment);
+        Assert.False(finalRestart.HasUnfinishedRecovery);
+        Assert.True(finalRestart.Inspect().IsHealthy);
+        Assert.False(finalRestart.InspectInterruptedEvidence().CanPreserve);
+        AssertFilesUnchanged(fixture.Harness.Root, healthySnapshot);
+    }
+
+    private static void CompletedTargetConsentFailedRemainsHealthy()
+    {
+        var fixture = CompletedFixture.Create(reconcile: true);
+        var completed = JsonNode.Parse(File.ReadAllBytes(EventPath(fixture, fixture.OperationB!, "Completed")))!;
+        AppendFromStarted(fixture, fixture.OperationB!, completed["Sequence"]!.GetValue<int>() + 1, "ConsentFailed");
+        var snapshot = SnapshotFiles(fixture.Harness.Root);
+        var restarted = new SetupRecovery(new ProfileStore(fixture.Harness.Root), fixture.Harness.Environment);
+        Assert.False(restarted.HasUnfinishedRecovery);
+        Assert.True(restarted.Inspect().IsHealthy);
+        Assert.False(restarted.InspectInterruptedEvidence().BlocksExecution);
+        AssertFilesUnchanged(fixture.Harness.Root, snapshot);
+        fixture.AssertArchiveUnchanged();
+    }
+
+    private static void CompletedWithOlderFailureReconciles()
+    {
+        var fixture = CompletedFixture.Create(reconcile: false, failCompletedPublication: true);
+        var failure = EventPath(fixture, fixture.OperationA, "Failed");
+        var failureBytes = File.ReadAllBytes(failure);
+        var plan = fixture.Harness.Service.Inspect();
+        Assert.Equal(SetupRecoveryState.Interrupted, plan.State);
+        Assert.Equal(fixture.OperationA, plan.InterruptedOperationId);
+        var applied = fixture.Harness.Service.Apply(plan, false);
+        Assert.True(applied.Succeeded, applied.Detail);
+        var restarted = new SetupRecovery(new ProfileStore(fixture.Harness.Root), fixture.Harness.Environment);
+        Assert.False(restarted.HasUnfinishedRecovery);
+        Assert.True(restarted.Inspect().IsHealthy);
+        Assert.SequenceEqual(failureBytes, File.ReadAllBytes(failure));
+        fixture.AssertArchiveUnchanged();
+    }
+
+    private static string EventPath(CompletedFixture fixture, string operation, string kind) =>
+        Directory.EnumerateFiles(fixture.Operations, operation + ".*." + kind + ".json").Single();
+
+    private static void AppendFromStarted(CompletedFixture fixture, string operation, int sequence, string kind)
+    {
+        var started = JsonNode.Parse(File.ReadAllBytes(EventPath(fixture, operation, "Started")))!.AsObject();
+        started["Sequence"] = sequence;
+        started["Kind"] = kind;
+        started["Detail"] = kind;
+        File.WriteAllText(Path.Combine(fixture.Operations, $"{operation}.{sequence:D6}.{kind}.json"), started.ToJsonString(RecoveryJson.Options));
+    }
+
+    private static void SuspendRecord(CompletedFixture fixture, string path) =>
+        File.Move(path, Path.Combine(fixture.Harness.Root, "checkpoint-" + Path.GetFileName(path) + ".bin"));
+
+    private static void AssertBlockedWithoutWrites(Harness harness)
+    {
+        var snapshot = SnapshotFiles(harness.Root);
+        for (var restart = 0; restart < 2; restart++)
+        {
+            var service = new SetupRecovery(new ProfileStore(harness.Root), harness.Environment);
+            var plan = service.Inspect();
+            Assert.Equal(SetupRecoveryState.Blocked, plan.State);
+            service.InspectInterruptedEvidence();
+            Assert.False(service.Apply(plan, false).Succeeded);
+            AssertFilesUnchanged(harness.Root, snapshot);
+        }
+    }
+
+    private static Dictionary<string, (byte[] Bytes, DateTime Written)> SnapshotFiles(string root) =>
+        Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => path, path => (File.ReadAllBytes(path), File.GetLastWriteTimeUtc(path)));
+
+    private static void AssertFilesUnchanged(string root, Dictionary<string, (byte[] Bytes, DateTime Written)> snapshot)
+    {
+        Assert.SequenceEqual(snapshot.Keys.Order(StringComparer.Ordinal),
+            Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+        foreach (var (path, before) in snapshot)
+        {
+            Assert.SequenceEqual(before.Bytes, File.ReadAllBytes(path));
+            Assert.Equal(before.Written, File.GetLastWriteTimeUtc(path));
+        }
+    }
+
+    private sealed class CompletedFixture
+    {
+        private CompletedFixture(Harness harness, string operationA, string originalPath, string metadataPath, string absentCompleted)
+        {
+            Harness = harness;
+            OperationA = operationA;
+            OriginalPath = originalPath;
+            MetadataPath = metadataPath;
+            AbsentCompleted = absentCompleted;
+            OriginalBytes = File.ReadAllBytes(originalPath);
+            MetadataBytes = File.ReadAllBytes(metadataPath);
+            JournalPrefix = Directory.EnumerateFiles(Operations, "*.json").ToDictionary(path => path, File.ReadAllBytes);
+        }
+
+        public Harness Harness { get; }
+        public string OperationA { get; }
+        public string? OperationB { get; private set; }
+        public string OriginalPath { get; }
+        public string MetadataPath { get; }
+        private string AbsentCompleted { get; }
+        private byte[] OriginalBytes { get; }
+        private byte[] MetadataBytes { get; }
+        private Dictionary<string, byte[]> JournalPrefix { get; }
+        public string Operations => Path.Combine(Harness.Root, "setup-recovery", "operations");
+
+        public static CompletedFixture Create(bool reconcile, bool failCompletedPublication = false)
+        {
+            var harness = Harness.Create(conflict: true);
+            string? unpublishedCompleted = null;
+            var service = failCompletedPublication
+                ? new SetupRecovery(new ProfileStore(harness.Root), harness.Environment, beforeEventPublish: (_, target) =>
+                {
+                    if (!target.EndsWith(".Completed.json", StringComparison.Ordinal)) return;
+                    unpublishedCompleted = target;
+                    throw new IOException("interrupt A Completed publication after verified changes");
+                })
+                : harness.Service;
+            var resultA = service.Apply(service.Inspect(), false);
+            Assert.Equal(!failCompletedPublication, resultA.Succeeded);
+            var operations = Path.Combine(harness.Root, "setup-recovery", "operations");
+            var completed = failCompletedPublication ? unpublishedCompleted!
+                : Directory.EnumerateFiles(operations, resultA.OperationId + ".*.Completed.json").Single();
+            if (!failCompletedPublication) File.Move(completed, completed + "." + Guid.NewGuid().ToString("N") + ".tmp");
+            var evidence = harness.Service.InspectInterruptedEvidence();
+            Assert.Equal(SetupRecoveryEvidenceKind.CompleteRecord, evidence.Items.Single().Kind);
+            Assert.True(harness.Service.ReconcileInterruptedEvidence(evidence).Succeeded);
+            var original = harness.Service.InspectInterruptedEvidence().Items.Single().PreservationPath!;
+            var fixture = new CompletedFixture(harness, resultA.OperationId, original,
+                Path.Combine(Path.GetDirectoryName(original)!, "metadata.json"), completed);
+            Assert.Equal(failCompletedPublication, Directory.EnumerateFiles(operations, resultA.OperationId + ".*.Failed.json").Any());
+            if (reconcile)
+            {
+                var resultB = harness.Service.Apply(harness.Service.Inspect(), false);
+                Assert.True(resultB.Succeeded, resultB.Detail);
+                fixture.OperationB = resultB.OperationId;
+                Assert.True(resultB.OperationId != resultA.OperationId);
+                fixture.AssertArchiveUnchanged();
+                Assert.False(Directory.EnumerateFiles(operations, resultA.OperationId + ".*.Failed.json").Any());
+            }
+            return fixture;
+        }
+
+        public void AssertArchiveUnchanged()
+        {
+            Assert.SequenceEqual(OriginalBytes, File.ReadAllBytes(OriginalPath));
+            Assert.SequenceEqual(MetadataBytes, File.ReadAllBytes(MetadataPath));
+            Assert.False(File.Exists(AbsentCompleted));
+            foreach (var record in JournalPrefix) Assert.SequenceEqual(record.Value, File.ReadAllBytes(record.Key));
+        }
     }
 
     private static void TruncatedRelatedEventReconciles()

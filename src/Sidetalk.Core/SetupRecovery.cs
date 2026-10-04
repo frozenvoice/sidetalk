@@ -17,13 +17,15 @@ internal sealed partial class SetupRecovery
     private readonly string operationsRoot;
     private readonly string consentRoot;
     private readonly Action<string, string>? beforePreservationRename;
+    private readonly Action<string, string>? beforeEventPublish;
 
     public SetupRecovery(ProfileStore store, ISetupRecoveryEnvironment environment,
-        Action<string, string>? beforePreservationRename = null)
+        Action<string, string>? beforePreservationRename = null, Action<string, string>? beforeEventPublish = null)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.environment = environment ?? throw new ArgumentNullException(nameof(environment));
         this.beforePreservationRename = beforePreservationRename;
+        this.beforeEventPublish = beforeEventPublish;
         recoveryRoot = Path.Combine(store.Root, "setup-recovery");
         historyRoot = Path.Combine(recoveryRoot, "history");
         operationsRoot = Path.Combine(recoveryRoot, "operations");
@@ -719,7 +721,7 @@ internal sealed partial class SetupRecovery
     {
         Directory.CreateDirectory(operationsRoot);
         ProfileStore.RejectReparseAncestors(operationsRoot);
-        WriteImmutable(Path.Combine(operationsRoot, $"{entry.OperationId}.{entry.Sequence:D6}.{entry.Kind}.json"), entry);
+        WriteImmutable(Path.Combine(operationsRoot, $"{entry.OperationId}.{entry.Sequence:D6}.{entry.Kind}.json"), entry, beforeEventPublish);
     }
 
     private void ReconcilePrevious(SetupRecoveryPlan plan, string operationId, string planId, string scopeFingerprint)
@@ -740,7 +742,7 @@ internal sealed partial class SetupRecovery
         catch { return false; /* The original failure is retained in the returned detail. */ }
     }
 
-    private static void WriteImmutable<T>(string path, T value)
+    private static void WriteImmutable<T>(string path, T value, Action<string, string>? beforePublish = null)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -750,6 +752,7 @@ internal sealed partial class SetupRecovery
                 JsonSerializer.Serialize(stream, value, RecoveryJson.Options);
                 stream.Flush(true);
             }
+            beforePublish?.Invoke(temporary, path);
             File.Move(temporary, path, overwrite: false);
         }
         catch

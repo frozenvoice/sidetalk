@@ -9,6 +9,7 @@ internal static class ControllerSetupRecoveryTests
     public static IReadOnlyList<(string Name, Action Run)> Cases =
     [
         ("Setup controller: diagnostics and render authority never write", ReadOnlyNeverWrites),
+        ("Setup controller: preserved Completed reconciliation survives writable and read-only restart", CompletedEvidenceSurvivesControllerRestart),
         ("Setup controller: failed recovery removes launch readiness across restart", FailureBlocksAcrossRestart),
         ("Setup controller: unfinished Start command prevents configuration writes", PendingCommandBlocks),
         ("Setup controller: staged recovery and terminated command reconcile without circular block", TerminatedCommandAndStagedEvidence),
@@ -41,6 +42,113 @@ internal static class ControllerSetupRecoveryTests
         Assert.False(Directory.Exists(Path.Combine(h.Store.Root, "command-journal")));
         Assert.False(Directory.Exists(controller.RecoveryHistoryPath));
         Assert.SequenceEqual(original, File.ReadAllBytes(h.Store.ProfilePath));
+    }
+
+    private static void CompletedEvidenceSurvivesControllerRestart()
+    {
+        var h = new Harness("setup-controller-completed-restart");
+        var service = new SetupRecovery(h.Store, h.Environment);
+        var applied = service.Apply(service.Inspect(), false);
+        Assert.True(applied.Succeeded, applied.Detail);
+        Assert.Equal(1, h.Environment.WriteCount);
+        Assert.True(service.Inspect().IsHealthy);
+        var operations = Path.Combine(h.Store.Root, "setup-recovery", "operations");
+        var completed = Directory.EnumerateFiles(operations, applied.OperationId + ".*.Completed.json").Single();
+        var temporary = completed + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var completedBytes = File.ReadAllBytes(completed);
+        File.Move(completed, temporary);
+        Assert.False(Directory.EnumerateFiles(operations, applied.OperationId + ".*.Failed.json").Any());
+        var beforePreservation = CaptureTree(h.Store.Root);
+        var closeCount = h.Environment.CloseCount;
+        var diagnostics = TestContext.CreateRunDirectory("setup-controller-completed-diagnostics");
+
+        // This models the read-only authority shared by diagnose/render modes;
+        // it does not exercise native GUI rendering or an installed environment.
+        using (var readOnly = h.Controller(readOnly: true))
+        {
+            var snapshot = readOnly.InspectAsync().GetAwaiter().GetResult();
+            Assert.False(snapshot.CanLaunch);
+            Assert.False(snapshot.ActionsPermitted);
+            var evidence = readOnly.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+            Assert.True(evidence.CanPreserve, evidence.Detail);
+            Assert.True(evidence.BlocksExecution, evidence.Detail);
+            Assert.Equal(SetupRecoveryEvidenceKind.CompleteRecord, evidence.Items.Single().Kind);
+            readOnly.ExportDiagnosticsAsync(Path.Combine(diagnostics, "before-preservation.json")).GetAwaiter().GetResult();
+            Assert.Throws<InvalidOperationException>(() => readOnly.ReconcileInterruptedEvidenceAsync(evidence).GetAwaiter().GetResult());
+        }
+        AssertTreeUnchanged(beforePreservation, h.Store.Root);
+        Assert.Equal(1, h.Environment.WriteCount);
+        Assert.Equal(closeCount, h.Environment.CloseCount);
+        Assert.Equal(0, h.Runner.Starts);
+
+        string reconciledOperation;
+        using (var writable = h.Controller())
+        {
+            var evidence = writable.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+            Assert.True(evidence.CanPreserve, evidence.Detail);
+            var preserved = writable.ReconcileInterruptedEvidenceAsync(evidence).GetAwaiter().GetResult();
+            Assert.False(preserved.CanLaunch);
+            var plan = writable.InspectSetupRecoveryAsync().GetAwaiter().GetResult();
+            Assert.True(plan.IsReconciliation);
+            Assert.Equal(applied.OperationId, plan.InterruptedOperationId);
+            var prepared = writable.PrepareAsync(plan, false).GetAwaiter().GetResult();
+            Assert.True(prepared.CanLaunch, prepared.Detail);
+            using var reference = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(
+                Path.Combine(operations, applied.OperationId + ".1000000.Reconciled.json")));
+            reconciledOperation = reference.RootElement.GetProperty("RelatedOperationId").GetString()!;
+            Assert.True(reconciledOperation != applied.OperationId);
+            Assert.Equal(1, Directory.EnumerateFiles(operations, reconciledOperation + ".*.Completed.json").Count());
+        }
+        Assert.False(File.Exists(temporary));
+        Assert.False(File.Exists(completed));
+        Assert.False(Directory.EnumerateFiles(operations, applied.OperationId + ".*.Failed.json").Any());
+        var preservedEvidence = new SetupRecovery(new ProfileStore(h.Store.Root), h.Environment).InspectInterruptedEvidence().Items.Single();
+        Assert.SequenceEqual(completedBytes, File.ReadAllBytes(preservedEvidence.PreservationPath!));
+        var afterReconciliation = CaptureTree(h.Store.Root);
+        var writeCount = h.Environment.WriteCount;
+        closeCount = h.Environment.CloseCount;
+        var backupCount = Directory.EnumerateFiles(h.Store.Root, "sandboxie.ini.backup", SearchOption.AllDirectories).Count();
+        var archiveCount = Directory.EnumerateFiles(h.Store.Root, "original.bin", SearchOption.AllDirectories).Count();
+        Assert.Equal(2, backupCount);
+        Assert.Equal(1, archiveCount);
+
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            foreach (var readOnly in new[] { false, true })
+            {
+                using var restarted = new SidetalkController(new ProfileStore(h.Store.Root), h.Runner, h.Runtime,
+                    h.Recovery, readOnly: readOnly, setupEnvironment: h.Environment);
+                var snapshot = restarted.InspectAsync().GetAwaiter().GetResult();
+                Assert.True(snapshot.CanLaunch, snapshot.Detail);
+                Assert.Equal(!readOnly, snapshot.ActionsPermitted);
+                Assert.True(restarted.InspectSetupRecoveryAsync().GetAwaiter().GetResult().IsHealthy);
+                var evidence = restarted.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+                Assert.False(evidence.BlocksExecution, evidence.Detail);
+                Assert.False(evidence.CanPreserve);
+                Assert.False(evidence.Items.Single().NeedsPublication);
+                restarted.ExportDiagnosticsAsync(Path.Combine(diagnostics, $"restart-{iteration}-{readOnly}.json")).GetAwaiter().GetResult();
+                AssertTreeUnchanged(afterReconciliation, h.Store.Root);
+                Assert.False(File.Exists(completed));
+                Assert.Equal(1, Directory.EnumerateFiles(operations, reconciledOperation + ".*.Completed.json").Count());
+                Assert.Equal(backupCount, Directory.EnumerateFiles(h.Store.Root, "sandboxie.ini.backup", SearchOption.AllDirectories).Count());
+                Assert.Equal(archiveCount, Directory.EnumerateFiles(h.Store.Root, "original.bin", SearchOption.AllDirectories).Count());
+                Assert.Equal(writeCount, h.Environment.WriteCount);
+                Assert.Equal(closeCount, h.Environment.CloseCount);
+                Assert.Equal(0, h.Runner.Starts);
+            }
+        }
+    }
+
+    private static (string[] Directories, Dictionary<string, byte[]> Files) CaptureTree(string root) =>
+        (Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray(),
+            Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes));
+
+    private static void AssertTreeUnchanged((string[] Directories, Dictionary<string, byte[]> Files) expected, string root)
+    {
+        var actual = CaptureTree(root);
+        Assert.SequenceEqual(expected.Directories, actual.Directories);
+        Assert.SequenceEqual(expected.Files.Keys.Order(StringComparer.Ordinal), actual.Files.Keys.Order(StringComparer.Ordinal));
+        foreach (var file in expected.Files) Assert.SequenceEqual(file.Value, actual.Files[file.Key]);
     }
 
     private static void FailureBlocksAcrossRestart()
@@ -288,7 +396,8 @@ internal static class ControllerSetupRecoveryTests
         {
             InspectCount++;
             if (InspectionError is not null) throw InspectionError;
-            Assert.Equal(store, requested);
+            Assert.Equal(store.Root, requested.Root);
+            Assert.Equal(store.ProfilePath, requested.ProfilePath);
             Assert.Equal(profile, observed);
             var globals = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             var box = IsolationPolicy.Expected(profile);

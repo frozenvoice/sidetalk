@@ -115,6 +115,26 @@ internal static class WindowsRecoveryIntegration
                     report["Succeeded"] = false;
                     WriteReport(reportPath, report);
                     Environment.Exit(77);
+                } : null,
+                beforeEventPublish: phase == "crash-completed" ? (temporary, target) =>
+                {
+                    if (!target.EndsWith(".Completed.json", StringComparison.Ordinal)) return;
+                    VerifyPreservationBaseline(native, store, baselinePath);
+                    var staged = RecordCompletedInterruption(store, temporary, target, baselinePath);
+                    report["InjectedTiming"] = "Abrupt child exit after production Completed JSON serialization and Flush(true), immediately before no-overwrite event publication";
+                    report["CoverageLimit"] = "The exit timing is injected; Completed bytes, the durable prior journal, native SbieIni mutation, file/API verification and restart preservation/reconciliation use production boundaries. No power-loss behavior is claimed.";
+                    report["InterruptedOperationId"] = staged.OperationId;
+                    report["StagedEventPath"] = staged.TemporaryPath;
+                    report["StagedEventSha256"] = staged.CompletedSha256;
+                    report["StagedEventLength"] = staged.CompletedBytes.LongLength;
+                    report["StagedJsonIsComplete"] = true;
+                    report["FinalCompletedPublished"] = false;
+                    report["FailedEventCount"] = 0;
+                    report["ExpectedAbruptExit"] = 77;
+                    report["Completed"] = false;
+                    report["Succeeded"] = false;
+                    WriteReport(reportPath, report);
+                    Environment.Exit(77);
                 } : null);
             var journal = new CommandJournal(store.Root);
             if (phase == "command-reconcile")
@@ -126,6 +146,10 @@ internal static class WindowsRecoveryIntegration
                 Require(args.Length == 4, "External settings checkpoint requires a new immutable baseline name or path as the fourth argument.");
                 using var readLease = journal.TryAcquireInspectionLease(recoverMissingLock: false);
                 CheckpointExternalSettings(native, store, baselinePath, report);
+            }
+            else if (phase == "inspect-completed")
+            {
+                InspectCompletedReconciliation(native, store, recovery, journal, report, baselinePath);
             }
             else if (phase is "inspect" or "inspect-foreign")
             {
@@ -238,6 +262,18 @@ internal static class WindowsRecoveryIntegration
                             "Seed recurrence in the same prepared profile with no existing unfinished recovery before the abrupt change phase.");
                         recovery.Apply(interrupted, true);
                         throw new InvalidOperationException("The abrupt change timing boundary was not reached.");
+                    case "crash-completed":
+                        VerifyPreservationBaseline(native, store, baselinePath);
+                        var completedPlan = recovery.Inspect();
+                        Require(profile is not null && !recovery.HasUnfinishedRecovery && completedPlan.CanApply &&
+                            completedPlan.Changes.Count == 1 && completedPlan.Changes.All(change => change.Kind == SetupRecoveryChangeKind.SetUserSetting),
+                            "Run seed-optional in the same prepared profile before the Completed-only interruption; no global-template repair is permitted.");
+                        recovery.Apply(completedPlan, true);
+                        throw new InvalidOperationException("The flushed Completed-before-publication interruption boundary was not reached.");
+                    case "reconcile-completed":
+                        lease.Dispose();
+                        ReconcileCompletedInterruption(native, store, recovery, journal, report, baselinePath);
+                        break;
                     case "crash-preserve":
                         VerifyPreservationBaseline(native, store, baselinePath);
                         Require(profile is not null && recovery.HasUnfinishedRecovery, "An actual unfinished recovery in the same prepared profile is required.");
@@ -365,7 +401,7 @@ internal static class WindowsRecoveryIntegration
         var operations = Path.Combine(store.Root, "setup-recovery", "operations");
         ProfileStore.RejectReparseAncestors(operations);
         var matches = Directory.EnumerateFiles(operations, "*.ChangeIntent.json", SearchOption.TopDirectoryOnly)
-            .Select(ReadNativeEvent)
+            .Select(path => ReadNativeEvent(path))
             .Where(entry => entry.PlanId == plan.PlanId && entry.ScopeFingerprint == plan.ScopeFingerprint &&
                 entry.Kind == "ChangeIntent" && entry.Detail == change.Identity).ToArray();
         Require(matches.Length == 1, "The actual current plan and verified change do not identify exactly one durable ChangeIntent.");
@@ -373,7 +409,7 @@ internal static class WindowsRecoveryIntegration
         Require(Guid.TryParseExact(intent.OperationId, "N", out _) && intent.Sequence >= 2,
             "The current intent operation identity or sequence is invalid.");
         var sourceEvents = Directory.EnumerateFiles(operations, intent.OperationId + ".*.json", SearchOption.TopDirectoryOnly)
-            .Select(ReadNativeEvent).OrderBy(entry => entry.Sequence).ToArray();
+            .Select(path => ReadNativeEvent(path)).OrderBy(entry => entry.Sequence).ToArray();
         Require(sourceEvents.Length == intent.Sequence + 1 && sourceEvents.Select(entry => entry.Sequence).SequenceEqual(Enumerable.Range(0, intent.Sequence + 1)) &&
             sourceEvents.All(entry => entry.OperationId == intent.OperationId && entry.PlanId == plan.PlanId && entry.ScopeFingerprint == plan.ScopeFingerprint) &&
             sourceEvents[0].Kind == "Started" && sourceEvents[^1] == intent,
@@ -412,7 +448,7 @@ internal static class WindowsRecoveryIntegration
         return new(intent.OperationId, intent.Sequence, temporary, Hash(partial), partial.LongLength);
     }
 
-    private static NativeEvent ReadNativeEvent(string path)
+    private static NativeEvent ReadNativeEvent(string path, string? finalTarget = null)
     {
         ProfileStore.RejectReparseAncestors(path);
         using var document = JsonDocument.Parse(File.ReadAllBytes(path));
@@ -423,11 +459,266 @@ internal static class WindowsRecoveryIntegration
             value.GetProperty("Kind").GetString() ?? throw new InvalidDataException("Native event has no phase."),
             value.GetProperty("PlanId").GetString() ?? throw new InvalidDataException("Native event has no approved plan."),
             value.GetProperty("ScopeFingerprint").GetString() ?? throw new InvalidDataException("Native event has no approved scope."),
-            value.GetProperty("Detail").GetString() ?? throw new InvalidDataException("Native event has no change identity."));
-        Require(Path.GetFileName(path) == $"{entry.OperationId}.{entry.Sequence:D6}.{entry.Kind}.json",
+            value.GetProperty("Detail").GetString() ?? throw new InvalidDataException("Native event has no change identity."),
+            value.TryGetProperty("RelatedOperationId", out var related) ? related.GetString() : null);
+        Require(Path.GetFileName(finalTarget ?? path) == $"{entry.OperationId}.{entry.Sequence:D6}.{entry.Kind}.json",
             "Native event contents disagree with their immutable filename.");
         return entry;
     }
+
+    private static NativeCompletedInterruption RecordCompletedInterruption(ProfileStore store, string temporary, string target, string baselinePath)
+    {
+        ProfileStore.RejectReparseAncestors(temporary);
+        var completedBytes = File.ReadAllBytes(temporary);
+        var completed = ReadNativeEvent(temporary, target);
+        Require(completed.Kind == "Completed" && completed.RelatedOperationId is null && !File.Exists(target),
+            "The interruption must occur after complete production Completed JSON flush and before final publication.");
+        var prefix = ReadOperationEvents(store, completed.OperationId);
+        Require(prefix.Length >= 4 && prefix.Length == completed.Sequence && prefix.Select(entry => entry.Sequence).SequenceEqual(Enumerable.Range(0, completed.Sequence)) &&
+            prefix[0].Kind == "Started" && prefix[1].Kind == "BackupCreated" && prefix[^1].Kind == "ChangeVerified" &&
+            prefix.All(entry => entry.PlanId == completed.PlanId && entry.ScopeFingerprint == completed.ScopeFingerprint &&
+                entry.Kind is not "Completed" and not "Failed" and not "Reconciled"),
+            "The native Interrupted fixture must have the complete verified prefix, no final Completed, and no Failed event.");
+        using var parsed = JsonDocument.Parse(completedBytes);
+        var hashes = CaptureRecoveryFiles(store);
+        Require(hashes.Remove(temporary), "The flushed Completed temporary file was absent from the interruption snapshot.");
+        var staged = new NativeCompletedInterruption(store.Root, baselinePath, completed.OperationId, temporary, target,
+            completedBytes, Hash(completedBytes), parsed.RootElement.GetProperty("RecordedAtUtc").GetDateTimeOffset(),
+            hashes, CountBackups(store), CountOperationStarts(store));
+        var path = CompletedFixturePath(completed.OperationId, reconciled: false);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        WriteNew(path, JsonSerializer.SerializeToUtf8Bytes(staged));
+        return staged;
+    }
+
+    private static NativeCompletedInterruption ReadCompletedInterruption(ProfileStore store, string baselinePath)
+    {
+        var directory = Path.Combine(LabRoot, "completed-interruptions");
+        ProfileStore.RejectReparseAncestors(directory);
+        Require(Directory.Exists(directory), "No native Completed interruption witness exists.");
+        var staged = Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly).Select(path =>
+        {
+            ProfileStore.RejectReparseAncestors(path);
+            return JsonSerializer.Deserialize<NativeCompletedInterruption>(File.ReadAllBytes(path))
+                ?? throw new InvalidDataException("The native Completed interruption witness is empty.");
+        }).Where(item => item.StoreRoot == store.Root && item.BaselinePath == baselinePath)
+            .OrderByDescending(item => item.RecordedAtUtc).FirstOrDefault()
+            ?? throw new InvalidDataException("No native Completed witness belongs to the current store and immutable baseline.");
+        Require(Guid.TryParseExact(staged.OperationId, "N", out _) && Hash(staged.CompletedBytes) == staged.CompletedSha256 &&
+            Path.GetDirectoryName(staged.FinalPath) == Path.Combine(store.Root, "setup-recovery", "operations") &&
+            staged.TemporaryPath.StartsWith(staged.FinalPath + ".", StringComparison.Ordinal) && staged.TemporaryPath.EndsWith(".tmp", StringComparison.Ordinal),
+            "The immutable native Completed witness has an invalid identity, location or hash.");
+        return staged;
+    }
+
+    private static void ReconcileCompletedInterruption(WindowsSetupRecoveryEnvironment native, ProfileStore store, SetupRecovery recovery,
+        CommandJournal journal, Dictionary<string, object?> report, string baselinePath)
+    {
+        var staged = ReadCompletedInterruption(store, baselinePath);
+        Require(File.Exists(staged.TemporaryPath) && File.ReadAllBytes(staged.TemporaryPath).SequenceEqual(staged.CompletedBytes),
+            "The exact complete Completed original is missing or changed before native preservation.");
+        RequireNoOldCompletion(store, staged);
+        RequireFileHashes(staged.OriginalFileHashes);
+        VerifyCompletedReadOnly(native, store, journal, report, baselinePath, expectBlocked: true);
+        string preserved;
+        string metadata;
+        byte[] metadataBytes;
+        string newOperation;
+        using (journal.AcquireLease())
+        {
+            VerifyPreservationBaseline(native, store, baselinePath);
+            var profile = store.Load() ?? throw new InvalidDataException("The native Completed fixture profile disappeared.");
+            var observation = native.Inspect(store, profile).Normalize();
+            Require(journal.ReadPending(profile, observation.Install.StartExePath) is null && observation.BoxProcessIds.Count == 0,
+                "Native Completed reconciliation requires no pending command and an empty owned box.");
+            var evidence = recovery.InspectInterruptedEvidence();
+            var original = evidence.Items.Single(item => item.OriginalPath == staged.TemporaryPath);
+            Require(evidence.CanPreserve && evidence.BlocksExecution && original.Kind == SetupRecoveryEvidenceKind.CompleteRecord &&
+                original.OperationId == staged.OperationId && original.Sha256 == staged.CompletedSha256 &&
+                original.Length == staged.CompletedBytes.LongLength && original.PreservationPath is null,
+                "The exact complete Completed original was not classified for approved native preservation.");
+            Require(recovery.ReconcileInterruptedEvidence(evidence).Succeeded, "Native Completed original preservation failed.");
+            var afterPreserve = new SetupRecovery(store, native).InspectInterruptedEvidence();
+            var archive = afterPreserve.Items.Single(item => item.OriginalPath == staged.TemporaryPath);
+            Require(afterPreserve.BlocksExecution && archive.PreservationPath is not null && !archive.NeedsPublication &&
+                !File.Exists(staged.TemporaryPath), "Preservation alone incorrectly completed the old operation or requested Completed publication.");
+            preserved = archive.PreservationPath!;
+            metadata = Path.Combine(Path.GetDirectoryName(preserved)!, "metadata.json");
+            metadataBytes = File.ReadAllBytes(metadata);
+            Require(File.ReadAllBytes(preserved).SequenceEqual(staged.CompletedBytes), "Native preservation changed the complete Completed original bytes.");
+            using (var document = JsonDocument.Parse(metadataBytes))
+            {
+                var value = document.RootElement;
+                Require(value.GetProperty("OriginalPath").GetString() == staged.TemporaryPath &&
+                    value.GetProperty("PreservationPath").GetString() == preserved && value.GetProperty("OperationId").GetString() == staged.OperationId &&
+                    value.GetProperty("Sha256").GetString() == staged.CompletedSha256 && value.GetProperty("Length").GetInt64() == staged.CompletedBytes.LongLength,
+                    "Native preservation metadata does not match the exact Completed origin, bytes and operation.");
+            }
+            RequireNoOldCompletion(store, staged);
+            RequireFileHashes(staged.OriginalFileHashes);
+            // This fresh service reads the already-preserved original before earning
+            // a new operation; the historical Completed cannot authorize completion.
+            var restarted = new SetupRecovery(store, native);
+            var plan = restarted.Inspect();
+            Require(plan.State == SetupRecoveryState.Interrupted && plan.IsReconciliation && plan.InterruptedOperationId == staged.OperationId,
+                "The preserved Completed did not require a freshly inspected native reconciliation.");
+            var result = restarted.Apply(plan, true);
+            ApplyAndVerify(result, native, store, report);
+            newOperation = result.OperationId;
+            Require(newOperation != staged.OperationId && CountOperationStarts(store) == staged.StartedCount + 1 && CountBackups(store) == staged.BackupCount + 1,
+                "Fresh Completed reconciliation must create exactly one new operation and backup.");
+            RequireCompletedReference(store, staged, newOperation);
+            RequireFileHashes(staged.OriginalFileHashes);
+            Require(File.ReadAllBytes(preserved).SequenceEqual(staged.CompletedBytes) && File.ReadAllBytes(metadata).SequenceEqual(metadataBytes),
+                "Fresh native reconciliation changed the preserved original or immutable metadata.");
+            VerifyPreservationBaseline(native, store, baselinePath);
+        }
+        var witness = new NativeCompletedReconciliation(staged.OperationId, newOperation, preserved, metadata,
+            Hash(metadataBytes), CaptureRecoveryFiles(store), CountBackups(store), CountOperationStarts(store));
+        var witnessPath = CompletedFixturePath(staged.OperationId, reconciled: true);
+        Directory.CreateDirectory(Path.GetDirectoryName(witnessPath)!);
+        WriteNew(witnessPath, JsonSerializer.SerializeToUtf8Bytes(witness));
+        InspectCompletedReconciliation(native, store, new SetupRecovery(store, native), journal, report, baselinePath);
+        report["FreshOperationId"] = newOperation;
+        report["NativeCompletedPreservationAndReconciliation"] = true;
+        report["OriginalBytesAndMetadataPreserved"] = true;
+        report["OriginalCompletedRepublished"] = 0;
+        report["NewReconciliationOperations"] = 1;
+        report["NewReconciliationBackups"] = 1;
+        report["CoverageLimit"] = "Actual native settings, complete production Completed temporary bytes, abrupt injected process exit, same-handle preservation and a new native revalidation operation. The interruption timing is injected; no account operations or power-loss behavior are claimed.";
+    }
+
+    private static void InspectCompletedReconciliation(WindowsSetupRecoveryEnvironment native, ProfileStore store, SetupRecovery recovery,
+        CommandJournal journal, Dictionary<string, object?> report, string baselinePath)
+    {
+        var staged = ReadCompletedInterruption(store, baselinePath);
+        var path = CompletedFixturePath(staged.OperationId, reconciled: true);
+        ProfileStore.RejectReparseAncestors(path);
+        var witness = JsonSerializer.Deserialize<NativeCompletedReconciliation>(File.ReadAllBytes(path))
+            ?? throw new InvalidDataException("Native Completed reconciliation witness is missing.");
+        Require(witness.OldOperationId == staged.OperationId && File.ReadAllBytes(witness.PreservedPath).SequenceEqual(staged.CompletedBytes) &&
+            Hash(File.ReadAllBytes(witness.MetadataPath)) == witness.MetadataSha256,
+            "Native Completed preserved original or metadata changed across processes.");
+        RequireCompletedReference(store, staged, witness.NewOperationId);
+        RequireFileSnapshot(store, witness.FileHashes);
+        using (journal.TryAcquireInspectionLease(recoverMissingLock: false))
+            Require(!recovery.HasUnfinishedRecovery && recovery.Inspect().IsHealthy, "A fresh process still rejects the reconciled native Completed original.");
+        VerifyCompletedReadOnly(native, store, journal, report, baselinePath, expectBlocked: false);
+        RequireFileSnapshot(store, witness.FileHashes);
+        Require(CountBackups(store) == witness.BackupCount && CountOperationStarts(store) == witness.StartedCount,
+            "Repeated native read-only inspection created another operation or backup.");
+        RequireNoOldCompletion(store, staged);
+        report["InterruptedOperationId"] = staged.OperationId;
+        report["FreshOperationId"] = witness.NewOperationId;
+        report["PreservedOriginalSha256"] = staged.CompletedSha256;
+        report["PreservedMetadataSha256"] = witness.MetadataSha256;
+        report["OriginalCompletedRepublished"] = 0;
+        report["RepeatedOperationIncrease"] = 0;
+        report["RepeatedBackupIncrease"] = 0;
+        report["OriginalBytesAndMetadataPreserved"] = true;
+    }
+
+    private static void VerifyCompletedReadOnly(WindowsSetupRecoveryEnvironment native, ProfileStore store, CommandJournal journal,
+        Dictionary<string, object?> report, string baselinePath, bool expectBlocked)
+    {
+        var files = CaptureRecoveryFiles(store);
+        var profile = store.Load() ?? throw new InvalidDataException("Native read-only fixture profile is missing.");
+        var before = native.Inspect(store, profile).Normalize();
+        Require(before.BoxProcessIds.Count == 0 && before.Ui.Fresh && before.Ui.ApprovedManagementProcesses.Count == 0,
+            "Native read-only assertions require the existing empty fixture with no active current-user management UI.");
+        var diagnostics = new List<string>();
+        for (var repeat = 0; repeat < 3; repeat++)
+        {
+            using var controller = new SidetalkController(readOnly: true);
+            var snapshot = controller.InspectAsync().GetAwaiter().GetResult();
+            var evidence = controller.InspectInterruptedEvidenceAsync().GetAwaiter().GetResult();
+            Require(snapshot.InspectionFailure is null && evidence.BlocksExecution == expectBlocked,
+                "A new native controller failed Completed evidence inspection: " + snapshot.Detail + " | " + evidence.Detail);
+            if (expectBlocked) Require(!snapshot.CanLaunch, "Read-only pre-preservation inspection allowed an unfinished native operation.");
+            else if (snapshot.Kakao.Available) Require(snapshot.CanLaunch && snapshot.CurrentConfigurationVerified,
+                "The reconciled original blocked verified native launch readiness: " + snapshot.Detail);
+            var output = Path.Combine(LabRoot, "reports", "completed-readonly-" + Guid.NewGuid().ToString("N") + ".json");
+            controller.ExportDiagnosticsAsync(output).GetAwaiter().GetResult();
+            diagnostics.Add(output);
+            report["ActualExecutionState"] = snapshot.State.ToString();
+            report["ActualCanLaunch"] = snapshot.CanLaunch;
+            report["ExecutionInterpretation"] = snapshot.Kakao.Available
+                ? "Actual signed installation and current launch permission inspected; no Kakao launch or account access performed."
+                : "Official Kakao installation unavailable: native launch permission untested; Completed evidence and current Sandboxie policy verified.";
+            RequireFileSnapshot(store, files);
+        }
+        using (journal.TryAcquireInspectionLease(recoverMissingLock: false))
+        {
+            var after = native.Inspect(store, store.Load()).Normalize();
+            Require(before.IniBytes.SequenceEqual(after.IniBytes) && before.CurrentUserSettingsSection == after.CurrentUserSettingsSection &&
+                after.BoxProcessIds.Count == 0 && after.Ui.Fresh && after.Ui.ApprovedManagementProcesses.Count == 0,
+                "Native read-only diagnostics changed settings or observed a changed fixture process state.");
+            VerifyPreservationBaseline(native, store, baselinePath);
+        }
+        report[expectBlocked ? "BeforePreservationReadOnly" : "AfterReconciliationReadOnly"] = new
+        {
+            FreshControllers = 3, DiagnosticsPaths = diagnostics, SettingsWrites = 0, ProcessTerminationActions = 0,
+            OriginalMoves = 0, EventPublications = 0, NewCompletionRecords = 0, OtherFixtureFileChanges = 0
+        };
+    }
+
+    private static NativeEvent[] ReadOperationEvents(ProfileStore store, string operationId) =>
+        Directory.EnumerateFiles(Path.Combine(store.Root, "setup-recovery", "operations"), operationId + ".*.json", SearchOption.TopDirectoryOnly)
+            .Select(path => ReadNativeEvent(path)).OrderBy(entry => entry.Sequence).ToArray();
+
+    private static void RequireNoOldCompletion(ProfileStore store, NativeCompletedInterruption staged) =>
+        Require(!File.Exists(staged.FinalPath) && ReadOperationEvents(store, staged.OperationId).All(entry => entry.Kind is not "Completed" and not "Failed"),
+            "The old Completed was republished or a Failed event was added to mask the exact interruption.");
+
+    private static void RequireCompletedReference(ProfileStore store, NativeCompletedInterruption staged, string newOperation)
+    {
+        RequireNoOldCompletion(store, staged);
+        var old = ReadOperationEvents(store, staged.OperationId);
+        var related = ReadOperationEvents(store, newOperation);
+        Require(old[^1].Kind == "Reconciled" && old[^1].RelatedOperationId == newOperation && related.Count(entry => entry.Kind == "Completed") == 1 &&
+            related[^1].Kind is "Completed" or "ConsentFailed" && old[^1].PlanId == related[^1].PlanId && old[^1].ScopeFingerprint == related[^1].ScopeFingerprint,
+            "The old native operation does not reference the actual newly completed revalidation operation and approval scope.");
+    }
+
+    private static string CompletedFixturePath(string operationId, bool reconciled) =>
+        Path.Combine(LabRoot, reconciled ? "completed-reconciliations" : "completed-interruptions", operationId + ".json");
+
+    private static Dictionary<string, string> CaptureRecoveryFiles(ProfileStore store)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in new[] { "setup-recovery", "recovery-evidence", "command-journal" }.Select(name => Path.Combine(store.Root, name)))
+        {
+            ProfileStore.RejectReparseAncestors(directory);
+            if (!Directory.Exists(directory)) continue;
+            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                if (Path.GetFileName(path) is "command.lock" or "recovery.lock") continue;
+                ProfileStore.RejectReparseAncestors(path);
+                result.Add(path, Hash(File.ReadAllBytes(path)));
+            }
+        }
+        if (File.Exists(store.ProfilePath)) result.Add(store.ProfilePath, Hash(File.ReadAllBytes(store.ProfilePath)));
+        return result;
+    }
+
+    private static void RequireFileHashes(IReadOnlyDictionary<string, string> expected)
+    {
+        foreach (var pair in expected)
+        {
+            ProfileStore.RejectReparseAncestors(pair.Key);
+            Require(File.Exists(pair.Key) && Hash(File.ReadAllBytes(pair.Key)) == pair.Value, "An existing native journal, profile or preservation file changed: " + pair.Key);
+        }
+    }
+
+    private static void RequireFileSnapshot(ProfileStore store, IReadOnlyDictionary<string, string> expected)
+    {
+        var actual = CaptureRecoveryFiles(store);
+        Require(actual.Count == expected.Count && expected.All(pair => actual.TryGetValue(pair.Key, out var value) && value == pair.Value),
+            "Read-only native inspection changed, added or removed a fixture file.");
+    }
+
+    private static int CountOperationStarts(ProfileStore store) =>
+        Directory.EnumerateFiles(Path.Combine(store.Root, "setup-recovery", "operations"), "*.Started.json", SearchOption.TopDirectoryOnly).Count();
 
     private static void ReconcilePreviousBootCommand(WindowsSetupRecoveryEnvironment native, ProfileStore store,
         CommandJournal journal, Dictionary<string, object?> report, string baselinePath)
@@ -725,7 +1016,13 @@ internal static class WindowsRecoveryIntegration
         string StoragePath, string SentinelSha256, string OtherSettingsSha256, string RegistrySentinel);
 
     private sealed record StagedPartialEvent(string OperationId, int IntentSequence, string Path, string Sha256, long Length);
-    private sealed record NativeEvent(string OperationId, int Sequence, string Kind, string PlanId, string ScopeFingerprint, string Detail);
+    private sealed record NativeEvent(string OperationId, int Sequence, string Kind, string PlanId, string ScopeFingerprint, string Detail,
+        string? RelatedOperationId);
+    private sealed record NativeCompletedInterruption(string StoreRoot, string BaselinePath, string OperationId, string TemporaryPath,
+        string FinalPath, byte[] CompletedBytes, string CompletedSha256, DateTimeOffset RecordedAtUtc,
+        Dictionary<string, string> OriginalFileHashes, int BackupCount, int StartedCount);
+    private sealed record NativeCompletedReconciliation(string OldOperationId, string NewOperationId, string PreservedPath,
+        string MetadataPath, string MetadataSha256, Dictionary<string, string> FileHashes, int BackupCount, int StartedCount);
 
     private sealed class CrashAfterRealChange(WindowsSetupRecoveryEnvironment native, Action<SetupRecoveryPlan, SetupRecoveryChange> abruptExit) : ISetupRecoveryEnvironment
     {
