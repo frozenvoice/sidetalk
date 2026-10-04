@@ -21,8 +21,8 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        if (args.Length != 1)
-            throw new ArgumentException("Usage: UiPreview <output-directory>");
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--interaction-only"))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only]");
 
         var app = new App();
         app.InitializeComponent();
@@ -38,10 +38,17 @@ internal static class Program
         InspectionDiagnostics.Clear();
 
         var baseSnapshot = CreateSnapshot();
+        if (args.Length == 2)
+        {
+            InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+            app.Shutdown();
+            return;
+        }
         RenderBasicFixtures(app, output, baseSnapshot);
         RenderRecoveryFixtures(app, output, baseSnapshot);
         AssertInterruptedChoiceReset(baseSnapshot);
         RunRefreshFailureFixtures(baseSnapshot);
+        InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
         File.WriteAllText(invalidLogDirectory, "fixture");
         InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;
