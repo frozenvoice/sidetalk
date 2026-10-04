@@ -43,7 +43,7 @@ if not defined PWSH (
 set "DOTNET="
 for %%I in (dotnet.exe) do set "DOTNET=%%~$PATH:I"
 if not defined DOTNET (
-    echo The .NET 8 SDK is required on PATH for building ^(not just the runtime^).
+    echo The .NET 10 SDK is required on PATH for building ^(not just the runtime^).
     echo See global.json for the SDK requirement. Nothing was installed or stopped.
     set "RC=1"
     goto finish
@@ -58,7 +58,7 @@ set "PUSHED=1"
 echo Checking the SDK selected by global.json...
 "%DOTNET%" --version
 if errorlevel 1 (
-    echo Install the .NET 8 SDK required by global.json, then try again.
+    echo Install the .NET 10 SDK required by global.json, then try again.
     set "RC=1"
     goto finish
 )

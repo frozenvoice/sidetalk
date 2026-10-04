@@ -10,6 +10,7 @@ internal static class SetupRecoveryJournalTests
 {
     public static IReadOnlyList<(string Name, Action Run)> Cases =
     [
+        (".NET 8 recovery journal preserves Completed and failed recovery conditions", Net8RecoveryJournalRemainsReadable),
         ("Setup recovery blocks an orphan completed journal event", OrphanCompletedBlocks),
         ("Setup recovery blocks changed journal approval metadata", ChangedJournalMetadataBlocks),
         ("Setup recovery blocks duplicate journal sequence numbers", DuplicateJournalSequenceBlocks),
@@ -57,6 +58,31 @@ internal static class SetupRecoveryJournalTests
         ("Windows evidence rename abort keeps original and replacement intact", NativeReplacementAbortPreservesBoth),
         ("Windows evidence rename never overwrites a preservation destination", NativeDestinationCollisionPreservesBoth)
     ];
+
+    private static void Net8RecoveryJournalRemainsReadable()
+    {
+        foreach (var terminal in new[] { "Completed", "Failed" })
+        {
+            var harness = Harness.Create(conflict: false);
+            var operations = Path.Combine(harness.Root, "setup-recovery", "operations");
+            Directory.CreateDirectory(operations);
+            foreach (var kind in new[] { "Started", "BackupCreated", terminal })
+            {
+                var text = Net8PersistenceCompatibilityTests.FixtureRecord("Recovery", kind);
+                using var document = JsonDocument.Parse(text);
+                var entry = document.RootElement;
+                File.WriteAllText(Path.Combine(operations,
+                    $"{entry.GetProperty("OperationId").GetString()}.{entry.GetProperty("Sequence").GetInt32():D6}.{kind}.json"), text, new UTF8Encoding(false));
+            }
+            var before = Net8PersistenceCompatibilityTests.Snapshot(operations);
+            var restarted = new SetupRecovery(new ProfileStore(harness.Root), harness.Environment);
+            Assert.Equal(terminal == "Failed", restarted.HasUnfinishedRecovery);
+            Assert.Equal(terminal == "Failed" ? SetupRecoveryState.Interrupted : SetupRecoveryState.Healthy, restarted.Inspect().State);
+            Assert.Equal(Path.Combine(harness.Root, "setup-recovery", "history"), restarted.RecoveryHistoryPath);
+            Net8PersistenceCompatibilityTests.AssertUnchanged(before);
+            Assert.Equal(3, Directory.GetFiles(operations, "*.json").Length);
+        }
+    }
 
     private static string StageEvent(Harness harness, string id, int sequence, string kind, string planId, string scope)
     {

@@ -207,6 +207,8 @@ function New-Fixture {
         Copy-Item -LiteralPath (Join-Path $repo ('scripts\' + $name)) -Destination (Join-Path $root ('scripts\' + $name))
     }
     Copy-Item -LiteralPath (Join-Path $repo 'build-local.cmd') -Destination (Join-Path $root 'build-local.cmd')
+    # The CMD entry point must resolve the repository's SDK, not the host default.
+    Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination (Join-Path $root 'global.json')
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination (Join-Path $root 'README.md')
     Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $root -Recurse -Force
     Set-Content -LiteralPath (Join-Path $root 'docs\fixture.md') -Value 'synthetic documentation' -Encoding utf8

@@ -11,7 +11,9 @@ Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용
 - Windows 11 x64
 - 공식 서명이 유효한 카카오톡 (2026-09-16 현재 PC: 26.8.0.5312)
 - Sandboxie Plus 1.18.4 x64 (설치본의 사용자 구성요소 5.73.4 / 서명된 드라이버 5.73.2 조합)
-- framework-dependent 배포는 .NET 8 Desktop Runtime x64 필요. self-contained 배포는 런타임 포함.
+- framework-dependent 배포는 .NET 10 Desktop Runtime x64 필요. self-contained 배포는 런타임 포함.
+
+.NET 10 이전의 저장 형식 호환성, 패키지 검사 재현 명령과 별도 실환경 확인 항목은 [.NET 10 이전 기록](docs/NET10-MIGRATION.md)에 있습니다.
 
 ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로는 이번 빌드의 검증 범위 밖입니다. 기존 설치를 이동하거나 다른 버전을 자동 설치하지 않습니다.
 
@@ -75,7 +77,7 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 ## 빌드와 검증
 
-PowerShell 7, .NET SDK 8.0.400 이상(8.x), 저장소 루트에서 실행합니다.
+PowerShell 7, .NET SDK 10.0.401 이상(10.0의 안정 버전, `global.json` 기준), 저장소 루트에서 실행합니다.
 
 ```powershell
 # 개발 중 코드 검증 (배포 앱을 켜 둔 채 실행 가능)
@@ -87,7 +89,7 @@ pwsh -File scripts/verify.ps1 -UiChecks
 # self-contained 패키지 생성·기존 배포본 교체 (.NET 런타임 포함)
 pwsh -File scripts/build.ps1 -SelfContained
 
-# framework-dependent 패키지 생성·교체 (.NET 8 Desktop Runtime 필요)
+# framework-dependent 패키지 생성·교체 (.NET 10 Desktop Runtime 필요)
 pwsh -File scripts/build.ps1
 ```
 
@@ -128,7 +130,7 @@ PR과 main push의 Windows CI는 같은 `verify.ps1 -UiChecks`와 빌드 스크�
 Sandboxie의 프로그램 호환성 창은 SIDETALK의 확인창과 다릅니다. 전역 호환성 템플릿을 적용하면 SIDETALK가 검토되지 않은 상속 규칙으로 차단할 수 있습니다. 다른 환경에 필요한 규칙은 자동으로 제거하지 않습니다.
 ## 구현 범위
 
-C# / .NET 8 / WPF, 외부 NuGet 의존성 없는 앱·콘솔 테스트. 공식 설치 파일의 Authenticode 서명을 확인하고, Sandboxie의 읽기 전용 API와 `Start.exe`의 명시적 box 명령을 사용합니다. 승인된 설정 준비·복구에 한해서 별도로 검증한 공식 `SbieIni.exe`를 사용합니다. 카카오톡 패치, 자체 주입·후킹, 뮤텍스/핸들 해제, 인증 우회, 이미지 이름으로 종료하는 코드가 없습니다.
+C# / .NET 10 LTS / WPF, 외부 NuGet 의존성 없는 앱·콘솔 테스트. 공식 설치 파일의 Authenticode 서명을 확인하고, Sandboxie의 읽기 전용 API와 `Start.exe`의 명시적 box 명령을 사용합니다. 승인된 설정 준비·복구에 한해서 별도로 검증한 공식 `SbieIni.exe`를 사용합니다. 카카오톡 패치, 자체 주입·후킹, 뮤텍스/핸들 해제, 인증 우회, 이미지 이름으로 종료하는 코드가 없습니다.
 
 1.18.4 공식 기본 템플릿은 출처·내용·값 순서를 고정 기준과 대조합니다. 명시적으로 추가한 전역 설정과 자동 확장된 기본 규칙을 구분하며, 사용자 재정의·추가 템플릿·알 수 없는 예외는 계속 차단합니다. 기준 데이터의 출처와 재생성 방법은 [Sandboxie 자료 안내](docs/third-party-sandboxie.md)에 있습니다. 고정 자료 회귀 검사와 실제 설치의 API 반환값 대조를 모두 통과했습니다. 계정 없는 파일/HKCU 시험도 통과했습니다. 사용자가 실제 보조 계정 로그인·동시 송수신을 확인했으며, 계정 데이터 분리·영속성과 WebCache COM/IPC 연결 검사는 남아 있습니다.
 

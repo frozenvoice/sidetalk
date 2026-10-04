@@ -8,7 +8,7 @@ Windows 11 native desktop (WPF). The skill's web/mobile platform enum does not d
 
 ## Stack
 
-Delegated explicitly by the user: C# / .NET 8 / WPF. Existing SDK and desktop runtime are installed. No web server or account service.
+Delegated explicitly by the user: C# / .NET 10 LTS / WPF. SDK selection follows global.json; framework-dependent builds require the .NET 10 Desktop Runtime x64. No web server or account service.
 
 ## Users and purpose
 

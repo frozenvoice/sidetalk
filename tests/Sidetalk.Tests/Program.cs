@@ -36,7 +36,7 @@ internal static class Program
         };
 
         var failures = 0;
-        var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).Concat(ServiceIdentityTests.Cases).Concat(ProfileStoreAtomicTests.Cases).Concat(CommandJournalTests.Cases).Concat(ControllerRecoveryTests.Cases).Concat(ControllerSetupRecoveryTests.Cases).Concat(SetupRecoveryTests.Cases).Concat(RecoveryTemplateRulesTests.Cases).Concat(SandboxieIniSnapshotTests.Cases).Concat(SandboxieServiceReplyTests.Cases).Concat(SandboxieSettingCommandsTests.Cases).Concat(SetupRecoverySafetyTests.Cases).Concat(SetupRecoveryJournalTests.Cases).Concat(WindowsSetupRecoveryTokenTests.Cases).Concat(InspectionFailureTests.Cases).ToArray();
+        var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).Concat(ServiceIdentityTests.Cases).Concat(ProfileStoreAtomicTests.Cases).Concat(CommandJournalTests.Cases).Concat(ControllerRecoveryTests.Cases).Concat(ControllerSetupRecoveryTests.Cases).Concat(SetupRecoveryTests.Cases).Concat(RecoveryTemplateRulesTests.Cases).Concat(SandboxieIniSnapshotTests.Cases).Concat(SandboxieServiceReplyTests.Cases).Concat(SandboxieSettingCommandsTests.Cases).Concat(SetupRecoverySafetyTests.Cases).Concat(SetupRecoveryJournalTests.Cases).Concat(WindowsSetupRecoveryTokenTests.Cases).Concat(InspectionFailureTests.Cases).Concat(Net8PersistenceCompatibilityTests.Cases).Concat(AuthenticodeCompatibilityTests.Cases).ToArray();
         foreach (var test in allTests)
         {
             try

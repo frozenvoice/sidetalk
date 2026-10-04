@@ -1,0 +1,224 @@
+{
+  "SourceRevision": "81477439bd735bd440446bc2b3fcab163159f503",
+  "SdkVersion": "8.0.424",
+  "Runtime": ".NET 8.0.30",
+  "Profile": {
+    "Schema": 1,
+    "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+    "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "UserSid": "__SIDETALK_FIXTURE_SID__",
+    "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "Command": {
+    "schema1.intent": {
+      "Schema": 1,
+      "Phase": "intent",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": null,
+      "RecoveryContext": null,
+      "Failure": null
+    },
+    "schema1.started": {
+      "Schema": 1,
+      "Phase": "started",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": {
+        "ProcessId": 1234,
+        "CreationTimeUtcTicks": 639238249840000000,
+        "ImagePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe"
+      },
+      "RecoveryContext": null,
+      "Failure": null
+    },
+    "schema1.completed": {
+      "Schema": 1,
+      "Phase": "completed",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": {
+        "ProcessId": 1234,
+        "CreationTimeUtcTicks": 639238249840000000,
+        "ImagePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe"
+      },
+      "RecoveryContext": null,
+      "Failure": null
+    },
+    "schema2.intent": {
+      "Schema": 2,
+      "Phase": "intent",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": null,
+      "RecoveryContext": {
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "SessionId": 1,
+        "Boot": null
+      },
+      "Failure": null
+    },
+    "schema2.started": {
+      "Schema": 2,
+      "Phase": "started",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": {
+        "ProcessId": 1234,
+        "CreationTimeUtcTicks": 639238249840000000,
+        "ImagePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe"
+      },
+      "RecoveryContext": {
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "SessionId": 1,
+        "Boot": null
+      },
+      "Failure": null
+    },
+    "schema2.failed": {
+      "Schema": 2,
+      "Phase": "failed",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": {
+        "ProcessId": 1234,
+        "CreationTimeUtcTicks": 639238249840000000,
+        "ImagePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe"
+      },
+      "RecoveryContext": {
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "SessionId": 1,
+        "Boot": null
+      },
+      "Failure": {
+        "Stage": "process-query",
+        "ErrorType": "System.IO.IOException",
+        "Message": "\uD569\uC131 \uC870\uD68C \uC2E4\uD328",
+        "InnerCause": "IOException: temporary fixture",
+        "IsCancellation": false
+      }
+    },
+    "schema2.completed": {
+      "Schema": 2,
+      "Phase": "completed",
+      "OperationId": "11111111111111111111111111111111",
+      "Action": "Launch",
+      "Profile": {
+        "Schema": 1,
+        "BoxName": "SideTalk_aaaaaaaaaaaaaaaaaaaaaaa",
+        "OwnerToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "StoragePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Boxes\\SideTalk_aaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "StartExe": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe",
+      "RequestedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "Process": {
+        "ProcessId": 1234,
+        "CreationTimeUtcTicks": 639238249840000000,
+        "ImagePath": "C:\\__SIDETALK_FIXTURE_ROOT__\\Sandboxie\\Start.exe"
+      },
+      "RecoveryContext": {
+        "UserSid": "__SIDETALK_FIXTURE_SID__",
+        "SessionId": 1,
+        "Boot": null
+      },
+      "Failure": null
+    }
+  },
+  "Recovery": {
+    "Started": {
+      "OperationId": "11111111111111111111111111111111",
+      "Sequence": 0,
+      "Kind": "Started",
+      "PlanId": "22222222222222222222222222222222",
+      "ScopeFingerprint": "synthetic-legacy-scope",
+      "Detail": "\uD569\uC131 \uBCF5\uAD6C \uAE30\uB85D",
+      "RecordedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "RelatedOperationId": null
+    },
+    "BackupCreated": {
+      "OperationId": "11111111111111111111111111111111",
+      "Sequence": 1,
+      "Kind": "BackupCreated",
+      "PlanId": "22222222222222222222222222222222",
+      "ScopeFingerprint": "synthetic-legacy-scope",
+      "Detail": "\uD569\uC131 \uBCF5\uAD6C \uAE30\uB85D",
+      "RecordedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "RelatedOperationId": null
+    },
+    "Completed": {
+      "OperationId": "11111111111111111111111111111111",
+      "Sequence": 2,
+      "Kind": "Completed",
+      "PlanId": "22222222222222222222222222222222",
+      "ScopeFingerprint": "synthetic-legacy-scope",
+      "Detail": "\uD569\uC131 \uBCF5\uAD6C \uAE30\uB85D",
+      "RecordedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "RelatedOperationId": null
+    },
+    "Failed": {
+      "OperationId": "11111111111111111111111111111111",
+      "Sequence": 999999,
+      "Kind": "Failed",
+      "PlanId": "22222222222222222222222222222222",
+      "ScopeFingerprint": "synthetic-legacy-scope",
+      "Detail": "\uD569\uC131 \uBCF5\uAD6C \uAE30\uB85D",
+      "RecordedAtUtc": "2026-09-01T02:03:04\u002B00:00",
+      "RelatedOperationId": null
+    }
+  }
+}
