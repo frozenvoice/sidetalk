@@ -74,9 +74,10 @@
                             </StackPanel>
                         </Border>
                         <Grid Margin="0,12,0,24">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="RefreshSummaryText" Text="4초마다 자동 확인" Style="{StaticResource SecondaryText}" FontSize="12" VerticalAlignment="Center" />
-                            <Button x:Name="InspectButton" Grid.Column="1" Content="상태 새로 확인" Style="{StaticResource ActionButton}" Click="InspectButton_Click" Padding="14,8" MinHeight="36" />
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="RefreshSummaryText" Text="현재 상태 확인 중…" Style="{StaticResource SecondaryText}" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                            <Button x:Name="CancelActionButton" Grid.Column="1" Content="요청 취소" Style="{StaticResource ActionButton}" Click="CancelActionButton_Click" Padding="14,8" MinHeight="36" Margin="0,0,8,0" Visibility="Collapsed" />
+                            <Button x:Name="InspectButton" Grid.Column="2" Content="상태 새로 확인" Style="{StaticResource ActionButton}" Click="InspectButton_Click" Padding="14,8" MinHeight="36" />
                         </Grid>
                         <Grid>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>

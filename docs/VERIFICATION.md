@@ -1,3 +1,30 @@
+# 주기적 상태 점검 중 요청 접수 UX — 2026-10-05
+
+시작 시 로컬 HEAD와 원격 main은 검토 기준 `4e79d557b3c5bc6df829f6777c353ae9ad800db5`로 같고 작업 트리는 깨끗했다. 실행의 라임색 Primary와 강제 종료의 Secondary를 유지하며 상태 점검·명시적 요청 접수·최소화/복원의 상호작용만 변경한다. 프로필·전용 저장소·명령/복구 기록의 위치와 형식 및 Core의 검증·잠금 조건은 유지한다.
+
+정상 읽기 점검 중 마지막 성공 관찰은 버튼의 요청 접수 가능 여부에만 쓰인다. 접수 즉시 안내·취소를 제공하고 진행 중인 점검 → 기존 확인창 → 새 상태 검사 → 기존 Core gate와 CommandJournal 잠금 아래 실행 직전 검증을 거친다. 실패·오래된 관찰은 실행 권한이 아니며 이중 클릭·취소·최소화·닫힘 뒤 과거 요청을 재실행하지 않는다. 이미 보낸 명령·복구 동안에는 닫힘을 미룬다. 늦은 응답은 세대가 바뀐 화면 상태를 덮어쓰지 않는다.
+
+최소화 중에도 미완료 명령 재확인과 승인된 자동 복구를 위한 4초 Core 점검을 유지하고 정상 검사로 받은 상태·복구 계획·중단 흔적의 시각 갱신을 미룬다. 오류·복구 진행 안내는 계속 갱신한다. 복원 시 새 검사 전에는 요청을 받지 않는다. 이 변경은 Core 호출 감소나 실기기 성능 개선의 실측 결과가 아니다.
+
+## 수정 전 실측과 이번 검증 범위
+
+검토 HEAD의 독립 임시 소스에서 지연 fake controller와 TaskCompletionSource로 점검 응답을 명시적으로 보류·해제해 측정했다. sleep이나 실제 KakaoTalk/Sandboxie 사용자 환경은 사용하지 않았다.
+
+| 합성 관찰 | 수정 전 `4e79d55` 실측 | 수정 후 |
+|---|---|---|
+| 정상 점검 1회의 실행 버튼 IsEnabled 전환 | 2회 | 0회 |
+| 정상 점검 1회의 종료 버튼 IsEnabled 전환 | 2회 | 0회 |
+| 보류 중인 정상 점검에서 클릭한 실행의 명령 접수 | 0회 | 점검·확인창 1회·새 검사 후 1회 |
+| 최소화 중 점검 1회의 CheckedAt 시각 갱신 | 1회 | 0회 |
+
+`pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`에서 Release 앱·IsolationProbe 빌드(경고/오류 0개)와 기존 콘솔 안전성 **200/200**은 통과했다. 마지막 UiChecks의 기본 `dotnet run` 빌드가 컴파일 진단 없이 종료 코드 1을 반환해 스크립트는 단계 코드 **13**으로 실패했다. 해당 단계만 `dotnet build tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release --nologo --disable-build-servers -m:1 -nr:false -p:BuildInParallel=false`로 빌드해 경고/오류 0개를 확인하고, `dotnet run --project tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release --no-build -- <새 임시 출력 폴더>`로 전체 WPF 검사를 실행했다. 기존 fail-closed 검사와 **16개 동기화 시나리오, 합성 PNG 16개**가 통과했다. 기본·최소 창 크기의 요청 안내·취소 버튼 PNG도 직접 확인했다. 통과한 콘솔 검사는 반복하지 않았다.
+
+상호작용 검사는 점검 중 클릭과 실제 routed 이중 클릭, 반환/예외 형태의 점검 실패, 확인 후 재검증 실패·차단, 취소·닫힘·늦은 응답, 명령 실패 후 재실행 방지, 수동/자동 복구 경쟁, 최소화/복원, 파일 선택창 내부의 중첩 호출과 취소를 포함한다. 파일 선택창도 열기 전에 작업을 예약하므로 중첩 메시지 처리 중 자동 복구나 다른 요청이 끼어들 수 없다. 순서는 TaskCompletionSource로 고정하며 30초 watchdog은 교착 검출 용도로만 사용한다.
+
+`pwsh -NoProfile -File tests/Sidetalk.BuildChecks/Program.ps1`도 **19개 임시 저장소의 모의 검사 전체 통과**다. 이 검사는 실제 publish·배포 교체·앱 실행을 하지 않는다.
+
+수정 전 로그와 임시 harness는 Git에서 제외되는 `artifacts/interaction-baseline-4e79d55/`, 수정 후 로그·측정 JSON은 `artifacts/verification/inspection-ux-20261005/`에 있다. Windows CI의 최종 커밋 결과는 PR의 검증 기록을 따른다. 기존 fail-closed 회귀를 삭제·완화하지 않았다. 이번에는 실제 사용자 데이터·KakaoTalk·Sandboxie 환경을 시험하지 않았으며, Windows 11 + Sandboxie 통합·계정 로그인/송수신·실기기 성능은 미검증이다. 새 릴리스·publish·배포 교체는 수행하지 않았다. 아래 .NET 10 이전 결과는 해당 작업의 역사적 기록이다.
+
 # .NET 10 LTS 이전 — 2026-10-05
 
 시작 시 로컬 HEAD와 원격 main은 `81477439bd735bd440446bc2b3fcab163159f503`으로 같고 작업 트리는 깨끗했다. `codex/dotnet10-lts`에서 5개 프로젝트를 `net10.0-windows`, SDK를 안정 버전 `10.0.401`로 이전했다. 실제 로컬 .NET/WindowsDesktop 런타임은 `10.0.12`다. 공식 호환성 근거와 재현 명령은 [NET10-MIGRATION.md](NET10-MIGRATION.md)에 있다. 기존 CI는 이미 `global.json` 기반이므로 workflow를 중복 변경하지 않았다.

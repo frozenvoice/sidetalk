@@ -38,11 +38,32 @@ public partial class MainWindow : Window
     private bool _automaticRecoveryChoiceDirty;
     private bool _initialRecoveryShown;
     private readonly bool _isRenderMode;
+    private readonly Func<SidetalkCommandAction, Task<bool>> _confirmAction;
+    private Task _inspectionTask = Task.CompletedTask;
+    private long _inspectionGeneration;
+    private long _intentGeneration;
+    private bool _closed;
+    private bool _windowMinimized;
+    private bool _restoreInspectionRequired;
+    private bool _restoreRefreshQueued;
+    private bool _intentCancelled;
+    private string? _actionFeedback;
 
     public MainWindow(ISidetalkController controller, bool isRenderMode = false)
+        : this(controller, isRenderMode, null)
+    {
+    }
+
+    internal MainWindow(ISidetalkController controller, Func<SidetalkCommandAction, Task<bool>> confirmAction)
+        : this(controller, false, confirmAction)
+    {
+    }
+
+    private MainWindow(ISidetalkController controller, bool isRenderMode, Func<SidetalkCommandAction, Task<bool>>? confirmAction)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _isRenderMode = isRenderMode;
+        _confirmAction = confirmAction ?? ConfirmActionAsync;
         InitializeComponent();
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         ChecksList.ItemsSource = _checks;
@@ -59,6 +80,7 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
+        StateChanged += MainWindow_StateChanged;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -82,15 +104,51 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
+        else
+        {
+            // Pending UI intent is cancellable; a command already dispatched to
+            // Core is a journalled operation and still defers closing above.
+            CancelPendingAction();
+        }
     }
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        _closed = true;
+        _inspectionGeneration++;
+        _intentGeneration++;
         _inspectionTimer.Stop();
     }
 
     private async void InspectionTimer_Tick(object? sender, EventArgs e)
     {
-        await InspectAndApplyAsync(allowAutomaticRecovery: true);
+        await RunScheduledInspectionAsync();
+    }
+
+    internal Task RunScheduledInspectionAsync() => InspectAndApplyAsync(allowAutomaticRecovery: true);
+
+    private async void MainWindow_StateChanged(object? sender, EventArgs e) =>
+        await SetMinimizedAsync(WindowState == WindowState.Minimized);
+
+    internal async Task SetMinimizedAsync(bool minimized)
+    {
+        if (_closed || _isRenderMode || _windowMinimized == minimized) return;
+        _windowMinimized = minimized;
+        if (minimized)
+        {
+            CancelPendingAction();
+            ApplyActionAvailability();
+            return;
+        }
+
+        // Do not display a pre-restore response as a fresh foreground check.
+        _restoreInspectionRequired = true;
+        _inspectionGeneration++;
+        _lastSnapshot = null;
+        _unsafeActionsInvalidated = true;
+        ApplyActionAvailability();
+        await _inspectionTask;
+        if (!_closed && !_windowMinimized)
+            await InspectAndApplyAsync(allowAutomaticRecovery: true);
     }
 
     private async void InspectButton_Click(object sender, RoutedEventArgs e)
@@ -101,27 +159,39 @@ public partial class MainWindow : Window
     /// <summary>Runs one normal, asynchronous refresh. Test and render callers can await the same path.</summary>
     public Task RefreshNowAsync() => InspectAndApplyAsync(allowAutomaticRecovery: false);
 
-    private async Task InspectAndApplyAsync(bool allowAutomaticRecovery = false)
+    private Task InspectAndApplyAsync(bool allowAutomaticRecovery = false)
     {
-        if (_isRenderMode || _inspectionInFlight || _operationInFlight)
+        if (_closed || _isRenderMode || _operationInFlight || _actionInFlight)
         {
-            return;
+            return Task.CompletedTask;
         }
+        if (_inspectionInFlight) return _inspectionTask;
 
         _inspectionInFlight = true;
+        _lastSnapshot = null;
+        _recoveryActionsInvalidated = true;
+        _evidenceInspection = null;
+        _actionFeedback = null;
+        UpdateRefreshSummary();
         ApplyActionAvailability();
+        _inspectionTask = InspectCoreAsync(allowAutomaticRecovery, _inspectionGeneration);
+        return _inspectionTask;
+    }
+
+    private bool IsCurrentInspection(long generation) => !_closed && generation == _inspectionGeneration;
+
+    private async Task InspectCoreAsync(bool allowAutomaticRecovery, long generation)
+    {
         try
         {
-            // Each refresh earns execution and recovery permissions independently.
-            // Older observations remain visible but never confer action authority.
-            _lastSnapshot = null;
-            _unsafeActionsInvalidated = true;
-            _recoveryActionsInvalidated = true;
-            _evidenceInspection = null;
+            // Display affordances survive a routine read, but _lastSnapshot is
+            // empty until a current successful response earns authority again.
             var mainFailed = false;
             try
             {
                 var snapshot = await _controller.InspectAsync();
+                if (!IsCurrentInspection(generation)) return;
+                _restoreInspectionRequired = false;
                 if (snapshot.InspectionFailure is { } failure)
                 {
                     ApplyMainInspectionFailure(failure);
@@ -131,6 +201,8 @@ public partial class MainWindow : Window
             }
             catch (Exception exception)
             {
+                if (!IsCurrentInspection(generation)) return;
+                _restoreInspectionRequired = false;
                 ApplyMainInspectionError(exception);
                 mainFailed = true;
             }
@@ -138,26 +210,35 @@ public partial class MainWindow : Window
             var recoveryFresh = false;
             try
             {
-                ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
+                var plan = await _controller.InspectSetupRecoveryAsync();
+                if (!IsCurrentInspection(generation)) return;
+                ApplyRecoveryPlan(plan);
                 recoveryFresh = true;
             }
             catch (Exception exception)
             {
+                if (!IsCurrentInspection(generation)) return;
                 ApplyRecoveryFailure(exception, "recovery-inspection", "복구 상태 확인", preserveFreshExecution: !mainFailed);
             }
 
             // This action has separate safety conditions and remains inspectable
             // when the ordinary repair plan cannot be applied.
-            try { ApplyInterruptedEvidence(await _controller.InspectInterruptedEvidenceAsync()); }
+            try
+            {
+                var evidence = await _controller.InspectInterruptedEvidenceAsync();
+                if (!IsCurrentInspection(generation)) return;
+                ApplyInterruptedEvidence(evidence);
+            }
             catch (Exception exception)
             {
+                if (!IsCurrentInspection(generation)) return;
                 _evidenceInspection = null;
                 EvidencePanel.Visibility = Visibility.Visible;
                 EvidenceSummaryText.Text = "중단 흔적을 확인하지 못했습니다. 진단 저장 또는 상태 새로 확인을 이용하세요.";
                 InspectionDiagnostics.Record("evidence-inspection", exception, persist: !_isRenderMode);
             }
             if (allowAutomaticRecovery && recoveryFresh && !mainFailed &&
-                !_isRenderMode &&
+                !_isRenderMode && !_actionInFlight && !_restoreInspectionRequired &&
                 !_automaticRecoveryAttempted &&
                 _recoveryPlan is { State: SetupRecoveryState.AutomaticallyApplicable, AllowAutomatic: true, RequiresApproval: false })
             {
@@ -167,13 +248,17 @@ public partial class MainWindow : Window
         finally
         {
             _inspectionInFlight = false;
-            ApplyActionAvailability();
+            if (!_closed)
+            {
+                UpdateRefreshSummary();
+                ApplyActionAvailability();
+            }
         }
     }
 
     private async Task RunAutomaticRecoveryAsync()
     {
-        if (_isRenderMode || _automaticRecoveryAttempted || _operationInFlight)
+        if (_closed || _isRenderMode || _actionInFlight || _automaticRecoveryAttempted || _operationInFlight)
         {
             return;
         }
@@ -213,9 +298,11 @@ public partial class MainWindow : Window
     public void ApplySnapshot(AppSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (_closed) return;
         _lastSnapshot = snapshot;
         _unsafeActionsInvalidated = false;
         _lastObservedSnapshot = snapshot;
+        if (_windowMinimized) return;
 
         var running = snapshot.State is Readiness.Running or Readiness.RunningUnverified;
         var detail = string.IsNullOrWhiteSpace(snapshot.Detail) ? ReadinessDetail(snapshot.State) : snapshot.Detail;
@@ -237,7 +324,7 @@ public partial class MainWindow : Window
         };
         StatusDot.Fill = (Brush)FindResource(statusBrush);
         StatusBadgeText.Foreground = (Brush)FindResource(statusBrush);
-        RefreshSummaryText.Text = $"{snapshot.CheckedAt.ToLocalTime():HH:mm:ss} 확인 · 4초마다 자동 갱신";
+        UpdateRefreshSummary();
         KakaoSummaryText.Text = DependencySummary(snapshot.Kakao);
         SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
 
@@ -272,6 +359,7 @@ public partial class MainWindow : Window
     public void ApplyRecoveryPlan(SetupRecoveryPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        if (_closed) return;
         var samePlan = _recoveryPlan is not null &&
             SameApproval(_recoveryPlan, plan);
         if (!samePlan)
@@ -291,7 +379,8 @@ public partial class MainWindow : Window
             _automaticRecoveryAttempted = false;
             _automaticRecoveryFailureScopeFingerprint = null;
         }
-
+        _recoveryActionsInvalidated = false;
+        if (_windowMinimized) return;
 
         if (!_initialRecoveryShown && plan.CanApply && plan.RequiresApproval && !_isRenderMode)
         {
@@ -372,7 +461,9 @@ public partial class MainWindow : Window
     public void ApplyInterruptedEvidence(SetupRecoveryEvidenceInspection inspection)
     {
         ArgumentNullException.ThrowIfNull(inspection);
+        if (_closed) return;
         _evidenceInspection = inspection;
+        if (_windowMinimized) return;
         EvidencePanel.Visibility = inspection.Items.Count == 0 && !inspection.BlocksExecution ? Visibility.Collapsed : Visibility.Visible;
         EvidenceSummaryText.Text = ReadableFailure(inspection.Detail);
         EvidenceSummaryText.ToolTip = string.Join(Environment.NewLine, inspection.Items.Select(item =>
@@ -407,12 +498,18 @@ public partial class MainWindow : Window
 
     private async void PreserveEvidenceButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRenderMode || _operationInFlight || _inspectionInFlight || _evidenceInspection is not { CanPreserve: true } inspection) return;
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight || _evidenceInspection is not { CanPreserve: true } inspection) return;
+        _operationInFlight = true;
+        ApplyActionAvailability();
         var answer = MessageBox.Show(this,
             "확인된 중단 흔적의 원본 바이트·해시·원래 위치와 관련 작업을 보존한 뒤 현재 설정을 다시 확인합니다. 원본 보존만으로 미완료 작업을 완료 처리하지 않습니다.\n\n원본을 보존하고 다시 확인할까요?",
             "중단된 준비의 원본 보존", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) return;
-        _operationInFlight = true;
+        if (answer != MessageBoxResult.OK)
+        {
+            _operationInFlight = false;
+            ApplyActionAvailability();
+            return;
+        }
         BeginRecoveryOperation("중단 흔적의 원본을 보존하고 현재 상태를 다시 확인하고 있습니다.");
         _lastSnapshot = null;
         _evidenceInspection = null;
@@ -437,7 +534,7 @@ public partial class MainWindow : Window
 
     private async void PrepareRecoveryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRenderMode || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { CanApply: true } plan)
+        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { CanApply: true } plan)
         {
             return;
         }
@@ -475,7 +572,7 @@ public partial class MainWindow : Window
 
     private async void RevokeAutomaticButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRenderMode || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
+        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
         {
             return;
         }
@@ -559,6 +656,7 @@ public partial class MainWindow : Window
 
     private void ClearStaleSnapshot(string detail)
     {
+        _inspectionGeneration++;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
         StatusTitleText.Text = "작업 진행 중";
@@ -572,6 +670,8 @@ public partial class MainWindow : Window
 
     private void BeginRecoveryOperation(string detail)
     {
+        _inspectionGeneration++;
+        _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
         StatusTitleText.Text = "복구 진행 중";
         StatusBadgeText.Text = "진행 중";
@@ -828,112 +928,37 @@ public partial class MainWindow : Window
         encoder.Save(stream);
     }
 
-    private async void LaunchButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isRenderMode || _unsafeActionsInvalidated || _actionInFlight || _operationInFlight || _lastSnapshot is not { ActionsPermitted: true, CanLaunch: true })
-        {
-            return;
-        }
-
-        var answer = MessageBox.Show(
-            this,
-            "전용 Sandboxie Plus 상자에서 공식 카카오톡을 실행합니다.\n\n처음에는 전용 INI 파일의 데이터 분리 확인 내용을 읽고 직접 수락한 뒤, 카카오톡 창에서 보조 계정으로 로그인하고 기기 인증을 진행하세요. 메인 계정의 인증·대화 데이터는 복사하지 않습니다.\n\n실행을 계속할까요?",
-            "보조 카카오톡 실행 확인",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Information,
-            MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK)
-        {
-            return;
-        }
-
-        _actionInFlight = true;
-        _operationInFlight = true;
-        ClearStaleSnapshot("실행 요청을 보내고 있습니다.");
-        ApplyActionAvailability();
-        try
-        {
-            await _controller.LaunchAsync();
-            StatusDetailText.Text = "실행 요청을 보냈습니다. 프로세스 상태를 다시 확인하고 있습니다.";
-        }
-        catch (Exception exception)
-        {
-            ApplyError(exception);
-        }
-        finally
-        {
-            _operationInFlight = false;
-            _actionInFlight = false;
-            ApplyActionAvailability();
-            await InspectAndApplyAsync(allowAutomaticRecovery: true);
-        }
-    }
-
-    private async void StopButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isRenderMode || _unsafeActionsInvalidated || _actionInFlight || _operationInFlight || _lastSnapshot is not { ActionsPermitted: true, CanStop: true })
-        {
-            return;
-        }
-
-        var answer = MessageBox.Show(
-            this,
-            "SIDETALK 전용 Sandboxie Plus 상자 안의 프로세스만 강제 종료합니다.\n\n카카오톡에서 먼저 직접 종료하세요. 강제 종료하면 저장되지 않은 작업이 사라질 수 있습니다. 보조 환경의 설정과 로컬 데이터는 삭제하지 않으며, 메인 카카오톡이나 다른 샌드박스는 건드리지 않습니다.\n\n강제 종료를 계속할까요?",
-            "보조 카카오톡 종료 확인",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning,
-            MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK)
-        {
-            return;
-        }
-
-        _actionInFlight = true;
-        _operationInFlight = true;
-        ClearStaleSnapshot("전용 상자를 종료하고 있습니다.");
-        ApplyActionAvailability();
-        try
-        {
-            await _controller.StopAsync();
-            StatusDetailText.Text = "전용 상자의 종료 요청을 보냈습니다. 저장 데이터는 삭제하지 않았습니다.";
-        }
-        catch (Exception exception)
-        {
-            ApplyError(exception);
-        }
-        finally
-        {
-            _operationInFlight = false;
-            _actionInFlight = false;
-            ApplyActionAvailability();
-            await InspectAndApplyAsync(allowAutomaticRecovery: true);
-        }
-    }
-
     private async void ExportSetupButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRenderMode || _operationInFlight || _inspectionInFlight)
+        await ExportSetupAsync(() =>
+        {
+            var dialog = new OpenFolderDialog
+            {
+                Title = "전용 INI를 저장할 새 폴더 선택",
+                Multiselect = false
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
+        });
+    }
+
+    internal async Task ExportSetupAsync(Func<string?> selectFolder)
+    {
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight)
         {
             return;
         }
 
-        var dialog = new OpenFolderDialog
-        {
-            Title = "전용 INI를 저장할 새 폴더 선택",
-            Multiselect = false
-        };
-        if (dialog.ShowDialog(this) != true || string.IsNullOrWhiteSpace(dialog.FolderName))
-        {
-            return;
-        }
-
-        SetSetupResult("전용 INI 파일을 저장하는 중…");
+        // Native dialogs pump dispatcher work; reserve before opening one so a
+        // timer-driven recovery cannot acquire and then lose this operation flag.
         _operationInFlight = true;
-        ClearStaleSnapshot("전용 INI를 저장하고 있습니다.");
         ApplyActionAvailability();
         try
         {
-            var path = await _controller.ExportSetupAsync(dialog.FolderName);
+            var folder = selectFolder();
+            if (_closed || string.IsNullOrWhiteSpace(folder)) return;
+            SetSetupResult("전용 INI 파일을 저장하는 중…");
+            ClearStaleSnapshot("전용 INI를 저장하고 있습니다.");
+            var path = await _controller.ExportSetupAsync(folder);
             SetSetupResult($"전용 INI 파일을 저장했습니다: {path}");
         }
         catch (Exception exception)
@@ -950,38 +975,43 @@ public partial class MainWindow : Window
 
     private async void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isRenderMode || _operationInFlight || _inspectionInFlight)
+        await ExportDiagnosticsAsync(() =>
+        {
+            var dialog = new SaveFileDialog
+            {
+                Title = "진단 JSON 저장",
+                FileName = $"sidetalk-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+                DefaultExt = ".json",
+                AddExtension = true,
+                Filter = "JSON 파일 (*.json)|*.json|모든 파일 (*.*)|*.*",
+                OverwritePrompt = false
+            };
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+        });
+    }
+
+    internal async Task ExportDiagnosticsAsync(Func<string?> selectFile)
+    {
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight)
         {
             return;
         }
 
-        var dialog = new SaveFileDialog
-        {
-            Title = "진단 JSON 저장",
-            FileName = $"sidetalk-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.json",
-            DefaultExt = ".json",
-            AddExtension = true,
-            Filter = "JSON 파일 (*.json)|*.json|모든 파일 (*.*)|*.*",
-            OverwritePrompt = false
-        };
-        if (dialog.ShowDialog(this) != true || string.IsNullOrWhiteSpace(dialog.FileName))
-        {
-            return;
-        }
-
-        if (File.Exists(dialog.FileName))
-        {
-            SetSetupResult("기존 진단 파일은 덮어쓰지 않습니다. 새 파일 이름을 선택하세요.");
-            return;
-        }
-
-        SetSetupResult("진단 JSON을 저장하는 중…");
         _operationInFlight = true;
-        ClearStaleSnapshot("진단 JSON을 저장하고 있습니다.");
         ApplyActionAvailability();
         try
         {
-            var path = await _controller.ExportDiagnosticsAsync(dialog.FileName);
+            var file = selectFile();
+            if (_closed || string.IsNullOrWhiteSpace(file)) return;
+            if (File.Exists(file))
+            {
+                SetSetupResult("기존 진단 파일은 덮어쓰지 않습니다. 새 파일 이름을 선택하세요.");
+                return;
+            }
+
+            SetSetupResult("진단 JSON을 저장하는 중…");
+            ClearStaleSnapshot("진단 JSON을 저장하고 있습니다.");
+            var path = await _controller.ExportDiagnosticsAsync(file);
             InspectionDiagnostics.TryAttachToExport(path);
             SetSetupResult($"진단 JSON을 저장했습니다: {path}");
         }
@@ -1023,9 +1053,14 @@ public partial class MainWindow : Window
 
     private void ApplyActionAvailability()
     {
-        var busy = _isRenderMode || _inspectionInFlight || _operationInFlight || _actionInFlight;
-        LaunchButton.IsEnabled = !busy && !_unsafeActionsInvalidated && _lastSnapshot is { ActionsPermitted: true, CanLaunch: true };
-        StopButton.IsEnabled = !busy && !_unsafeActionsInvalidated && _lastSnapshot is { ActionsPermitted: true, CanStop: true };
+        var commandBusy = _closed || _isRenderMode || _windowMinimized || _operationInFlight || _actionInFlight;
+        // These controls accept intent from the last successful observation.
+        // RequestActionAsync earns execution authority again after confirmation.
+        LaunchButton.IsEnabled = !commandBusy && !_restoreInspectionRequired && !_unsafeActionsInvalidated && Permits(_lastObservedSnapshot, SidetalkCommandAction.Launch);
+        StopButton.IsEnabled = !commandBusy && !_restoreInspectionRequired && !_unsafeActionsInvalidated && Permits(_lastObservedSnapshot, SidetalkCommandAction.Stop);
+        CancelActionButton.Visibility = _actionInFlight && !_operationInFlight && !_closed ? Visibility.Visible : Visibility.Collapsed;
+        CancelActionButton.IsEnabled = _actionInFlight && !_operationInFlight && !_intentCancelled && !_closed;
+        var busy = commandBusy || _inspectionInFlight || _restoreInspectionRequired;
         InspectButton.IsEnabled = !busy;
         ExportSetupButton.IsEnabled = !busy;
         ExportDiagnosticsButton.IsEnabled = !busy;
@@ -1035,6 +1070,31 @@ public partial class MainWindow : Window
         OpenRecoveryHistoryButton.IsEnabled = !busy;
         OpenEvidenceHistoryButton.IsEnabled = !busy && _evidenceInspection is { Items.Count: > 0 };
         PreserveEvidenceButton.IsEnabled = !busy && _evidenceInspection is { CanPreserve: true };
+        if (_restoreInspectionRequired && !_closed && !_isRenderMode && !_windowMinimized &&
+            !_inspectionInFlight && !_operationInFlight && !_actionInFlight && !_restoreRefreshQueued)
+        {
+            _restoreRefreshQueued = true;
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                _restoreRefreshQueued = false;
+                if (_restoreInspectionRequired && !_closed && !_windowMinimized)
+                    await InspectAndApplyAsync(allowAutomaticRecovery: true);
+            }), DispatcherPriority.Background);
+        }
+    }
+
+    private void UpdateRefreshSummary()
+    {
+        if (_closed || _windowMinimized) return;
+        if (_actionFeedback is not null)
+        {
+            RefreshSummaryText.Text = _actionFeedback;
+            return;
+        }
+        var last = _lastObservedSnapshot is { } snapshot
+            ? $"마지막 확인 {snapshot.CheckedAt.ToLocalTime():HH:mm:ss}" : "마지막 확인 없음";
+        RefreshSummaryText.Text = _inspectionInFlight || _restoreInspectionRequired ? last + " · 확인 중…"
+            : _unsafeActionsInvalidated ? last + " · 확인 실패 · 다시 확인하세요" : last;
     }
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)
