@@ -11,7 +11,7 @@ namespace Sidetalk.Core;
 /// host, reads the service-selected INI/user section and all explicit sections,
 /// and executes only a reviewed SbieIni.exe setting command.
 /// </summary>
-internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironment
+internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironment, ISecondaryAppearanceEnvironment
 {
     private const string GlobalSection = "GlobalSettings";
     private const string TemplateKey = "Template";
@@ -19,6 +19,25 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
     private static readonly string[] ManagementNames = ["SbieCtrl", "SandMan"];
     private BoxProfile? lastProfile;
     private ProfileStore? lastStore;
+
+    SetupRecoveryObservation ISecondaryAppearanceEnvironment.Inspect(ProfileStore store, BoxProfile profile) => Inspect(store, profile);
+
+    SetupRecoveryObservation ISecondaryAppearanceEnvironment.ApplyAppearance(ProfileStore store, BoxProfile profile,
+        SetupRecoveryObservation baseline, string key, string value)
+    {
+        if (lastStore != store || lastProfile != profile || store.Load() != profile ||
+            baseline.OwnedBoxName != profile.BoxName || !IsolationPolicy.Validate(profile, baseline.Configuration).Safe)
+            throw new InvalidDataException("표시 설정의 전용 환경과 현재 정책이 검증된 요청과 다릅니다.");
+        if (!(key == "BorderColor" && SecondaryAppearance.IsBorderValue(value)) &&
+            !(key == "BoxAlias" && value == SecondaryAppearance.SecondaryLabel))
+            throw new InvalidDataException("승인된 테두리 색과 보조 계정 이름만 저장할 수 있습니다.");
+        var folder = baseline.Install.SandboxiePath;
+        var exe = Path.Combine(folder, "SbieIni.exe");
+        // Uses the same verified command path, empty-box and UI guards, and exact
+        // one-setting file/API comparison as recovery. It never quiesces a UI.
+        return RunVerifiedCommand(exe, folder, ["set", profile.BoxName, key, value], baseline,
+            profile.BoxName, key, [value], CancellationToken.None);
+    }
 
     public SetupRecoveryObservation Inspect(ProfileStore store, BoxProfile? profile, CancellationToken cancellationToken = default)
     {
@@ -230,7 +249,7 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
         }
         if (isOwnedSetting)
         {
-            var expected = IsolationPolicy.Expected(lastProfile!);
+            var expected = IsolationPolicy.ExpectedForRecovery(lastProfile!, observation.Configuration.ExplicitBox);
             if (!expected.TryGetValue(change.Key, out var expectedValues) || !expectedValues.SequenceEqual(change.DesiredValues, StringComparer.Ordinal))
                 return new(false, false, "전용 환경 설정 목표가 IsolationPolicy.Expected와 다릅니다.");
         }

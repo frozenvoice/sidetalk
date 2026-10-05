@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Sidetalk.Core;
 
-public sealed partial class SidetalkController : ISidetalkController
+public sealed partial class SidetalkController : ISidetalkController, IQuickLaunchController
 {
     private readonly ProfileStore store;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -43,7 +43,8 @@ public sealed partial class SidetalkController : ISidetalkController
         try { return await Task.Run(() => Inspect()); }
         finally { ReleaseGate(); }
     }
-    private AppSnapshot Inspect(bool leaseHeld = false)
+    private AppSnapshot Inspect(bool leaseHeld = false,
+        Action<BoxProfile, DependencyInfo, DependencyInfo, ConfigurationLayers>? captureValidatedScope = null)
     {
         var kakao = new DependencyInfo("공식 카카오톡", null, "", "미확인", false);
         var sandboxie = new DependencyInfo("Sandboxie Plus", null, "", "미확인", false);
@@ -52,6 +53,8 @@ public sealed partial class SidetalkController : ISidetalkController
         var currentConfigurationVerified = false;
         var processPolicy = ProcessPolicyStatus.NotObserved;
         InspectionFailure? inspectionFailure = null;
+        ConfigurationLayers? verifiedConfiguration = null;
+        bool? commandPending = pendingRecord is not null || commandLifecycle.IsPending ? true : null;
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
@@ -59,6 +62,7 @@ public sealed partial class SidetalkController : ISidetalkController
             kakao = runtime.Kakao();
             sandboxie = runtime.Sandboxie();
             profile = store.Load();
+            SecondaryAppearanceStore.RequireResolved(store);
             if (setupRecovery?.HasUnfinishedRecovery == true)
                 return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 초기 설정 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
             try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
@@ -80,9 +84,11 @@ public sealed partial class SidetalkController : ISidetalkController
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Blocked("저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
             currentConfigurationVerified = true;
+            verifiedConfiguration = config;
             var startExe = Path.Combine(Path.GetDirectoryName(sandboxie.Path!)!, "Start.exe");
             RecoverPending(profile, startExe);
             var (lifecycle, processes) = commandLifecycle.InspectProcesses(() => api.Processes(profile));
+            commandPending = lifecycle.IsPending || pendingRecord is not null;
             var checks = new[] {
                 "현재 전용 환경 소유 정보와 저장 경로 일치",
                 "현재 설정의 사용자 파일·레지스트리 숨김 규칙 확인",
@@ -101,6 +107,7 @@ public sealed partial class SidetalkController : ISidetalkController
                 journal.Complete(pendingRecord);
                 pendingRecord = null;
             }
+            commandPending = pendingRecord is not null || commandLifecycle.IsPending;
             if (processes.Count > 0)
             {
                 processPolicy = ProcessPolicyStatus.EffectiveRulesUnverified;
@@ -131,10 +138,18 @@ public sealed partial class SidetalkController : ISidetalkController
             return Snapshot(Readiness.Blocked, title, detail, issues);
         }
         AppSnapshot Snapshot(Readiness state, string title, string detail, IReadOnlyList<string>? checks = null,
-            IReadOnlyList<BoxProcess>? processes = null, bool canLaunch = false, bool canStop = false) =>
-            new(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
+            IReadOnlyList<BoxProcess>? processes = null, bool canLaunch = false, bool canStop = false)
+        {
+            var snapshot = new AppSnapshot(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
                 processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop,
-                DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed) { InspectionFailure = inspectionFailure };
+                DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed)
+            { InspectionFailure = inspectionFailure, CommandPending = commandPending };
+            if (captureValidatedScope is not null && profile is not null && verifiedConfiguration is not null &&
+                currentConfigurationVerified && inspectionFailure is null && commandPending == false &&
+                (canLaunch || canStop))
+                captureValidatedScope(profile, kakao, sandboxie, verifiedConfiguration);
+            return snapshot;
+        }
     }
 
     private void RecoverPending(BoxProfile profile, string startExe)
@@ -180,10 +195,11 @@ public sealed partial class SidetalkController : ISidetalkController
     }
     public Task LaunchAsync() => ExecuteAsync(true);
     public Task StopAsync() => ExecuteAsync(false);
-    private async Task ExecuteAsync(bool launch)
+    private async Task<AppSnapshot> ExecuteAsync(bool launch, QuickLaunchExecution? quickLaunch = null,
+        CancellationToken cancellationToken = default)
     {
         RequireWritable();
-        await gate.WaitAsync();
+        await gate.WaitAsync(cancellationToken);
         PendingCommandRecord? attemptedCommand = null;
         IDisposable? commandLease = null;
         var stage = "실행 권한 확인";
@@ -192,22 +208,47 @@ public sealed partial class SidetalkController : ISidetalkController
             ObjectDisposedException.ThrowIf(disposed, this);
             var profile = store.Load() ?? throw new InvalidOperationException("전용 환경 정보가 없습니다.");
             commandLease = journal.AcquireLease();
-            var snapshot = await Task.Run(() => Inspect(leaseHeld: true));
+            var initial = await Task.Run(() => InspectForExecution(quickLaunch));
+            var snapshot = initial.Snapshot;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (quickLaunch is not null) RequireQuickLaunchReadiness(snapshot);
             if (!(launch ? snapshot.CanLaunch : snapshot.CanStop)) throw new InvalidOperationException(snapshot.Detail);
+            cancellationToken.ThrowIfCancellationRequested();
             var startExe = Path.Combine(Path.GetDirectoryName(snapshot.Sandboxie.Path!)!, "Start.exe");
             runtime.VerifyCommandFiles(startExe, snapshot.Kakao.Path!);
-            var verified = await Task.Run(() => Inspect(leaseHeld: true));
+            cancellationToken.ThrowIfCancellationRequested();
+            var final = await Task.Run(() => InspectForExecution(quickLaunch));
+            var verified = final.Snapshot;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (quickLaunch is not null) RequireQuickLaunchReadiness(verified);
             if (!(launch ? verified.CanLaunch : verified.CanStop)) throw new InvalidOperationException(verified.Detail);
             if (store.Load() != profile || verified.BoxName != profile.BoxName || verified.StoragePath != profile.StoragePath ||
                 verified.Kakao.Path != snapshot.Kakao.Path || verified.Sandboxie.Path != snapshot.Sandboxie.Path)
                 throw new InvalidDataException("실행 준비 중 프로필 또는 설치 경로가 바뀌었습니다.");
+            if (quickLaunch is not null) RequireQuickLaunchPermission(quickLaunch, verified, final.Approval);
             var action = launch ? SidetalkCommandAction.Launch : SidetalkCommandAction.Stop;
             var command = launch ? SandboxieCommands.Launch(startExe, profile.BoxName, snapshot.Kakao.Path!) : SandboxieCommands.Stop(startExe, profile.BoxName);
 
             // The durable intent exists before ANY process creation. A crash at this point
             // leaves a recoverable uncertain operation, never an apparently idle launcher.
+            // Cancellation is honoured only before durable intent. Once intent is
+            // published, retain the handle and wait/reconcile exactly like GUI launch.
+            cancellationToken.ThrowIfCancellationRequested();
             pendingRecord = journal.Prepare(profile, action, startExe);
             attemptedCommand = pendingRecord;
+            if (quickLaunch is not null)
+            {
+                quickLaunch.IntentPrepared = true;
+                quickLaunch.LastSnapshot = verified with
+                {
+                    State = Readiness.Unknown,
+                    Title = "명령 완료 확인 필요",
+                    Detail = "기록된 명령의 종료와 전용 환경 상태를 함께 확인하고 있습니다.",
+                    CanLaunch = false,
+                    CanStop = false,
+                    CommandPending = true
+                };
+            }
             stage = "명령 프로세스 생성";
             var handle = commandRunner.Start(command);
             commandLifecycle.Begin(action, handle);
@@ -231,11 +272,12 @@ public sealed partial class SidetalkController : ISidetalkController
             for (var attempt = 0; attempt < 12; attempt++)
             {
                 var observed = await Task.Run(() => Inspect(leaseHeld: true));
+                if (quickLaunch is not null) quickLaunch.LastSnapshot = observed;
                 if (observed.State is Readiness.Blocked or Readiness.MissingDependency)
                     throw new InvalidOperationException(observed.Detail);
                 if (!commandLifecycle.IsPending && pendingRecord is null)
                 {
-                    if (commandLifecycle.LastResult.Outcome is CommandLifecycleOutcome.LaunchObserved or CommandLifecycleOutcome.StopSucceeded) return;
+                    if (commandLifecycle.LastResult.Outcome is CommandLifecycleOutcome.LaunchObserved or CommandLifecycleOutcome.StopSucceeded) return observed;
                     throw new InvalidOperationException(commandLifecycle.LastResult.Message);
                 }
                 await Task.Delay(500);

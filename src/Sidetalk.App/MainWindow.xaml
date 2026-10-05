@@ -47,6 +47,7 @@
             <TabItem Header="보조 카카오톡" Style="{StaticResource TabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,6,0">
                     <StackPanel>
+                        <TextBlock x:Name="EntryFeedbackText" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Foreground="{StaticResource WarningInkBrush}" Margin="0,0,0,12" AutomationProperties.LiveSetting="Polite" />
                         <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="26,24,26,22">
                             <StackPanel>
                                 <Grid Margin="0,0,0,14">
@@ -199,6 +200,49 @@
                         <TextBlock x:Name="SetupResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,16,0,8" AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                         </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="실행 · 식별" Style="{StaticResource TabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
+                    <StackPanel>
+                        <TextBlock Text="보조 계정 빠른 실행" Style="{StaticResource SectionHeading}" />
+                        <TextBlock Text="바로가기는 SIDETALK를 통해 전용 환경을 확인한 뒤 실행합니다. 계정 로그인은 카카오톡에서 직접 진행하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
+                        <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,16">
+                            <StackPanel>
+                                <CheckBox x:Name="QuickConsentCheckBox" Content="이 전용 프로필의 빠른 실행 허용" Foreground="{StaticResource InkBrush}" FontSize="14" IsChecked="False" />
+                                <TextBlock Text="기본 꺼짐. 켜면 이 프로필·설치·설정 범위에서 빠른 실행 확인창만 생략합니다. 설정 복구·강제 종료·삭제·권한 상승 동의는 아닙니다." Style="{StaticResource SecondaryText}" Margin="0,10,0,10" FontSize="12" />
+                                <TextBlock x:Name="QuickConsentScopeText" Text="현재 프로필의 승인 범위를 확인하세요." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,12" />
+                                <WrapPanel>
+                                    <Button x:Name="SaveQuickConsentButton" Content="빠른 실행 동의 저장" Style="{StaticResource ActionButton}" Click="SaveQuickConsentButton_Click" Margin="0,0,8,6" />
+                                    <Button x:Name="ReloadQuickSettingsButton" Content="설정 다시 확인" Style="{StaticResource ActionButton}" Click="ReloadQuickSettingsButton_Click" Margin="0,0,0,6" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="바로가기 · Windows 로그인" Style="{StaticResource SectionHeading}" FontSize="17" />
+                        <CheckBox x:Name="DesktopShortcutCheckBox" Content="바탕화면에 ‘보조 카카오톡 실행’" Foreground="{StaticResource InkBrush}" Margin="0,0,0,10" IsChecked="False" />
+                        <CheckBox x:Name="StartMenuShortcutCheckBox" Content="시작 메뉴에 ‘보조 카카오톡 실행’" Foreground="{StaticResource InkBrush}" Margin="0,0,0,10" IsChecked="False" />
+                        <CheckBox x:Name="LoginStartupCheckBox" Content="Windows 로그인 시 빠른 실행" Foreground="{StaticResource InkBrush}" Margin="0,0,0,8" IsChecked="False" />
+                        <TextBlock Text="로그인 시 실행은 별도 선택이며 기본 꺼짐입니다. 빠른 실행 동의가 없으면 확인창을 표시합니다. 관리자 실행·카카오톡 자동 로그인은 사용하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,10" />
+                        <WrapPanel>
+                            <Button x:Name="SaveShortcutsButton" Content="바로가기 선택 저장" Style="{StaticResource ActionButton}" Click="SaveShortcutsButton_Click" Margin="0,0,8,6" />
+                            <Button x:Name="RemoveShortcutsButton" Content="내 바로가기 모두 제거" Style="{StaticResource ActionButton}" Click="RemoveShortcutsButton_Click" Margin="0,0,0,6" />
+                        </WrapPanel>
+                        <TextBlock x:Name="ShortcutStateText" Text="저장된 바로가기 선택을 확인하세요." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,4,0,20" />
+                        <TextBlock Text="보조 창 식별" Style="{StaticResource SectionHeading}" FontSize="17" />
+                        <Border x:Name="AppearancePreview" BorderBrush="#5B6821" BorderThickness="4" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="보조 계정" FontWeight="SemiBold" FontSize="17" />
+                                <TextBlock Text="색상 미리보기 · 실제 카카오톡 화면이 아닙니다" Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <ComboBox x:Name="AppearanceColorCombo" MinHeight="34" HorizontalAlignment="Left" MinWidth="230" Margin="0,0,0,10" SelectionChanged="AppearanceColorCombo_SelectionChanged" AutomationProperties.Name="보조 창 테두리 색" />
+                        <CheckBox x:Name="AppearanceLabelCheckBox" Content="Sandboxie 전용 환경 이름에 ‘보조 계정’ 표시" Foreground="{StaticResource InkBrush}" Margin="0,0,0,10" IsChecked="False" />
+                        <TextBlock Text="선택하지 않으면 기존 이름 표시를 보존합니다. 색상 변경도 기존 표시 방식·두께를 유지합니다. 전용 환경이 비어 있을 때만 저장합니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,10" />
+                        <Button x:Name="SaveAppearanceButton" Content="표시 설정 저장 · 재확인" Style="{StaticResource ActionButton}" Click="SaveAppearanceButton_Click" HorizontalAlignment="Left" />
+                        <TextBlock x:Name="AppearanceStateText" Text="현재 표시 설정을 확인하세요." Style="{StaticResource SecondaryText}" Margin="0,10,0,8" AutomationProperties.LiveSetting="Polite" />
+                        <TextBlock Text="테두리는 Sandboxie 관리 앱이 실행 중일 때 표시됩니다. 사용자 정의 제목줄에는 공식 제목 표시가 적용되지 않을 수 있습니다. 색·문구는 격리 성공이나 로그인 계정을 증명하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,16" />
+                        <TextBlock x:Name="QuickSettingsResultText" Style="{StaticResource SecondaryText}" Foreground="{StaticResource WarningInkBrush}" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

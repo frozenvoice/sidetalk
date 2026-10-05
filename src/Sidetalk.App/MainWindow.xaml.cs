@@ -89,6 +89,7 @@ public partial class MainWindow : Window
         {
             _inspectionTimer.Start();
             await InspectAndApplyAsync(allowAutomaticRecovery: true);
+            await LoadQuickSettingsAsync();
         }
     }
 
@@ -161,7 +162,7 @@ public partial class MainWindow : Window
 
     private Task InspectAndApplyAsync(bool allowAutomaticRecovery = false)
     {
-        if (_closed || _isRenderMode || _operationInFlight || _actionInFlight)
+        if (_closed || _isRenderMode || _operationInFlight || _actionInFlight || _settingsLoading)
         {
             return Task.CompletedTask;
         }
@@ -258,7 +259,7 @@ public partial class MainWindow : Window
 
     private async Task RunAutomaticRecoveryAsync()
     {
-        if (_closed || _isRenderMode || _actionInFlight || _automaticRecoveryAttempted || _operationInFlight)
+        if (_closed || _isRenderMode || _actionInFlight || _settingsLoading || _automaticRecoveryAttempted || _operationInFlight)
         {
             return;
         }
@@ -498,7 +499,7 @@ public partial class MainWindow : Window
 
     private async void PreserveEvidenceButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight || _evidenceInspection is not { CanPreserve: true } inspection) return;
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight || _settingsLoading || _evidenceInspection is not { CanPreserve: true } inspection) return;
         _operationInFlight = true;
         ApplyActionAvailability();
         var answer = MessageBox.Show(this,
@@ -534,7 +535,7 @@ public partial class MainWindow : Window
 
     private async void PrepareRecoveryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { CanApply: true } plan)
+        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _settingsLoading || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { CanApply: true } plan)
         {
             return;
         }
@@ -572,7 +573,7 @@ public partial class MainWindow : Window
 
     private async void RevokeAutomaticButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
+        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _settingsLoading || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
         {
             return;
         }
@@ -943,7 +944,7 @@ public partial class MainWindow : Window
 
     internal async Task ExportSetupAsync(Func<string?> selectFolder)
     {
-        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight)
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight || _settingsLoading)
         {
             return;
         }
@@ -992,7 +993,7 @@ public partial class MainWindow : Window
 
     internal async Task ExportDiagnosticsAsync(Func<string?> selectFile)
     {
-        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight)
+        if (_closed || _isRenderMode || _actionInFlight || _operationInFlight || _inspectionInFlight || _settingsLoading)
         {
             return;
         }
@@ -1053,7 +1054,7 @@ public partial class MainWindow : Window
 
     private void ApplyActionAvailability()
     {
-        var commandBusy = _closed || _isRenderMode || _windowMinimized || _operationInFlight || _actionInFlight;
+        var commandBusy = _closed || _isRenderMode || _windowMinimized || _operationInFlight || _actionInFlight || _settingsLoading;
         // These controls accept intent from the last successful observation.
         // RequestActionAsync earns execution authority again after confirmation.
         LaunchButton.IsEnabled = !commandBusy && !_restoreInspectionRequired && !_unsafeActionsInvalidated && Permits(_lastObservedSnapshot, SidetalkCommandAction.Launch);
@@ -1070,6 +1071,7 @@ public partial class MainWindow : Window
         OpenRecoveryHistoryButton.IsEnabled = !busy;
         OpenEvidenceHistoryButton.IsEnabled = !busy && _evidenceInspection is { Items.Count: > 0 };
         PreserveEvidenceButton.IsEnabled = !busy && _evidenceInspection is { CanPreserve: true };
+        ApplyQuickSettingsAvailability(busy);
         if (_restoreInspectionRequired && !_closed && !_isRenderMode && !_windowMinimized &&
             !_inspectionInFlight && !_operationInFlight && !_actionInFlight && !_restoreRefreshQueued)
         {

@@ -17,7 +17,7 @@ public partial class MainWindow
 
     private bool CanRequestAction(SidetalkCommandAction action) =>
         !_closed && !_isRenderMode && !_windowMinimized && !_restoreInspectionRequired &&
-        !_unsafeActionsInvalidated && !_actionInFlight && !_operationInFlight &&
+        !_unsafeActionsInvalidated && !_actionInFlight && !_operationInFlight && !_settingsLoading &&
         Permits(_lastObservedSnapshot, action);
 
     private bool IsCurrentIntent(long intent) =>
@@ -129,6 +129,7 @@ public partial class MainWindow
     private Task<bool> ConfirmActionAsync(SidetalkCommandAction action)
     {
         var launch = action == SidetalkCommandAction.Launch;
+        if (launch) return ConfirmLaunchAsync(this);
         var answer = MessageBox.Show(
             this,
             launch
@@ -140,4 +141,10 @@ public partial class MainWindow
             MessageBoxResult.Cancel);
         return Task.FromResult(answer == MessageBoxResult.OK);
     }
+
+    internal static Task<bool> ConfirmLaunchAsync(Window owner) => Task.FromResult(MessageBox.Show(
+        owner,
+        "전용 Sandboxie Plus 상자에서 공식 카카오톡을 실행합니다.\n\n처음에는 전용 INI 파일의 데이터 분리 확인 내용을 읽고 직접 수락한 뒤, 카카오톡 창에서 보조 계정으로 로그인하고 기기 인증을 진행하세요. 메인 계정의 인증·대화 데이터는 복사하지 않습니다.\n\n실행을 계속할까요?",
+        "보조 카카오톡 실행 확인", MessageBoxButton.OKCancel, MessageBoxImage.Information,
+        MessageBoxResult.Cancel) == MessageBoxResult.OK);
 }

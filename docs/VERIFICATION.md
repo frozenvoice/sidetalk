@@ -1,3 +1,43 @@
+# 빠른 실행 · 사용자 바로가기 · 보조 창 식별 — 2026-10-05
+
+시작 시 로컬 HEAD와 원격 main은 `0623c14a068cc5870bd4a1e50ed66727134157ea`로 같고 작업 트리는 깨끗했다. 기존 .NET 10 이전·주기적 점검 의도 접수·명령/복구 보호를 보존하며 `codex/secondary-quick-launch`에서 진행한다. 화면 정리는 환경 상세/설치 안내를 접고 복구·중단 흔적을 계속 표시하는 변경이며, 신규 기능은 별도의 실행 · 식별 탭·빠른 실행·사용자 링크·공식 표시 설정이다.
+
+## 구현 범위와 보존 조건
+
+- `--launch-secondary`는 작은 진행/취소 창과 동일 controller gate·CommandJournal을 사용한다. 확인 생략 동의는 현재 프로필/설치/격리 범위의 별도 기본 OFF 선택이다. 범위 변경은 기존 확인으로 돌아가고 실제 검증 실패·미완료 명령은 GUI 차단 이유로 이어진다. 같은 사용자/세션 broker는 기존 인스턴스에 전달하며 busy/중복 요청을 늦게 재실행하지 않는다.
+- 명령 의도·실제 종료·새 box 관찰의 기존 확정 조건을 유지한다. 성공이 확정된 standalone 런처만 종료하며 timeout/불확실 결과는 같은 controller를 visible GUI에 유지한다. 이미 전용 프로세스가 있으면 새로 만들지 않고 상태를 보고한다. 외부 카카오톡 창 활성화는 구현하지 않았다.
+- 바탕화면/시작 메뉴 링크와 별도 기본 OFF 로그인 Startup 선택은 현재 사용자 위치·정확한 `Sidetalk.exe`·고정 인자를 사용한다. manifest/고유 설명/해시/내용 검증으로 소유를 확인하고 사용자 수정·외부 충돌을 보존한다. 미완료 설정·복원 실패는 근거를 남기며 자동 실행을 차단한다. SYSTEM·관리자·작업 스케줄러와 실제 사용자 링크 변경은 시험에 사용하지 않았다.
+- 표시 설정은 전용 box의 공식 BorderColor 색 부분과 선택한 정확한 BoxAlias `보조 계정`에 제한한다. 기존 BGR `#21685B,ttl,4`는 RGB `#5B6821`로 표시하며 모드·두께·선택하지 않은 별칭을 보존한다. 의도·백업·파일/API 재검사와 명시적 같은 선택 재시도를 기존 명령 잠금 아래 수행하고 전체 INI 롤백은 하지 않는다. SandMan 테두리·공식 SbieDll 제목 기능의 지원 범위만 사용하며 자체 overlay·주입·패치·메시지 읽기는 없다.
+
+## 현재 수행한 독립 합성 검사
+
+서로 다른 임시 소스/출력과 주입된 데이터 위치에서 focused 검사를 수행했다. 사용자 프로필·계정·box·INI·설치본·Startup/바로가기를 시험용으로 변경하지 않았다.
+
+| 검사 | 실제 결과 | 범위 |
+|---|---|---|
+| Core 빠른 실행·동의 | 19/19 통과 | 정상/승인 없음·범위 변경·기존 실행·경쟁·취소·timeout/불확실 상태와 저장 이력 |
+| 사용자 링크/Startup | 14/14 통과, 빌드 경고/오류 0 | 기본 OFF·읽기 전용·독립 선택·Unicode/공백 경로·이동/업데이트·수정/외부 링크 보존·경쟁·원본 복원/실패 보존 |
+| 표시 설정 | 8/8 통과 | RGB/BGR·기존 선택·전용 범위·다른 설정 보존·부분 실패·명시적 재시도·공유 잠금 |
+| 신규 WPF 빠른 실행·설정·broker | 20/20 동기화 사례 통과 | 승인/취소·실패 후 GUI·경쟁·초기화 factory 실패·잘린 요청·지연된 수신 ACK와 전달 보존 |
+
+Shell Link roundtrip은 실제 Windows `IShellLinkW`/`IPersistFile` COM을 사용했으나 모든 링크 위치는 일회용 fixture였다. 표시의 외부 경계와 빠른 실행은 합성이며 실제 계정 실행이나 Sandboxie 테두리 표시 성공을 의미하지 않는다. 공식 지원 근거와 안전한 합성 재현 명령은 [QUICK-LAUNCH.md](QUICK-LAUNCH.md)에 있다.
+
+WPF fixture의 Application은 production Startup 이벤트를 분리하며 실제 초기 실행 경로에 들어가지 않는다. 새 factory 실패도 production controller를 만들지 않는 주입으로 재현했다. broker는 초기화를 한 번만 시도하고 비동기 준비/수신 확인을 기다리며, 초기화 실패를 표시하고 잘린·잘못된 송신자를 끊는다. 수신 ACK를 기다려 준비/전달 사이의 요청을 잃지 않는 것도 명시적 동기화로 확인했다.
+
+최초 제한 도구 실행은 `CurrentUserOnly` named-pipe 클라이언트의 `ConnectAsync`를 접근 거부해 실패했다. ACL이나 제품 권한 조건을 완화하지 않았다. 같은 `--quick-launch-only` fixture를 정상 호스트 도구 실행 권한으로 다시 실행해 20/20과 PNG 6개 생성을 **3.49초**에 확인했다. 이 도구 실행 권한 구분을 앱의 관리자 권한 기능이나 실제 로그인 Startup 검증으로 취급하지 않는다. 기본/최소 크기 설정 탭·스크롤한 식별 영역·런처·실패 후 GUI의 합성 PNG **6개**를 직접 확인했다.
+
+## 최종 통합 검사와 화면
+
+`pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`는 정상 호스트 도구 실행에서 **종료 코드 0, 54.68초**로 완료했다. Release 앱·IsolationProbe 빌드는 경고/오류 0, 자체 콘솔 **241/241**, 기존 fail-closed 검사와 기존 16개+신규 20개인 **36개 동기화 WPF 시나리오**가 모두 통과했다. 합성 PNG **22개**를 새 임시 폴더에 생성했다. 좁은 focused 결과로 기존 검사를 대체하거나 테스트를 skip하지 않았다.
+
+수정 전 합성 화면은 Git에서 제외되는 `artifacts/verification/quick-launch-20261005/before/`에 보존했다. 최초 통합 검사의 PNG 출력은 `C:\Users\froze\AppData\Local\Temp\sidetalk-ui-checks-cb38693b398b4c6b82626f2e80f7da61`이며 수정 후 PNG/JSON의 보존 위치는 `artifacts/verification/quick-launch-20261005/after/`다. 같은 기준 fixture의 `before/ui-recovery-healthy.png`와 `after/ui-recovery-healthy-fixture.png`를 직접 비교해 환경 상세가 접힌 상태에서도 현재 정책 상태가 계속 보이는 것을 확인했다.
+
+최종 화면 비교에서 어두운 native Expander 제목을 발견해 XAML 전경색만 `InkBrush`로 보정했다. 이후 UiChecks를 좁게 다시 빌드해 경고/오류 0을 확인하고 전체 WPF 검사 **16+20개, PNG 22개**를 다시 생성·직접 확인했다. 이 화면 변경으로 Core 콘솔 검사를 중복 실행하지 않았다. 해당 빌드/검사 로그는 `ui-contrast-build.log`·`ui-contrast-checks.log`, 최종 원래 출력 위치는 `ui-final-output.txt`에 기록했으며 `after/` 이미지는 이 결과로 갱신했다. 로컬 화면 비교는 완료했고 현재 커밋의 Windows CI 결과는 아직 확인 전이다. 과거 WPF/CI 통과 기록을 이번 결과로 재사용하지 않는다.
+
+빌드/검증/패키징 스크립트는 이번 작업에서 변경하지 않아 로컬 BuildChecks 전체를 중복 실행하지 않았다. 기존 Windows CI의 19개 모의 packaging fixture는 유지하며 현재 PR 실행 결과는 아직 확인 전이다. 실제 publish나 사용자 배포 교체는 하지 않았다.
+
+실제 Windows 로그인 세션 Startup, 일반 사용자 링크 클릭에서 계정 실행, Sandboxie 1.18.4 테두리·별칭/사용자 정의 제목줄, 실계정 로그인·송수신·외부 창 행동 및 실기기 성능은 미검증이다. 운영 릴리스·publish·사용자 배포 교체·유료 러너/구독 설정 변경은 수행하지 않는다. 아래의 점검 UX 및 .NET 10 결과는 각각 이전 작업의 역사적 기록이다.
+
 # 주기적 상태 점검 중 요청 접수 UX — 2026-10-05
 
 시작 시 로컬 HEAD와 원격 main은 검토 기준 `4e79d557b3c5bc6df829f6777c353ae9ad800db5`로 같고 작업 트리는 깨끗했다. 실행의 라임색 Primary와 강제 종료의 Secondary를 유지하며 상태 점검·명시적 요청 접수·최소화/복원의 상호작용만 변경한다. 프로필·전용 저장소·명령/복구 기록의 위치와 형식 및 Core의 검증·잠금 조건은 유지한다.
