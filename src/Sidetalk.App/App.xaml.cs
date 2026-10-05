@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Security.Principal;
 using System.Windows;
 using System.Windows.Threading;
 using Sidetalk.Core;
@@ -6,21 +8,170 @@ namespace Sidetalk.App;
 
 public partial class App : Application
 {
-    private const string InstanceMutexPrefix = "Local\\SIDETALK";
     private ISidetalkController? _controller;
-    private Mutex? _instanceMutex;
+    private InstanceRequestBroker? _broker;
+    private QuickLaunchWindow? _quickWindow;
+    private bool _quickLaunchInFlight;
+    private readonly HashSet<Guid> _receivedRequests = [];
+    private readonly Queue<Guid> _receivedOrder = new();
 
     public void OnStartup(object sender, StartupEventArgs e)
     {
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var utilityMode = TryGetOption(e.Args, "--render", out _) || TryGetOption(e.Args, "--render-setup", out _) || TryGetOption(e.Args, "--render-small", out _) || TryGetOption(e.Args, "--diagnose", out _);
-        if (!utilityMode && !TryAcquireSingleInstance())
-        {
-            Shutdown(0);
-            return;
-        }
+        _ = utilityMode ? StartAsync(e.Args) : StartInstanceAsync(e.Args);
+    }
 
-        _ = StartAsync(e.Args);
+    private async Task StartInstanceAsync(IReadOnlyList<string> args)
+    {
+        try
+        {
+            var quick = args.Contains("--launch-secondary", StringComparer.OrdinalIgnoreCase);
+            var startup = args.Contains("--login-startup", StringComparer.OrdinalIgnoreCase);
+            if (args.Count != 0 && (!quick || args.Count != (startup ? 2 : 1) ||
+                args.Any(value => !value.Equals("--launch-secondary", StringComparison.OrdinalIgnoreCase) &&
+                                  !value.Equals("--login-startup", StringComparison.OrdinalIgnoreCase))))
+                throw new ArgumentException("사용법: Sidetalk.exe [--launch-secondary [--login-startup]]");
+
+            _broker = new InstanceRequestBroker(ProfileStore.CurrentSid() + ":" + Process.GetCurrentProcess().SessionId);
+            if (!_broker.TryAcquire())
+            {
+                await _broker.ForwardAsync(new(Guid.NewGuid(), quick, startup));
+                Shutdown(0);
+                return;
+            }
+            _controller = new SidetalkController();
+            await _broker.ListenAsync(request => Dispatcher.InvokeAsync(() => AcceptRemoteRequest(request)).Task);
+            _ = ObserveBrokerAsync(_broker);
+            if (quick) await RunQuickLaunchAsync(startup);
+            else ShowMainWindow();
+        }
+        catch (Exception exception)
+        {
+            ShowStartupError(exception);
+            Shutdown(1);
+        }
+    }
+
+    private async Task ObserveBrokerAsync(InstanceRequestBroker broker)
+    {
+        try { await broker.Completion; }
+        catch (Exception error)
+        {
+            if (ReferenceEquals(_broker, broker))
+                ShowMainWindow(reason: "추가 실행 요청을 받을 수 없습니다. " + error.GetBaseException().Message);
+        }
+    }
+
+    private void AcceptRemoteRequest(InstanceRequest request)
+    {
+        if (!_receivedRequests.Add(request.Id)) return;
+        _receivedOrder.Enqueue(request.Id);
+        if (_receivedOrder.Count > 64) _receivedRequests.Remove(_receivedOrder.Dequeue());
+        if (_quickLaunchInFlight)
+        {
+            _quickWindow?.Activate();
+            return; // Busy clicks are never replayed after the current request.
+        }
+        if (request.QuickLaunch)
+        {
+            // Reserve synchronously but acknowledge before any inline inspection
+            // or native confirmation can enter a nested dispatcher loop.
+            _quickLaunchInFlight = true;
+            Dispatcher.BeginInvoke(new Action(async () => await RunReservedQuickLaunchAsync(request.LoginStartup)));
+        }
+        else ShowMainWindow();
+    }
+
+    private void ShowMainWindow(AppSnapshot? snapshot = null, string? reason = null)
+    {
+        var window = MainWindow as MainWindow;
+        if (window is null)
+        {
+            window = new MainWindow(_controller ?? throw new InvalidOperationException("Controller unavailable."));
+            MainWindow = window;
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+        }
+        if (snapshot is not null) window.ApplySnapshot(snapshot);
+        if (!string.IsNullOrWhiteSpace(reason)) window.ShowEntryFeedback(reason);
+        if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
+        window.Show();
+        window.Activate();
+    }
+
+    private async Task RunQuickLaunchAsync(bool loginStartup)
+    {
+        if (_quickLaunchInFlight) return;
+        _quickLaunchInFlight = true;
+        await RunReservedQuickLaunchAsync(loginStartup);
+    }
+
+    private async Task RunReservedQuickLaunchAsync(bool loginStartup)
+    {
+        try
+        {
+            if (MainWindow is MainWindow window)
+            {
+                if (!await window.RunExternalQuickLaunchAsync(() => RunQuickLaunchBodyAsync(loginStartup)))
+                    ShowMainWindow(reason: "진행 중인 요청이 있어 빠른 실행을 접수하지 않았습니다. 작업이 끝난 뒤 다시 요청하세요.");
+            }
+            else await RunQuickLaunchBodyAsync(loginStartup);
+        }
+        catch (Exception exception)
+        {
+            ShowMainWindow(reason: "빠른 실행을 완료하지 못했습니다. " + exception.GetBaseException().Message);
+        }
+        finally { _quickLaunchInFlight = false; }
+    }
+
+    private async Task RunQuickLaunchBodyAsync(bool loginStartup)
+    {
+        var quickWindow = new QuickLaunchWindow();
+        _quickWindow = quickWindow;
+        if (MainWindow is MainWindow owner) quickWindow.Owner = owner;
+        quickWindow.Show();
+        var closeApplication = false;
+        try
+        {
+            if (loginStartup) RequireStartupSelection();
+            var flow = new QuickLaunchFlow((IQuickLaunchController)(_controller ?? throw new InvalidOperationException("Controller unavailable.")));
+            var result = await flow.RunAsync(() => Sidetalk.App.MainWindow.ConfirmLaunchAsync(quickWindow),
+                quickWindow.Cancellation, new Progress<string>(quickWindow.Report));
+            if (!QuickLaunchFlow.NeedsGui(result))
+                closeApplication = MainWindow is not Sidetalk.App.MainWindow;
+            else ShowMainWindow(result.Snapshot, result.Detail);
+        }
+        catch (OperationCanceledException)
+        {
+            ShowMainWindow(reason: "빠른 실행 요청을 취소했습니다. 현재 명령 기록은 이 창에서 다시 확인합니다.");
+        }
+        catch (Exception exception)
+        {
+            ShowMainWindow(reason: "빠른 실행이 차단되었습니다. " + exception.GetBaseException().Message);
+        }
+        finally
+        {
+            quickWindow.Complete();
+            _quickWindow = null;
+            // Only a settled result may end this process; uncertain commands keep
+            // the same controller and journal in the visible recovery UI.
+            if (closeApplication) Shutdown(0);
+        }
+    }
+
+    private static void RequireStartupSelection()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (!Environment.UserInteractive || identity.IsSystem || Process.GetCurrentProcess().SessionId == 0 ||
+            new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new InvalidOperationException("로그인 시 실행은 관리자 권한 없는 현재 사용자의 대화형 세션에서만 사용할 수 있습니다.");
+        HostProfileContext.RequireUnredirected(new ProfileStore());
+        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("현재 SIDETALK 실행 경로를 확인하지 못했습니다.");
+        var selection = new UserLaunchIntegration(UserLaunchLocations.ForCurrentUser(), executable).Inspect();
+        if (!QuickLaunchFlow.StartupAllowed(Environment.UserInteractive, identity.IsSystem,
+            new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator),
+            Process.GetCurrentProcess().SessionId, selection))
+            throw new InvalidOperationException("이 설치 경로의 Windows 로그인 실행이 켜져 있지 않거나 바로가기를 다시 확인해야 합니다. 설정에서 선택하세요.");
     }
 
     private async Task StartAsync(IReadOnlyList<string> args)
@@ -134,41 +285,11 @@ public partial class App : Application
         return exitCode;
     }
 
-    private bool TryAcquireSingleInstance()
-    {
-        var userPart = string.IsNullOrWhiteSpace(Environment.UserName) ? "current-user" : Environment.UserName;
-        var name = $"{InstanceMutexPrefix}-{userPart}";
-        try
-        {
-            _instanceMutex = new Mutex(initiallyOwned: true, name, out var createdNew);
-            if (createdNew)
-            {
-                return true;
-            }
-
-            _instanceMutex.Dispose();
-            _instanceMutex = null;
-            MessageBox.Show(
-                "SIDETALK가 이미 실행 중입니다. 기존 창을 사용하세요.",
-                "SIDETALK",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return false;
-        }
-        catch (Exception exception)
-        {
-            _instanceMutex?.Dispose();
-            _instanceMutex = null;
-            ShowStartupError(new InvalidOperationException("SIDETALK의 단일 실행 상태를 확인할 수 없습니다.", exception));
-            return false;
-        }
-    }
-
     protected override void OnExit(ExitEventArgs e)
     {
         _controller?.Dispose();
-        _instanceMutex?.Dispose();
-        _instanceMutex = null;
+        _broker?.Dispose();
+        _broker = null;
         base.OnExit(e);
     }
 

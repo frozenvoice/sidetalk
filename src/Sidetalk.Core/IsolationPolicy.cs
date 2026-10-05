@@ -24,7 +24,7 @@ public static class IsolationPolicy
         {
             ["Enabled"] = ["y"],
             ["BoxNameTitle"] = ["y"],
-            ["BorderColor"] = ["#21685B,ttl,4"],
+            ["BorderColor"] = [SecondaryAppearance.DefaultBorder],
             ["FileRootPath"] = [profile.StoragePath],
             ["ConfigLevel"] = ["10"],
             ["AutoDelete"] = ["n"],
@@ -43,6 +43,18 @@ public static class IsolationPolicy
 
     // SandMan display metadata is allowed; resource access, triggers and unknown settings are not.
     private static readonly HashSet<string> PresentationOnly = new(StringComparer.OrdinalIgnoreCase) { "BoxAlias", "BoxIcon", "BoxColor" };
+
+    // Preserve only reviewed cosmetic values when resuming initial preparation.
+    // The access policy and ownership revision remain exactly the same.
+    internal static Dictionary<string, string[]> ExpectedForRecovery(BoxProfile profile, IReadOnlyDictionary<string, string[]> current)
+    {
+        var expected = Expected(profile);
+        if (current.TryGetValue("BorderColor", out var border) && border.Length == 1 && SecondaryAppearance.IsBorderValue(border[0]))
+            expected["BorderColor"] = border.ToArray();
+        foreach (var key in PresentationOnly)
+            if (current.TryGetValue(key, out var values)) expected[key] = values.ToArray();
+        return expected;
+    }
     private static readonly HashSet<string> GlobalUiOnly = new(StringComparer.OrdinalIgnoreCase) { "DefaultBox", "FileRootPath", "EditPassword", "EditAdminOnly", "ForceDisableAdminOnly", "NotifyStartRunAccessDenied", "AlertBeforeStart", "SbieCtrl_HideMessage", "SbieCtrl_EnableLogonStart", "SbieCtrl_EnableAutoStart", "SbieCtrl_EnableStopWarning", "SbieCtrl_EnableDeleteWarning", "SbieCtrl_WindowCoords", "SbieCtrl_BoxExpandedView", "SbieCtrl_UserName", "SbieCtrl_NextUpdateCheck", "BoxGrouping" };
 
     public static PolicyResult Validate(BoxProfile profile, IReadOnlyDictionary<string, string[]> box, IReadOnlyDictionary<string, string[]> globals)
@@ -52,7 +64,12 @@ public static class IsolationPolicy
         var owned = Equal(box, "BoxInfo", expected["BoxInfo"]) && Equal(box, "FileRootPath", [profile.StoragePath]);
         if (!owned) issues.Add("전용 환경의 소유 표식 또는 저장 경로가 일치하지 않습니다.");
         foreach (var pair in expected)
-            if (!Equal(box, pair.Key, pair.Value)) issues.Add($"필수 설정 불일치: {pair.Key}");
+            if (pair.Key == "BorderColor")
+            {
+                if (!box.TryGetValue(pair.Key, out var border) || border.Length != 1 || !SecondaryAppearance.IsBorderValue(border[0]))
+                    issues.Add("검토되지 않은 테두리 표시 설정: BorderColor");
+            }
+            else if (!Equal(box, pair.Key, pair.Value)) issues.Add($"필수 설정 불일치: {pair.Key}");
         foreach (var key in box.Keys)
             if (!expected.ContainsKey(key) && !PresentationOnly.Contains(key)) issues.Add($"검토되지 않은 환경 설정: {key}");
         foreach (var key in globals.Keys)

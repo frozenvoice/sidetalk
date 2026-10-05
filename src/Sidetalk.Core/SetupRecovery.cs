@@ -47,8 +47,9 @@ internal sealed partial class SetupRecovery
         try
         {
             profile = store.Load();
+            SecondaryAppearanceStore.RequireResolved(store);
         }
-        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException)
         {
             return BlockedPlan("SIDETALK 프로필을 안전하게 읽을 수 없어 복구를 차단했습니다.", [error.Message], historyRoot);
         }
@@ -824,7 +825,7 @@ internal sealed partial class SetupRecovery
 
     private static bool IsFirstSetupCandidateSafe(SetupRecoveryObservation observation, BoxProfile profile)
     {
-        var expected = IsolationPolicy.Expected(profile);
+        var expected = IsolationPolicy.ExpectedForRecovery(profile, observation.Configuration.ExplicitBox);
         if (!observation.OfficialTemplateBaselineVerified || observation.UnknownTemplateNames.Count != 0 ||
             !SandboxieConfigurationReader.Same(observation.Configuration.ExplicitBox, observation.Configuration.EffectiveBox)) return false;
         foreach (var section in observation.ExplicitSections)
@@ -851,10 +852,10 @@ internal sealed partial class SetupRecovery
     }
     private static IReadOnlyList<SetupRecoveryChange> FirstSetupChanges(SetupRecoveryObservation observation, BoxProfile profile)
     {
-        var expected = IsolationPolicy.Expected(profile);
         var current = observation.ExplicitSections.TryGetValue(profile.BoxName, out var section)
             ? section
             : new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        var expected = IsolationPolicy.ExpectedForRecovery(profile, current);
         return expected.Select(pair => new SetupRecoveryChange(profile.BoxName, pair.Key,
             ReadValue(current, pair.Key), pair.Value.ToArray(),
             SetupRecoveryChangeKind.AddOwnedBoxSetting, "SIDETALK 전용 환경 설정")).Where(change => !change.IsNoOp).ToArray();

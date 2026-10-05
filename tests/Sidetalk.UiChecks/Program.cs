@@ -21,11 +21,24 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--interaction-only"))
-            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only]");
+        try { Run(args); }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            Application.Current?.Shutdown(1);
+            Environment.ExitCode = 1;
+        }
+    }
+
+    private static void Run(string[] args)
+    {
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only")))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only]");
 
         var app = new App();
         app.InitializeComponent();
+        // Dispatcher turns in fixtures must never run production startup.
+        app.Startup -= app.OnStartup;
         var repository = new DirectoryInfo(AppContext.BaseDirectory);
         while (repository is not null && !File.Exists(Path.Combine(repository.FullName, "src", "Sidetalk.App", "Assets", "Sidetalk.ico"))) repository = repository.Parent;
         if (repository is null) throw new InvalidOperationException("Repository icon resource not found.");
@@ -40,7 +53,8 @@ internal static class Program
         var baseSnapshot = CreateSnapshot();
         if (args.Length == 2)
         {
-            InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+            if (args[1] == "--interaction-only") InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+            else QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
             app.Shutdown();
             return;
         }
@@ -49,6 +63,7 @@ internal static class Program
         AssertInterruptedChoiceReset(baseSnapshot);
         RunRefreshFailureFixtures(baseSnapshot);
         InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+        QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
         File.WriteAllText(invalidLogDirectory, "fixture");
         InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;
@@ -61,6 +76,7 @@ internal static class Program
 
         app.Shutdown();
     }
+
 
     private static void RenderBasicFixtures(App app, string output, AppSnapshot snapshot)
     {

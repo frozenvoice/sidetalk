@@ -14,7 +14,44 @@ public sealed record AppSnapshot(
 {
     public InspectionFailure? InspectionFailure { get; init; }
     public string? RecoveryResultDetail { get; init; }
+    /// <summary>Null when policy or journal state could not be verified; false only after validated reconciliation.</summary>
+    public bool? CommandPending { get; init; }
 }
+
+/// <summary>Convenience entry point; it never replaces the normal GUI confirmation or Core command validation.</summary>
+public interface IQuickLaunchController
+{
+    Task<QuickLaunchStatus> InspectQuickLaunchAsync();
+    Task<QuickLaunchStatus> SetQuickLaunchConsentAsync(QuickLaunchApproval approval, bool enabled);
+    Task<QuickLaunchResult> LaunchSecondaryAsync(QuickLaunchApproval? confirmedScope, CancellationToken cancellationToken = default);
+}
+
+/// <summary>A controller-issued immutable candidate for exactly one validated profile, installation, and configuration scope.</summary>
+public sealed class QuickLaunchApproval
+{
+    internal QuickLaunchApproval(string scopeFingerprint)
+    {
+        if (scopeFingerprint.Length != 64 || !scopeFingerprint.All(Uri.IsHexDigit))
+            throw new ArgumentException("빠른 실행 승인 범위가 유효하지 않습니다.", nameof(scopeFingerprint));
+        ScopeFingerprint = scopeFingerprint.ToUpperInvariant();
+    }
+
+    public string ScopeFingerprint { get; }
+}
+
+public sealed record QuickLaunchStatus(AppSnapshot Snapshot, QuickLaunchApproval? Approval, bool ConsentMatches, string Reason);
+
+public enum QuickLaunchOutcome
+{
+    Launched,
+    AlreadyRunning,
+    ConfirmationRequired,
+    Blocked,
+    Uncertain,
+    Cancelled
+}
+
+public sealed record QuickLaunchResult(QuickLaunchOutcome Outcome, AppSnapshot Snapshot, string Detail);
 
 public interface ISidetalkController : IDisposable
 {
