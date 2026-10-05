@@ -156,6 +156,8 @@
                             </StackPanel>
                         </Border>
                         <TextBlock x:Name="PolicyDetailText" Text="환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,14" />
+                        <Expander Header="환경 상세 · 진단" Foreground="{StaticResource InkBrush}" IsExpanded="False" Margin="0,0,0,20">
+                        <StackPanel Margin="0,12,0,0">
                         <Grid Margin="0,0,0,20">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -175,7 +177,10 @@
                         </ItemsControl>
                         <Button x:Name="ExportDiagnosticsButton" Content="진단 JSON 저장" Style="{StaticResource ActionButton}" Click="ExportDiagnosticsButton_Click" HorizontalAlignment="Left" />
                         <TextBlock Text="계정 인증 정보와 대화 내용은 수집하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,8,0,26" />
-                        <Border Height="1" Background="{StaticResource DividerBrush}" Margin="0,0,0,24" />
+                        </StackPanel>
+                        </Expander>
+                        <Expander Header="설치 · 수동 설정" Foreground="{StaticResource InkBrush}" IsExpanded="False" Margin="0,0,0,20">
+                        <StackPanel Margin="0,12,0,0">
                         <TextBlock Text="설치된 프로그램" Style="{StaticResource SectionHeading}" />
                         <TextBlock x:Name="KakaoAvailabilityText" Text="확인 중" Style="{StaticResource BodyText}" />
                         <TextBlock x:Name="KakaoInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,14" />
@@ -192,6 +197,8 @@
                         <TextBlock Text="전용 환경의 소유 정보를 저장하고 선택한 폴더에 새 INI를 만듭니다. 기존 Sandboxie 설정을 이 파일로 덮어쓰지 마세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" />
                         <Button x:Name="ExportSetupButton" Content="전용 INI 내보내기" Style="{StaticResource PrimaryButton}" Click="ExportSetupButton_Click" HorizontalAlignment="Left" />
                         <TextBlock x:Name="SetupResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,16,0,8" AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
