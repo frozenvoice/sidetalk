@@ -11,9 +11,11 @@
 
 ## 빌드 전제와 실패 처리
 
-빌드에는 PATH에서 찾을 수 있는 PowerShell 7 (`pwsh.exe`)과 `global.json`이 지정한 .NET 10 SDK가 필요합니다. 이미 만들어진 self-contained 배포본을 실행할 때는 두 도구가 필요하지 않습니다. 도구를 자동 설치하거나 Git pull·브랜치 전환을 하지 않습니다.
+빌드에는 PATH에서 찾을 수 있는 PowerShell 7 (`pwsh.exe`)이 필요합니다. **.NET SDK는 사용자가 따로 설치할 필요가 없습니다.** `build-local.cmd`가 먼저 현재 PC의 SDK가 `global.json` 요구를 만족하는지 확인하고, 없으면 Microsoft의 공식 `dotnet-install.ps1`을 통해 필요한 x64 SDK를 `%LOCALAPPDATA%\SIDETALK-BuildTools\dotnet\<버전>`에 한 번만 내려받아 사용합니다. 관리자 권한이나 시스템 전역 SDK 변경은 하지 않으며 기존 .NET 8/10 설치도 삭제·교체하지 않습니다. 이후 같은 SDK 버전은 캐시를 재사용합니다. 최초 자동 설치에는 인터넷 연결이 필요합니다.
 
-`build-local.cmd`는 기존 `scripts/build.ps1 -SelfContained`를 재사용합니다. 콘솔 회귀 테스트와 시험 도구 빌드·publish·ZIP 단계를 생략하지 않고 기존 배포 교체·롤백 로직도 바꾸지 않습니다. 빌드가 실패하거나 취소되면 오류를 반환하며 이전 실행 파일을 대신 실행하지 않습니다. 자동 다운로드·관리자 승격·프로세스 강제 종료는 추가하지 않습니다.
+이미 만들어진 self-contained 배포본을 실행할 때는 PowerShell이나 SDK가 필요하지 않습니다. 빌드 진입점은 Git pull·브랜치 전환을 자동 수행하지 않습니다.
+
+`build-local.cmd`는 기존 `scripts/build.ps1 -SelfContained`를 재사용합니다. 콘솔 회귀 테스트와 시험 도구 빌드·publish·ZIP 단계를 생략하지 않고 기존 배포 교체·롤백 로직도 바꾸지 않습니다. 빌드가 실패하거나 취소되면 오류를 반환하며 이전 실행 파일을 대신 실행하지 않습니다. 필요한 .NET SDK 자동 다운로드 외에는 관리자 승격·프로세스 강제 종료를 추가하지 않습니다. SDK 자동 준비가 실패하면 패키징으로 계속 진행하지 않고 그 자리에서 중단합니다.
 
 빌드 전에 **SIDETALK 창과 배포된 IsolationProbe만 정상 종료**하세요. 카카오톡을 대신 종료하지 않습니다. 프로필·전용 박스·명령 저널·Sandboxie 설정은 이 진입점에서 삭제하거나 변경하지 않습니다. 기존 빌드 스크립트는 빌드 과정에서 필요한 패키지를 복원할 수 있습니다.
 

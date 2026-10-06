@@ -3,6 +3,8 @@ setlocal EnableExtensions DisableDelayedExpansion
 set "ROOT=%~dp0"
 set "OUTPUT=%ROOT%artifacts\publish\win-x64"
 set "SIDETALK_BUILD_SCRIPT=%ROOT%scripts\build.ps1"
+set "SIDETALK_DOTNET_SCRIPT=%ROOT%scripts\ensure-dotnet.ps1"
+set "DOTNET_RESULT="
 set "NO_LAUNCH="
 set "NO_PAUSE="
 set "PUSHED="
@@ -32,19 +34,16 @@ if not exist "%SIDETALK_BUILD_SCRIPT%" (
     set "RC=1"
     goto finish
 )
+if not exist "%SIDETALK_DOTNET_SCRIPT%" (
+    echo Missing scripts\ensure-dotnet.ps1. Keep this file in the SIDETALK repository root.
+    set "RC=1"
+    goto finish
+)
 set "PWSH="
 for %%I in (pwsh.exe) do set "PWSH=%%~$PATH:I"
 if not defined PWSH (
     echo PowerShell 7 ^(pwsh.exe^) is required on PATH for building.
-    echo Install PowerShell 7, reopen this file, and try again. Nothing was installed or stopped.
-    set "RC=1"
-    goto finish
-)
-set "DOTNET="
-for %%I in (dotnet.exe) do set "DOTNET=%%~$PATH:I"
-if not defined DOTNET (
-    echo The .NET 10 SDK is required on PATH for building ^(not just the runtime^).
-    echo See global.json for the SDK requirement. Nothing was installed or stopped.
+    echo Nothing was installed or stopped.
     set "RC=1"
     goto finish
 )
@@ -55,13 +54,43 @@ if errorlevel 1 (
     goto finish
 )
 set "PUSHED=1"
+
 echo Checking the SDK selected by global.json...
-"%DOTNET%" --version
-if errorlevel 1 (
-    echo Install the .NET 10 SDK required by global.json, then try again.
+set "DOTNET_RESULT=%TEMP%\sidetalk-dotnet-%RANDOM%-%RANDOM%.txt"
+"%PWSH%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "%SIDETALK_DOTNET_SCRIPT%" -ResultPath "%DOTNET_RESULT%"
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" (
+    echo SIDETALK could not prepare the required .NET SDK automatically.
+    goto finish
+)
+if not exist "%DOTNET_RESULT%" (
+    echo SDK setup returned success, but no dotnet path was produced.
     set "RC=1"
     goto finish
 )
+set /p "DOTNET="<"%DOTNET_RESULT%"
+del /q "%DOTNET_RESULT%" >nul 2>&1
+set "DOTNET_RESULT="
+if not defined DOTNET (
+    echo SDK setup returned an empty dotnet path.
+    set "RC=1"
+    goto finish
+)
+if not exist "%DOTNET%" (
+    echo SDK setup selected a missing dotnet executable: "%DOTNET%"
+    set "RC=1"
+    goto finish
+)
+for %%I in ("%DOTNET%") do set "DOTNET_DIR=%%~dpI"
+set "DOTNET_ROOT=%DOTNET_DIR%"
+set "PATH=%DOTNET_DIR%;%PATH%"
+"%DOTNET%" --version
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" (
+    echo The automatically selected SDK still does not satisfy global.json.
+    goto finish
+)
+set "RC=0"
 
 echo Packaging SIDETALK. Close SIDETALK and its published IsolationProbe before replacement.
 echo For code-only checks with the published app running: pwsh -File scripts\verify.ps1
@@ -90,6 +119,7 @@ goto finish
 :help
 echo Usage: build-local.cmd [-NoLaunch] [-NoPause]
 echo Builds the current checkout using scripts\build.ps1 -SelfContained, then opens SIDETALK.
+echo Missing .NET SDK versions are downloaded once into a private SIDETALK build-tools cache.
 echo -NoLaunch  Build only; do not open SIDETALK.
 echo -NoPause   Do not wait for a key after an error.
 echo Code-only checks: pwsh -File scripts\verify.ps1
@@ -97,6 +127,7 @@ echo For everyday use, double-click run-local.cmd. See docs\LOCAL-RUN.md.
 exit /b 0
 
 :finish
+if defined DOTNET_RESULT if exist "%DOTNET_RESULT%" del /q "%DOTNET_RESULT%" >nul 2>&1
 if defined PUSHED popd
 if "%RC%"=="0" exit /b 0
 if defined NO_PAUSE exit /b %RC%
