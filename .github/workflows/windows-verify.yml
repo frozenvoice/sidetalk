@@ -30,10 +30,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           persist-credentials: false
-      - name: Install SDK required by global.json
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0 (Node 24)
-        with:
-          global-json-file: global.json
+      - name: Prepare SDK required by global.json
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Join-Path $env:RUNNER_TEMP 'sidetalk-dotnet-path.txt'
+          & pwsh -NoProfile -File scripts/ensure-dotnet.ps1 -ResultPath $result
+          $sdkExitCode = $LASTEXITCODE
+          if ($sdkExitCode -ne 0) { exit $sdkExitCode }
+          if (-not (Test-Path -LiteralPath $result -PathType Leaf)) { throw 'SDK bootstrap did not produce a dotnet path.' }
+          $dotnet = (Get-Content -LiteralPath $result -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $dotnet -PathType Leaf)) { throw "SDK bootstrap selected a missing executable: $dotnet" }
+          $dotnetRoot = Split-Path -Parent $dotnet
+          $dotnetRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "DOTNET_ROOT=$dotnetRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $dotnet --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify current source and synthetic WPF fixtures
         run: |
           $ErrorActionPreference = 'Stop'
