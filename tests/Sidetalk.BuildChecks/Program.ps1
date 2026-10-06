@@ -203,7 +203,7 @@ function New-Fixture {
     New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'scripts') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'profile') -Force | Out-Null
-    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1')) {
+    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1', 'ensure-dotnet.ps1')) {
         Copy-Item -LiteralPath (Join-Path $repo ('scripts\' + $name)) -Destination (Join-Path $root ('scripts\' + $name))
     }
     Copy-Item -LiteralPath (Join-Path $repo 'build-local.cmd') -Destination (Join-Path $root 'build-local.cmd')
@@ -474,30 +474,67 @@ function Test-ArtifactBoundaries {
 }
 function Test-BuildLocalExitCodes {
     $fixture = New-Fixture
-    $stub = @'
+    $fakeTools = Join-Path $fixture 'fake-dotnet'
+    New-Item -ItemType Directory -Path $fakeTools -Force | Out-Null
+    $fakeDotnet = Join-Path $fakeTools 'dotnet.cmd'
+    Set-Content -LiteralPath $fakeDotnet -Value '@echo 10.0.401' -Encoding ascii
+
+    $ensureStub = @'
+param([Parameter(Mandatory=$true)][string]$ResultPath)
+[IO.File]::WriteAllText($ResultPath, $env:SIDETALK_BUILD_CHECK_DOTNET, [Text.UTF8Encoding]::new($false))
+exit 0
+'@
+    Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureStub -Encoding utf8
+
+    $oldCi = $env:CI
+    $oldDotnet = $env:SIDETALK_BUILD_CHECK_DOTNET
+    try {
+        $env:CI = '1'
+        $env:SIDETALK_BUILD_CHECK_DOTNET = $fakeDotnet
+
+        $stub = @'
 param([switch]$SelfContained)
 exit 11
 '@
-    Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
-    $oldCi = $env:CI
-    try {
-        $env:CI = '1'
+        Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
         $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
         Assert-Equal 11 $LASTEXITCODE 'build-local failed build exit code'
-    } finally { $env:CI = $oldCi }
 
-    $stub = @'
+        $stub = @'
 param([switch]$SelfContained)
 $root = Split-Path -Parent $PSScriptRoot
 New-Item -ItemType Directory -Path (Join-Path $root 'artifacts\publish\win-x64') -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.exe') -Value 'synthetic app'
 '@
-    Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
-    try {
-        $env:CI = '1'
+        Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
         $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
         Assert-Equal 0 $LASTEXITCODE 'build-local success exit code'
-    } finally { $env:CI = $oldCi }
+
+        $marker = Join-Path $fixture 'build-should-not-run.marker'
+        $stub = @"
+param([switch]\$SelfContained)
+Set-Content -LiteralPath '$($marker.Replace("'", "''"))' -Value 'unexpected'
+"@
+        Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
+        $ensureFailure = @'
+param([Parameter(Mandatory=$true)][string]$ResultPath)
+exit -1
+'@
+        Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureFailure -Encoding utf8
+        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
+        Assert-True ($LASTEXITCODE -ne 0) 'build-local accepted a negative SDK bootstrap failure code'
+        Assert-True (-not (Test-Path -LiteralPath $marker)) 'build-local continued after SDK bootstrap failure'
+        Assert-Contains ($output -join [Environment]::NewLine) 'could not prepare the required .NET SDK automatically' 'bootstrap failure explanation missing'
+
+        $tokens = $null
+        $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $repo 'scripts\ensure-dotnet.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+        Assert-Equal 0 $parseErrors.Count 'ensure-dotnet.ps1 PowerShell parse errors'
+    } finally {
+        $env:CI = $oldCi
+        $env:SIDETALK_BUILD_CHECK_DOTNET = $oldDotnet
+    }
 }
 
 try {
@@ -510,7 +547,7 @@ try {
     Invoke-Case 'promotion rollback and preserved failed rollback' { Test-PromotionRollback }
     Invoke-Case 'verification and packaging without existing artifacts' { Test-EmptyArtifacts }
     Invoke-Case 'artifact boundary and nested reparse point guards' { Test-ArtifactBoundaries }
-    Invoke-Case 'build-local forwards -NoLaunch -NoPause exit codes' { Test-BuildLocalExitCodes }
+    Invoke-Case 'build-local bootstraps SDK and forwards exit codes' { Test-BuildLocalExitCodes }
     if ($failures.Count) {
         throw ($failures -join [Environment]::NewLine)
     }
