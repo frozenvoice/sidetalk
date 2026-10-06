@@ -475,9 +475,9 @@ function Test-ArtifactBoundaries {
 function Test-BuildLocalExitCodes {
     $fixture = New-Fixture
     $fakeTools = Join-Path $fixture 'fake-dotnet'
-    New-Item -ItemType Directory -Path $fakeTools -Force | Out-Null
-    $fakeDotnet = Join-Path $fakeTools 'dotnet.cmd'
-    Set-Content -LiteralPath $fakeDotnet -Value '@echo 10.0.401' -Encoding ascii
+    # A real executable: a dotnet.cmd stand-in would never return to build-local.cmd.
+    Set-FakeDotnet $fakeTools '10.0.401'
+    $fakeDotnet = Join-Path $fakeTools 'dotnet.exe'
 
     $ensureStub = @'
 param([Parameter(Mandatory=$true)][string]$ResultPath)
@@ -518,25 +518,382 @@ param([switch]$SelfContained)
 Set-Content -LiteralPath $env:SIDETALK_BUILD_CHECK_MARKER -Value 'unexpected'
 '@
         Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
-        $ensureFailure = @'
-param([Parameter(Mandatory=$true)][string]$ResultPath)
-exit -1
-'@
-        Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureFailure -Encoding utf8
-        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
-        Assert-True ($LASTEXITCODE -ne 0) 'build-local accepted a negative SDK bootstrap failure code'
-        Assert-True (-not (Test-Path -LiteralPath $marker)) 'build-local continued after SDK bootstrap failure'
-        Assert-Contains ($output -join [Environment]::NewLine) 'could not prepare the required .NET SDK automatically' 'bootstrap failure explanation missing'
+        # Native-style negative codes from SDK setup or `dotnet --version` must stop
+        # before packaging, so no build, launch, or KakaoTalk/Sandboxie action runs.
+        foreach ($code in @(-1, $script:hostNativeFailure)) {
+            $ensureFailure = "param([Parameter(Mandatory=`$true)][string]`$ResultPath)`nexit $code"
+            Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureFailure -Encoding utf8
+            $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
+            Assert-Equal $code $LASTEXITCODE "build-local SDK bootstrap failure code $code"
+            Assert-True (-not (Test-Path -LiteralPath $marker)) "build-local continued after SDK bootstrap failure $code"
+            Assert-Contains ($output -join [Environment]::NewLine) 'could not prepare the required .NET SDK automatically' 'bootstrap failure explanation missing'
+        }
 
-        $tokens = $null
-        $parseErrors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile(
-            (Join-Path $repo 'scripts\ensure-dotnet.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-        Assert-Equal 0 $parseErrors.Count 'ensure-dotnet.ps1 PowerShell parse errors'
+        Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureStub -Encoding utf8
+        Set-FakeDotnet $fakeTools '10.0.401' -ExitCode $script:hostNativeFailure
+        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
+        Assert-Equal $script:hostNativeFailure $LASTEXITCODE 'build-local dotnet --version failure code'
+        Assert-True (-not (Test-Path -LiteralPath $marker)) 'build-local continued after dotnet --version failure'
     } finally {
         $env:CI = $oldCi
         $env:SIDETALK_BUILD_CHECK_DOTNET = $oldDotnet
         $env:SIDETALK_BUILD_CHECK_MARKER = $oldMarker
+    }
+}
+
+function Test-BuildLocalWithRealBootstrap {
+    $fixture = New-Fixture
+    # build-local.cmd reads the SDK path back with `set /p` (console code page),
+    # so exercise a non-ASCII folder whenever that code page can carry it.
+    $name = 'SDK 도구'
+    $encoding = [Console]::OutputEncoding
+    if ($encoding.GetString($encoding.GetBytes($name)) -ne $name) { $name = 'SDK tools' }
+    $systemDir = Join-Path $fixture $name
+    Set-FakeDotnet $systemDir '10.0.401'
+    $record = Join-Path $fixture 'build-environment.json'
+    Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Encoding utf8 -Value @'
+param([switch]$SelfContained)
+$root = Split-Path -Parent $PSScriptRoot
+[pscustomobject]@{ DotnetRoot = $env:DOTNET_ROOT; Dotnet = (Get-Command dotnet.exe).Source; SelfContained = [bool]$SelfContained } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'build-environment.json') -Encoding utf8
+New-Item -ItemType Directory -Path (Join-Path $root 'artifacts\publish\win-x64') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.exe') -Value 'synthetic app'
+'@
+    $oldCi = $env:CI
+    $oldPath = $env:PATH
+    try {
+        $env:CI = '1'
+        $pwshDir = Split-Path -Parent (Get-Command pwsh -ErrorAction Stop).Source
+        $env:PATH = "$systemDir;$pwshDir;$env:SystemRoot\System32"
+        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
+        Assert-Equal 0 $LASTEXITCODE "build-local with real SDK bootstrap`n$($output -join [Environment]::NewLine)"
+    } finally {
+        $env:CI = $oldCi
+        $env:PATH = $oldPath
+    }
+    $seen = Get-Content -LiteralPath $record -Raw -Encoding utf8 | ConvertFrom-Json
+    Assert-Equal ($systemDir + '\') $seen.DotnetRoot 'DOTNET_ROOT given to build.ps1'
+    Assert-Equal (Join-Path $systemDir 'dotnet.exe') $seen.Dotnet 'dotnet on PATH for build.ps1'
+    Assert-True $seen.SelfContained 'build-local must package self-contained'
+}
+
+# ---- SDK bootstrap (scripts/ensure-dotnet.ps1) ----------------------------
+# The real script runs in a child pwsh. Only the network download and the
+# Authenticode lookup are replaced; dotnet.exe is a real native executable
+# whose reported version and exit code come from fake-dotnet.txt beside it.
+$script:hostNativeFailure = -2147450725  # 0x8000809B: host could not resolve the global.json SDK
+
+function Get-FakeDotnetExe {
+    if ($script:fakeDotnetExe) { return $script:fakeDotnetExe }
+    $dir = Join-Path $fixtureRoot 'fake dotnet build'
+    Assert-FixturePath $dir
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $source = Join-Path $dir 'FakeDotnet.cs'
+    Set-Content -LiteralPath $source -Encoding ascii -Value @'
+using System;
+using System.IO;
+static class FakeDotnet {
+    static int Main(string[] args) {
+        string dir = AppDomain.CurrentDomain.BaseDirectory;
+        File.AppendAllText(Path.Combine(dir, "fake-dotnet.log"), string.Join(" ", args) + "\r\n");
+        string config = Path.Combine(dir, "fake-dotnet.txt");
+        if (!File.Exists(config)) { return unchecked((int)0x8000809B); }
+        string[] lines = File.ReadAllLines(config);
+        int failFirst = lines.Length > 2 ? int.Parse(lines[2]) : 0;
+        if (failFirst > 0) {
+            lines[2] = (failFirst - 1).ToString();
+            File.WriteAllLines(config, lines);
+            Console.Error.WriteLine("A compatible .NET SDK was not found.");
+            return unchecked((int)0x8000809B);
+        }
+        Console.WriteLine(lines[0]);
+        return int.Parse(lines[1]);
+    }
+}
+'@
+    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    $exe = Join-Path $dir 'dotnet.exe'
+    $compilerOutput = & $csc /nologo /target:exe ("/out:$exe") $source 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exe)) { throw "Could not compile the fake dotnet.exe: $compilerOutput" }
+    $script:fakeDotnetExe = $exe
+    return $exe
+}
+
+function Set-FakeDotnet([string]$Dir, [string]$Version, [int]$ExitCode = 0, [int]$FailFirst = 0) {
+    New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+    Copy-Item -LiteralPath (Get-FakeDotnetExe) -Destination (Join-Path $Dir 'dotnet.exe') -Force
+    Set-Content -LiteralPath (Join-Path $Dir 'fake-dotnet.txt') -Value @($Version, [string]$ExitCode, [string]$FailFirst) -Encoding ascii
+}
+
+function New-SdkFixture([string]$SystemVersion = '8.0.424', [int]$SystemExit = $script:hostNativeFailure) {
+    $script:fixtureNumber++
+    $root = Join-Path $fixtureRoot ('case ' + $script:fixtureNumber.ToString('00') + ' sdk fixture')
+    Assert-FixturePath $root
+    New-Item -ItemType Directory -Path (Join-Path $root 'scripts') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'scripts\ensure-dotnet.ps1') -Destination (Join-Path $root 'scripts\ensure-dotnet.ps1')
+    Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination (Join-Path $root 'global.json')
+    $systemDir = Join-Path $root 'system dotnet'
+    if ($SystemVersion) { Set-FakeDotnet $systemDir $SystemVersion $SystemExit }
+
+    # Mirrors dotnet-install.ps1: success returns without `exit`.
+    $installer = Join-Path $root 'fake-dotnet-install.ps1'
+    Set-Content -LiteralPath $installer -Encoding utf8 -Value @'
+param([string]$Version, [string]$InstallDir, [string]$Architecture, [switch]$NoPath)
+Add-Content -LiteralPath $env:SIDETALK_ENSURE_CHECK_LOG -Value 'installer'
+switch ($env:SIDETALK_ENSURE_CHECK_INSTALL) {
+    'throw' { throw 'synthetic dotnet-install failure' }
+    'exit' { exit 7 }
+}
+New-Item -ItemType Directory -Path (Join-Path $InstallDir "sdk\$Version") -Force | Out-Null
+Copy-Item -LiteralPath $env:SIDETALK_ENSURE_CHECK_FAKE_EXE -Destination (Join-Path $InstallDir 'dotnet.exe')
+$reported = if ($env:SIDETALK_ENSURE_CHECK_INSTALL -eq 'wrongversion') { '9.0.100' } else { $Version }
+Set-Content -LiteralPath (Join-Path $InstallDir 'fake-dotnet.txt') -Value @($reported, '0', '0') -Encoding ascii
+Write-Host 'dotnet-install: Installation finished'
+'@
+
+    Set-Content -LiteralPath (Join-Path $root 'ensure-runner.ps1') -Encoding utf8 -Value @'
+param([string]$ResultPath, [string]$InstallRoot, [string]$InstallerSha256, [int]$LockTimeoutSeconds = 180)
+$ErrorActionPreference = 'Stop'
+function Invoke-WebRequest {
+    param([string]$Uri, [string]$OutFile)
+    Add-Content -LiteralPath $env:SIDETALK_ENSURE_CHECK_LOG -Value 'download'
+    if ($env:SIDETALK_ENSURE_CHECK_DOWNLOAD -eq 'fail') { throw 'synthetic network failure' }
+    Copy-Item -LiteralPath $env:SIDETALK_ENSURE_CHECK_INSTALLER -Destination $OutFile
+}
+function Get-AuthenticodeSignature {
+    param([string]$LiteralPath)
+    Add-Content -LiteralPath $env:SIDETALK_ENSURE_CHECK_LOG -Value 'signature'
+    $valid = [System.Management.Automation.SignatureStatus]::Valid
+    $microsoft = [pscustomobject]@{
+        Subject = 'CN=.NET, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+        Issuer = 'CN=Microsoft Code Signing PCA 2024, O=Microsoft Corporation, C=US'
+    }
+    switch ($env:SIDETALK_ENSURE_CHECK_SIGNATURE) {
+        'invalid' { return [pscustomobject]@{ Status = [System.Management.Automation.SignatureStatus]::HashMismatch; SignerCertificate = $microsoft } }
+        'nocert' { return [pscustomobject]@{ Status = $valid; SignerCertificate = $null } }
+        'other' { return [pscustomobject]@{ Status = $valid; SignerCertificate = [pscustomobject]@{ Subject = 'CN=Contoso, O=Contoso'; Issuer = 'CN=Contoso CA, O=Contoso' } } }
+        default { return [pscustomobject]@{ Status = $valid; SignerCertificate = $microsoft } }
+    }
+}
+& (Join-Path $PSScriptRoot 'scripts\ensure-dotnet.ps1') -ResultPath $ResultPath -InstallRoot $InstallRoot `
+    -InstallerUri 'https://example.invalid/dotnet-install.ps1' -InstallerSha256 $InstallerSha256 -LockTimeoutSeconds $LockTimeoutSeconds
+exit $LASTEXITCODE
+'@
+    return [pscustomobject]@{
+        Root = $root
+        SystemDir = $systemDir
+        HasSystem = [bool]$SystemVersion
+        InstallRoot = Join-Path $root 'private cache'
+        CacheDir = Join-Path $root 'private cache\10.0.401'
+        Installer = $installer
+        InstallerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+        ResultPath = Join-Path $root 'result\dotnet-path.txt'
+        Log = Join-Path $root 'ensure.log'
+    }
+}
+
+function Invoke-SdkFixture($Fixture, [hashtable]$Mode = @{}, [string]$InstallerHash = '', [int]$LockTimeoutSeconds = 180) {
+    Remove-Item -LiteralPath $Fixture.ResultPath -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $Fixture.Log -Value @() -Encoding utf8
+    $names = @('PATH', 'SIDETALK_ENSURE_CHECK_LOG', 'SIDETALK_ENSURE_CHECK_INSTALLER', 'SIDETALK_ENSURE_CHECK_FAKE_EXE',
+        'SIDETALK_ENSURE_CHECK_DOWNLOAD', 'SIDETALK_ENSURE_CHECK_INSTALL', 'SIDETALK_ENSURE_CHECK_SIGNATURE')
+    $saved = @{}
+    foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+    try {
+        $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+        # No real SDK on PATH: only the synthetic system dotnet, if any.
+        $env:PATH = if ($Fixture.HasSystem) { "$($Fixture.SystemDir);$env:SystemRoot\System32" } else { "$env:SystemRoot\System32" }
+        $env:SIDETALK_ENSURE_CHECK_LOG = $Fixture.Log
+        $env:SIDETALK_ENSURE_CHECK_INSTALLER = $Fixture.Installer
+        $env:SIDETALK_ENSURE_CHECK_FAKE_EXE = Get-FakeDotnetExe
+        $env:SIDETALK_ENSURE_CHECK_DOWNLOAD = $Mode['Download']
+        $env:SIDETALK_ENSURE_CHECK_INSTALL = $Mode['Install']
+        $env:SIDETALK_ENSURE_CHECK_SIGNATURE = $Mode['Signature']
+        $hash = if ($InstallerHash) { $InstallerHash } else { $Fixture.InstallerHash }
+        $output = @(& $pwsh -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File (Join-Path $Fixture.Root 'ensure-runner.ps1') `
+                -ResultPath $Fixture.ResultPath -InstallRoot $Fixture.InstallRoot -InstallerSha256 $hash -LockTimeoutSeconds $LockTimeoutSeconds 2>&1 |
+            ForEach-Object { [string]$_ })
+        $code = $LASTEXITCODE
+    } finally {
+        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+    $result = $null
+    if (Test-Path -LiteralPath $Fixture.ResultPath) {
+        $result = [Console]::OutputEncoding.GetString([IO.File]::ReadAllBytes($Fixture.ResultPath))
+    }
+    $events = @(Get-Content -LiteralPath $Fixture.Log | Where-Object { $_ })
+    return [pscustomobject]@{
+        ExitCode = $code
+        Output = ($output -join "`n")
+        Result = $result
+        Downloads = @($events | Where-Object { $_ -eq 'download' }).Count
+        Installs = @($events | Where-Object { $_ -eq 'installer' }).Count
+        Signatures = @($events | Where-Object { $_ -eq 'signature' }).Count
+    }
+}
+
+# The fake dotnet logs each call beside itself; compare everything else.
+function Get-SdkSnapshot([string]$Dir) {
+    $snapshot = Get-FileSnapshot $Dir
+    $snapshot.Remove('fake-dotnet.log')
+    return $snapshot
+}
+
+function Assert-BootstrapCleanExit($Fixture, $Run) {
+    foreach ($needle in @('null-valued expression', 'null 값 식')) {
+        Assert-True (-not $Run.Output.Contains($needle)) "cleanup raised a null method call:`n$($Run.Output)"
+    }
+    if (Test-Path -LiteralPath $Fixture.InstallRoot) {
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath $Fixture.InstallRoot -Directory -Force -Filter '.staging-*').Count 'staging folder left behind'
+        $lockPath = Join-Path $Fixture.InstallRoot '.install.lock'
+        if (Test-Path -LiteralPath $lockPath) {
+            $probe = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $probe.Dispose()
+        }
+    }
+}
+
+function Test-SdkBootstrapUsesSystemSdk {
+    $fixture = New-SdkFixture -SystemVersion '10.0.402' -SystemExit 0
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "satisfying system SDK exit code`n$($run.Output)"
+    Assert-Equal (Join-Path $fixture.SystemDir 'dotnet.exe') $run.Result 'system SDK path'
+    Assert-Equal 0 $run.Downloads 'system SDK must not download'
+    Assert-True (-not (Test-Path -LiteralPath $fixture.InstallRoot)) 'system SDK must not create a private cache'
+}
+
+function Test-SdkBootstrapUsesPrivateCache {
+    $fixture = New-SdkFixture
+    Set-FakeDotnet $fixture.CacheDir '10.0.401'
+    $systemBefore = Get-SdkSnapshot $fixture.SystemDir
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "private cache exit code`n$($run.Output)"
+    Assert-Equal (Join-Path $fixture.CacheDir 'dotnet.exe') $run.Result 'private cache path'
+    Assert-Equal 0 $run.Downloads 'cached SDK must not download'
+    Assert-Equal 0 $run.Installs 'cached SDK must not install'
+    Assert-Contains $run.Output 'Using the cached SIDETALK SDK 10.0.401' 'cache use message'
+    Assert-SnapshotEqual $systemBefore (Get-SdkSnapshot $fixture.SystemDir) 'system SDK changed'
+
+    # Without a system dotnet at all the cache is still selected.
+    $fixture = New-SdkFixture -SystemVersion ''
+    Set-FakeDotnet $fixture.CacheDir '10.0.401'
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "cache without system dotnet`n$($run.Output)"
+    Assert-Equal 0 $run.Downloads 'cache without system dotnet must not download'
+}
+
+function Test-SdkBootstrapInstallsThenReuses {
+    $fixture = New-SdkFixture
+    # Leftovers from an interrupted run and an unrelated SDK version.
+    $oldStaging = Join-Path $fixture.InstallRoot '.staging-0123456789abcdef'
+    Set-FakeDotnet $oldStaging '10.0.401'
+    $oldQuarantine = Join-Path $fixture.InstallRoot '10.0.401.invalid-0123456789abcdef'
+    New-Item -ItemType Directory -Path $oldQuarantine -Force | Out-Null
+    $otherVersion = Join-Path $fixture.InstallRoot '9.0.100'
+    Set-FakeDotnet $otherVersion '9.0.100'
+    $otherBefore = Get-SdkSnapshot $otherVersion
+
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "first install exit code`n$($run.Output)"
+    Assert-BootstrapCleanExit $fixture $run
+    Assert-Equal (Join-Path $fixture.CacheDir 'dotnet.exe') $run.Result 'installed SDK path'
+    Assert-Equal 1 $run.Downloads 'first install download count'
+    Assert-Equal 1 $run.Installs 'first install installer count'
+    Assert-Equal 1 $run.Signatures 'first install signature checks'
+    foreach ($stage in @('Download', 'Install', 'Verify staged SDK', 'Verify signature', 'Promote cache', 'Ready')) {
+        Assert-Contains $run.Output "[dotnet/bootstrap] $stage" "missing stage $stage"
+    }
+    Assert-True (Test-Path -LiteralPath (Join-Path $fixture.CacheDir 'sdk\10.0.401')) 'promoted SDK layout'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $fixture.CacheDir 'dotnet-install.ps1'))) 'installer script left in the cache'
+    Assert-True (-not (Test-Path -LiteralPath $oldStaging)) 'interrupted staging was not replaced'
+    Assert-True (-not (Test-Path -LiteralPath $oldQuarantine)) 'old quarantine was not cleaned'
+    Assert-SnapshotEqual $otherBefore (Get-SdkSnapshot $otherVersion) 'another SDK version cache changed'
+
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "second run exit code`n$($run.Output)"
+    Assert-Equal 0 $run.Downloads 'second run must not download'
+    Assert-Equal 0 $run.Installs 'second run must not install'
+    Assert-Equal (Join-Path $fixture.CacheDir 'dotnet.exe') $run.Result 'second run SDK path'
+
+    # A cache that resolves an older feature band does not satisfy global.json.
+    $fixture = New-SdkFixture
+    Set-FakeDotnet $fixture.CacheDir '10.0.300'
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "stale cache replacement`n$($run.Output)"
+    Assert-Equal 1 $run.Installs 'stale cache must be replaced'
+    Assert-Equal '10.0.401' (Get-Content -LiteralPath (Join-Path $fixture.CacheDir 'fake-dotnet.txt'))[0] 'replacement cache version'
+    Assert-Equal 0 @(Get-ChildItem -LiteralPath $fixture.InstallRoot -Directory -Force -Filter '10.0.401.invalid-*').Count 'quarantine left after replacement'
+}
+
+function Test-SdkBootstrapFailuresAreRecoverable {
+    $cases = @(
+        @{ Name = 'download'; Stage = 'Download'; Mode = @{ Download = 'fail' } },
+        @{ Name = 'hash'; Stage = 'Download'; Hash = ('0' * 64) },
+        @{ Name = 'installer throw'; Stage = 'Install'; Mode = @{ Install = 'throw' } },
+        @{ Name = 'installer exit'; Stage = 'Install'; Mode = @{ Install = 'exit' } },
+        @{ Name = 'sdk version'; Stage = 'Verify staged SDK'; Mode = @{ Install = 'wrongversion' } },
+        @{ Name = 'signature status'; Stage = 'Verify signature'; Mode = @{ Signature = 'invalid' } },
+        @{ Name = 'signature certificate'; Stage = 'Verify signature'; Mode = @{ Signature = 'nocert' } },
+        @{ Name = 'signature publisher'; Stage = 'Verify signature'; Mode = @{ Signature = 'other' } }
+    )
+    foreach ($case in $cases) {
+        $fixture = New-SdkFixture
+        Set-FakeDotnet $fixture.CacheDir '10.0.300'
+        $cacheBefore = Get-SdkSnapshot $fixture.CacheDir
+        $systemBefore = Get-SdkSnapshot $fixture.SystemDir
+        $mode = if ($case.Mode) { $case.Mode } else { @{} }
+        $run = Invoke-SdkFixture $fixture -Mode $mode -InstallerHash $case.Hash
+        Assert-Equal 1 $run.ExitCode "$($case.Name) failure exit code`n$($run.Output)"
+        Assert-BootstrapCleanExit $fixture $run
+        Assert-Contains $run.Output "[dotnet/bootstrap] Failed during: $($case.Stage)" "$($case.Name) failure stage"
+        Assert-True ($null -eq $run.Result) "$($case.Name) failure produced an SDK path"
+        Assert-True (-not $run.Output.Contains('[dotnet/bootstrap] Ready')) "$($case.Name) failure reported ready"
+        Assert-SnapshotEqual $cacheBefore (Get-SdkSnapshot $fixture.CacheDir) "$($case.Name) failure changed the existing cache"
+        Assert-SnapshotEqual $systemBefore (Get-SdkSnapshot $fixture.SystemDir) "$($case.Name) failure changed the system SDK"
+
+        $run = Invoke-SdkFixture $fixture
+        Assert-Equal 0 $run.ExitCode "$($case.Name) recovery exit code`n$($run.Output)"
+        Assert-Equal (Join-Path $fixture.CacheDir 'dotnet.exe') $run.Result "$($case.Name) recovery SDK path"
+    }
+}
+
+function Test-SdkBootstrapLockPaths {
+    # Lock never acquired: finally runs with a null lock after an exception.
+    $fixture = New-SdkFixture
+    New-Item -ItemType Directory -Path $fixture.InstallRoot -Force | Out-Null
+    $held = [IO.File]::Open((Join-Path $fixture.InstallRoot '.install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $run = Invoke-SdkFixture $fixture -LockTimeoutSeconds 1
+    } finally {
+        $held.Dispose()
+    }
+    Assert-Equal 1 $run.ExitCode "held lock exit code`n$($run.Output)"
+    Assert-BootstrapCleanExit $fixture $run
+    Assert-Contains $run.Output '[dotnet/bootstrap] Failed during: Acquire setup lock' 'held lock stage'
+    Assert-Equal 0 $run.Downloads 'held lock must not download'
+
+    # Lock acquired, then a successful `exit 0` inside the locked block: another
+    # build finished the cache while this one waited.
+    $fixture = New-SdkFixture
+    Set-FakeDotnet $fixture.CacheDir '10.0.401' -FailFirst 1
+    $run = Invoke-SdkFixture $fixture
+    Assert-Equal 0 $run.ExitCode "locked recheck exit code`n$($run.Output)"
+    Assert-BootstrapCleanExit $fixture $run
+    Assert-Contains $run.Output '[dotnet/bootstrap] Acquire setup lock' 'locked recheck must hold the lock'
+    Assert-Equal 0 $run.Downloads 'locked recheck must not download'
+    Assert-Equal (Join-Path $fixture.CacheDir 'dotnet.exe') $run.Result 'locked recheck SDK path'
+}
+
+function Test-ScriptsAvoidAmbiguousNullConditional {
+    # `$name?.Member` parses as a variable literally named `name?`.
+    $files = @(Get-ChildItem -LiteralPath (Join-Path $repo 'scripts') -Filter '*.ps1') + @(Get-Item -LiteralPath $PSCommandPath)
+    foreach ($file in $files) {
+        $tokens = $null
+        $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        Assert-Equal 0 $parseErrors.Count "$($file.Name) PowerShell parse errors"
+        $bad = @($tokens | Where-Object { $_.Kind -eq 'Variable' -and $_.Name.EndsWith('?') })
+        Assert-Equal 0 $bad.Count "$($file.Name) uses a variable name ending in '?': $($bad.Text -join ', ')"
     }
 }
 
@@ -551,6 +908,13 @@ try {
     Invoke-Case 'verification and packaging without existing artifacts' { Test-EmptyArtifacts }
     Invoke-Case 'artifact boundary and nested reparse point guards' { Test-ArtifactBoundaries }
     Invoke-Case 'build-local bootstraps SDK and forwards exit codes' { Test-BuildLocalExitCodes }
+    Invoke-Case 'build-local passes the bootstrapped SDK to packaging' { Test-BuildLocalWithRealBootstrap }
+    Invoke-Case 'SDK bootstrap uses a satisfying system SDK' { Test-SdkBootstrapUsesSystemSdk }
+    Invoke-Case 'SDK bootstrap prefers the private cache over an old system SDK' { Test-SdkBootstrapUsesPrivateCache }
+    Invoke-Case 'SDK bootstrap installs once, cleans up, and reuses the cache' { Test-SdkBootstrapInstallsThenReuses }
+    Invoke-Case 'SDK bootstrap failures name the stage and stay recoverable' { Test-SdkBootstrapFailuresAreRecoverable }
+    Invoke-Case 'SDK bootstrap lock cleanup on null and held locks' { Test-SdkBootstrapLockPaths }
+    Invoke-Case 'scripts avoid ambiguous null-conditional variables' { Test-ScriptsAvoidAmbiguousNullConditional }
     if ($failures.Count) {
         throw ($failures -join [Environment]::NewLine)
     }
