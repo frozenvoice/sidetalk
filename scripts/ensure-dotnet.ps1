@@ -5,7 +5,7 @@ param(
 
     [string]$InstallRoot = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'SIDETALK-BuildTools\dotnet'),
 
-    [string]$InstallerUri = 'https://dot.net/v1/dotnet-install.ps1'
+    [string]$InstallerUri = 'https://raw.githubusercontent.com/dotnet/install-scripts/e5cf1dd2d1540ed05ac84f8eb8c5cdec2807621e/src/dotnet-install.ps1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -106,6 +106,10 @@ try {
     if ((Get-Item -LiteralPath $installer).Length -lt 10000) {
         throw 'The downloaded Microsoft dotnet-install script is unexpectedly small.'
     }
+    # The source URL is pinned to an immutable commit in Microsoft's official
+    # dotnet/install-scripts repository. Remove only the downloaded-script zone
+    # marker so this child script can run under build-local.cmd's RemoteSigned policy.
+    Unblock-File -LiteralPath $installer
 
     & $installer -Version $requestedVersion -InstallDir $staging -Architecture x64 -NoPath
     $installerExit = $LASTEXITCODE

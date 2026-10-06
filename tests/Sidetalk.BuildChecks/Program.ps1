@@ -511,10 +511,12 @@ Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.ex
         Assert-Equal 0 $LASTEXITCODE 'build-local success exit code'
 
         $marker = Join-Path $fixture 'build-should-not-run.marker'
-        $stub = @"
-param([switch]\$SelfContained)
-Set-Content -LiteralPath '$($marker.Replace("'", "''"))' -Value 'unexpected'
-"@
+        $oldMarker = $env:SIDETALK_BUILD_CHECK_MARKER
+        $env:SIDETALK_BUILD_CHECK_MARKER = $marker
+        $stub = @'
+param([switch]$SelfContained)
+Set-Content -LiteralPath $env:SIDETALK_BUILD_CHECK_MARKER -Value 'unexpected'
+'@
         Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
         $ensureFailure = @'
 param([Parameter(Mandatory=$true)][string]$ResultPath)
@@ -534,6 +536,7 @@ exit -1
     } finally {
         $env:CI = $oldCi
         $env:SIDETALK_BUILD_CHECK_DOTNET = $oldDotnet
+        $env:SIDETALK_BUILD_CHECK_MARKER = $oldMarker
     }
 }
 
