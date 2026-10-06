@@ -47,8 +47,8 @@ if not defined PWSH (
     set "RC=1"
     goto finish
 )
-pushd "%ROOT%"
-if errorlevel 1 (
+rem pushd does not reset ERRORLEVEL on success, so test its own result with ||.
+pushd "%ROOT%" || (
     echo Cannot enter the SIDETALK repository directory.
     set "RC=1"
     goto finish
