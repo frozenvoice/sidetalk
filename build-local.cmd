@@ -1,11 +1,13 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 set "ROOT=%~dp0"
-set "OUTPUT=%ROOT%artifacts\publish\win-x64"
 set "SIDETALK_BUILD_SCRIPT=%ROOT%scripts\build.ps1"
 set "SIDETALK_DOTNET_SCRIPT=%ROOT%scripts\ensure-dotnet.ps1"
+set "SIDETALK_INSTALL_SCRIPT=%ROOT%scripts\install-local.ps1"
+set "SIDETALK_INSTALL_FLAGS="
 set "DOTNET_RESULT="
 set "NO_LAUNCH="
+set "NO_INSTALL="
 set "NO_PAUSE="
 set "PUSHED="
 set "RC=0"
@@ -14,6 +16,11 @@ set "RC=0"
 if "%~1"=="" goto preflight
 if /I "%~1"=="-NoLaunch" (
     set "NO_LAUNCH=1"
+    shift
+    goto arguments
+)
+if /I "%~1"=="-NoInstall" (
+    set "NO_INSTALL=1"
     shift
     goto arguments
 )
@@ -36,6 +43,11 @@ if not exist "%SIDETALK_BUILD_SCRIPT%" (
 )
 if not exist "%SIDETALK_DOTNET_SCRIPT%" (
     echo Missing scripts\ensure-dotnet.ps1. Keep this file in the SIDETALK repository root.
+    set "RC=1"
+    goto finish
+)
+if not exist "%SIDETALK_INSTALL_SCRIPT%" (
+    echo Missing scripts\install-local.ps1. Keep this file in the SIDETALK repository root.
     set "RC=1"
     goto finish
 )
@@ -92,38 +104,43 @@ if not "%RC%"=="0" (
 )
 set "RC=0"
 
-echo Packaging SIDETALK. Close SIDETALK and its published IsolationProbe before replacement.
-echo For code-only checks with the published app running: pwsh -File scripts\verify.ps1
+echo Packaging SIDETALK. The installed SIDETALK is not changed until Setup runs.
+echo For code-only checks: pwsh -File scripts\verify.ps1
 echo KakaoTalk and Sandboxie are not stopped by this entry point.
 rem Use -Command so a cancelled PowerShell build cannot report success as -File can.
 rem Pass the path as data, not interpolated PowerShell source. Policy is session-only.
 "%PWSH%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "try { & $env:SIDETALK_BUILD_SCRIPT -SelfContained; if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit 0 } catch { Write-Error $_; exit 1 }"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
-    echo Build failed or was cancelled. The previous app will not be launched as a fallback.
+    echo Build failed or was cancelled. Setup was not built or started; the installed SIDETALK is unchanged.
     goto finish
 )
-if not exist "%OUTPUT%\Sidetalk.exe" (
-    echo Build returned success, but the published Sidetalk.exe was not found.
-    set "RC=1"
-    goto finish
-)
-echo Build complete: "%OUTPUT%\Sidetalk.exe"
-if defined NO_LAUNCH goto finish
-rem Open the SIDETALK launcher only. KakaoTalk still requires its GUI confirmation.
-start "" /D "%OUTPUT%" "%OUTPUT%\Sidetalk.exe"
+
+if defined NO_INSTALL set "SIDETALK_INSTALL_FLAGS=-NoInstall"
+if defined NO_LAUNCH if not defined NO_INSTALL set "SIDETALK_INSTALL_FLAGS=-NoLaunch"
+rem install-local.ps1 builds SIDETALK-Setup.exe, then (unless -NoInstall) opens it and
+rem waits. Launching is the Setup window's own last-page choice.
+"%PWSH%" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "try { $f = @{ NoInstall = ($env:SIDETALK_INSTALL_FLAGS -eq '-NoInstall'); NoLaunch = ($env:SIDETALK_INSTALL_FLAGS -eq '-NoLaunch') }; & $env:SIDETALK_INSTALL_SCRIPT @f; if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit $LASTEXITCODE } catch { Write-Error $_; exit 1 }"
 set "RC=%ERRORLEVEL%"
-if not "%RC%"=="0" echo SIDETALK could not be started. See the error above.
+if not "%RC%"=="0" (
+    echo SIDETALK was not installed by this run. See the stage and guidance above.
+    goto finish
+)
 goto finish
 
 :help
-echo Usage: build-local.cmd [-NoLaunch] [-NoPause]
-echo Builds the current checkout using scripts\build.ps1 -SelfContained, then opens SIDETALK.
-echo Missing .NET SDK versions are downloaded once into a private SIDETALK build-tools cache.
-echo -NoLaunch  Build only; do not open SIDETALK.
-echo -NoPause   Do not wait for a key after an error.
+echo Usage: build-local.cmd [-NoInstall] [-NoLaunch] [-NoPause]
+echo Verifies and publishes the current checkout, builds artifacts\release\SIDETALK-Setup.exe,
+echo then opens Setup to install or update SIDETALK in %%LOCALAPPDATA%%\Programs\SIDETALK.
+echo Missing .NET SDK and Inno Setup compiler versions are prepared once in a private
+echo %%LOCALAPPDATA%%\SIDETALK-BuildTools cache. No administrator rights are needed.
+echo -NoInstall  Stop after SIDETALK-Setup.exe is built. Windows installation is unchanged
+echo             and nothing is launched (-NoLaunch is then implied).
+echo -NoLaunch   Install, but do not offer to start SIDETALK at the end of Setup.
+echo -NoPause    Do not wait for a key after an error.
+echo Cancelling Setup is reported as a failure (exit 62), never as success.
 echo Code-only checks: pwsh -File scripts\verify.ps1
-echo For everyday use, double-click run-local.cmd. See docs\LOCAL-RUN.md.
+echo After installing, open SIDETALK from the Start Menu. See docs\LOCAL-RUN.md.
 exit /b 0
 
 :finish

@@ -17,7 +17,7 @@ public static class HostProfileContext
         uint packageLength = 0;
         var packageStatus = GetCurrentPackageFullName(ref packageLength, null);
         if (packageStatus != 15700) // APPMODEL_ERROR_NO_PACKAGE
-            throw new InvalidOperationException("패키지 파일 가상화가 적용될 수 있는 실행입니다. 탐색기에서 run-local.cmd로 SIDETALK를 열어 현재 일반 사용자 환경을 확인하세요.");
+            throw new InvalidOperationException("패키지 파일 가상화가 적용될 수 있는 실행입니다. 시작 메뉴의 SIDETALK로 열어 현재 일반 사용자 환경을 확인하세요.");
 
         var id = LocalAppDataId;
         var status = SHGetKnownFolderPath(ref id, 0x4000, IntPtr.Zero, out var pointer);
@@ -48,7 +48,7 @@ public static class HostProfileContext
                 var finalPath = actual.ToString();
                 if (finalPath.StartsWith(@"\\?\", StringComparison.Ordinal)) finalPath = finalPath[4..];
                 if (!SamePath(candidate, finalPath))
-                    throw new InvalidDataException("SIDETALK 프로필 경로가 다른 실제 위치로 연결되어 있습니다. 탐색기에서 run-local.cmd로 다시 열어 확인하세요.");
+                    throw new InvalidDataException("SIDETALK 프로필 경로가 다른 실제 위치로 연결되어 있습니다. 시작 메뉴의 SIDETALK로 다시 열어 확인하세요.");
                 return;
             }
             var error = Marshal.GetLastWin32Error();

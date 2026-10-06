@@ -18,7 +18,7 @@ jobs:
     # This hosted Windows Server runner verifies build/synthetic boundaries.
     # It is not the Windows 11 + Sandboxie 1.18.4 integration environment.
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
@@ -56,6 +56,18 @@ jobs:
           & pwsh -NoProfile -File tests/Sidetalk.BuildChecks/Program.ps1 2>&1 | Tee-Object -FilePath artifacts/ci/build-checks.log
           $buildChecksExitCode = $LASTEXITCODE
           exit $buildChecksExitCode
+      - name: Verify installer compile and isolated install regression
+        # Sequential after verify: uses its Release output as payload. Compiles with the
+        # pinned private Inno Setup 6.7.3 and installs/updates/uninstalls only under a
+        # SIDETALKInstallerTest-* AppId and %TEMP% locations. No real SIDETALK, KakaoTalk
+        # or Sandboxie exists or is touched on the hosted runner.
+        if: ${{ !cancelled() }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          New-Item -ItemType Directory -Path artifacts/ci -Force | Out-Null
+          & pwsh -NoProfile -File tests/Sidetalk.InstallerChecks/Program.ps1 2>&1 | Tee-Object -FilePath artifacts/ci/installer-checks.log
+          $installerChecksExitCode = $LASTEXITCODE
+          exit $installerChecksExitCode
       - name: Preserve logs and synthetic images
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)

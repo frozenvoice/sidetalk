@@ -66,7 +66,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             if (setupRecovery?.HasUnfinishedRecovery == true)
                 return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 초기 설정 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
             try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
-            catch (Exception ex) { inspectionFailure = InspectionFailure.Capture("실행 환경 조회", ex); return Blocked("지원 실행 환경을 확인해주세요", "일반 사용자 실행 환경을 확인하지 못했습니다. 탐색기에서 run-local.cmd로 열고 다시 확인해 주세요."); }
+            catch (Exception ex) { inspectionFailure = InspectionFailure.Capture("실행 환경 조회", ex); return Blocked("지원 실행 환경을 확인해주세요", "일반 사용자 실행 환경을 확인하지 못했습니다. 시작 메뉴의 SIDETALK로 열고 다시 확인해 주세요."); }
             if (!kakao.Available || !sandboxie.Available)
                 return Snapshot(Readiness.MissingDependency, "실행 준비가 필요해요", !sandboxie.Available ? "Sandboxie Plus를 확인한 뒤 전용 환경을 설정하세요." : "공식 카카오톡의 설치 경로와 서명을 확인하세요.");
             if (!RuntimeVerifier.MatchesVersion(sandboxie.Version, RuntimeVerifier.PlusVersion))
@@ -320,7 +320,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             Changes = preparation.Changes.Select(change => new { change.Section, change.Key, change.Description }).ToArray(),
             preparation.Blockers, preparation.BackupPath, preparation.HistoryPath
         };
-        var report = new { InspectionFailures = failures, SetupRecovery = setupReport, InterruptedEvidence = interruptedEvidence, SidetalkVersion = "0.1.6", PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
+        var report = new { InspectionFailures = failures, SetupRecovery = setupReport, InterruptedEvidence = interruptedEvidence, SidetalkVersion = SidetalkBuild.Version, PolicyRevision = IsolationPolicy.Revision, Windows = Environment.OSVersion.Version.ToString(), snapshot,
             Verification = new { ProcessStateIsLogin = false, RunningProcessEffectiveRulesVerified = false, AccountLogin = "미검증",
                 SimultaneousAccounts = "미검증", Messaging = "미검증", Notifications = "미검증", Persistence = "미검증",
                 MainAccountNonInterference = "미검증", RuntimeDataSeparation = "미검증" } };

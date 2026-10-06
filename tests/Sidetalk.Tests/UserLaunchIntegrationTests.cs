@@ -22,8 +22,112 @@ internal static class UserLaunchIntegrationTests
         ("User launch concurrent settings writes are excluded", ConcurrentSettings),
         ("User launch requires a canonical existing Sidetalk executable", ExecutableValidation),
         ("User launch missing links require explicit repair before startup", MissingOwnedLink),
-        ("Windows Shell Link COM roundtrip uses disposable locations and exact Unicode paths", NativeComRoundtrip)
+        ("Windows Shell Link COM roundtrip uses disposable locations and exact Unicode paths", NativeComRoundtrip),
+        ("Moved installation reports the previous executable without rewriting links", PreviousTargetsAreReported),
+        ("Uninstall removes only verified owned links for this executable and keeps the choice", UninstallRemovesOwnedLinks),
+        ("Uninstall preserves edited links, other installations and unowned collisions", UninstallPreservesForeignLinks),
+        ("Uninstall without settings creates nothing", UninstallWithoutSettingsIsReadOnly),
+        ("Uninstall refuses corrupt or interrupted settings without deleting links", UninstallFailsClosed)
     ];
+
+    private static void PreviousTargetsAreReported()
+    {
+        var fixture = new Fixture();
+        var options = new UserLaunchOptions(true, true, false);
+        fixture.Integration.Apply(options);
+        var snapshot = fixture.SnapshotManaged();
+        var installed = new UserLaunchIntegration(fixture.Locations, fixture.CreateExecutable("Programs SIDETALK 설치"), fixture.Backend);
+        var status = installed.Inspect();
+        Assert.True(status.NeedsUpdate);
+        Assert.Equal(1, status.PreviousTargets!.Count);
+        Assert.Equal(fixture.Executable, status.PreviousTargets[0]);
+        fixture.AssertSnapshot(snapshot);
+        Assert.Equal(0, fixture.Integration.Inspect().PreviousTargets!.Count);
+    }
+
+    private static void UninstallRemovesOwnedLinks()
+    {
+        var fixture = new Fixture();
+        Directory.CreateDirectory(fixture.Locations.Desktop);
+        var unrelated = Path.Combine(fixture.Locations.Desktop, "SIDETALK.lnk");
+        File.WriteAllText(unrelated, "installer-owned main shortcut is not this integration");
+        var sentinel = Path.Combine(fixture.Root, "profile.json");
+        File.WriteAllText(sentinel, "synthetic profile sentinel");
+        var options = new UserLaunchOptions(true, true, true);
+        fixture.Integration.Apply(options);
+        var manifest = File.ReadAllBytes(fixture.Manifest);
+        var result = fixture.Integration.RemoveLinksForUninstall();
+        Assert.Equal(3, result.Removed.Count);
+        Assert.Equal(0, result.Preserved.Count);
+        foreach (var path in fixture.LinkPaths) Assert.False(File.Exists(path));
+        Assert.SequenceEqual(manifest, File.ReadAllBytes(fixture.Manifest));
+        Assert.Equal("installer-owned main shortcut is not this integration", File.ReadAllText(unrelated));
+        Assert.Equal("synthetic profile sentinel", File.ReadAllText(sentinel));
+        var reinstalled = fixture.Integration.Inspect();
+        Assert.Equal(options, reinstalled.Options);
+        Assert.True(reinstalled.NeedsUpdate);
+        Assert.Equal(0, fixture.Integration.RemoveLinksForUninstall().Removed.Count);
+        Assert.False(fixture.Integration.Apply(options).NeedsUpdate);
+        foreach (var path in fixture.LinkPaths) Assert.True(File.Exists(path));
+        fixture.AssertNoTransaction();
+    }
+
+    private static void UninstallPreservesForeignLinks()
+    {
+        var fixture = new Fixture();
+        fixture.Integration.Apply(new(true, true, false));
+        var edited = fixture.Backend.Encode(fixture.Backend.Decode(File.ReadAllBytes(fixture.DesktopLink)) with { Arguments = "--user-edited" });
+        File.WriteAllBytes(fixture.DesktopLink, edited);
+        var result = fixture.Integration.RemoveLinksForUninstall();
+        Assert.Equal(1, result.Removed.Count);
+        Assert.Equal(fixture.DesktopLink, result.Preserved.Single());
+        Assert.SequenceEqual(edited, File.ReadAllBytes(fixture.DesktopLink));
+        Assert.False(File.Exists(fixture.MenuLink));
+
+        // Links that run another installation (e.g. the old artifacts build) stay.
+        var other = new Fixture();
+        other.Integration.Apply(new(true, false, true));
+        var before = other.SnapshotManaged();
+        var installed = new UserLaunchIntegration(other.Locations, other.CreateExecutable("Programs SIDETALK"), other.Backend);
+        var none = installed.RemoveLinksForUninstall();
+        Assert.Equal(0, none.Removed.Count + none.Preserved.Count);
+        other.AssertSnapshot(before);
+
+        // A same-name link without a manifest record is never inspected for removal.
+        var collision = new Fixture();
+        collision.Integration.Apply(new(false, true, false));
+        Directory.CreateDirectory(collision.Locations.Desktop);
+        File.WriteAllText(collision.DesktopLink, "user-made link with the same name");
+        Assert.Equal(1, collision.Integration.RemoveLinksForUninstall().Removed.Count);
+        Assert.Equal("user-made link with the same name", File.ReadAllText(collision.DesktopLink));
+    }
+
+    private static void UninstallWithoutSettingsIsReadOnly()
+    {
+        var fixture = new Fixture();
+        var result = fixture.Integration.RemoveLinksForUninstall();
+        Assert.Equal(0, result.Removed.Count + result.Preserved.Count);
+        Assert.False(Directory.Exists(fixture.Locations.SettingsRoot));
+        foreach (var folder in fixture.LinkFolders) Assert.False(Directory.Exists(folder));
+    }
+
+    private static void UninstallFailsClosed()
+    {
+        var fixture = new Fixture();
+        fixture.Integration.Apply(new(true, true, true));
+        var snapshot = fixture.SnapshotManaged();
+        var corrupt = Encoding.UTF8.GetBytes("{interrupted settings");
+        var manifest = File.ReadAllBytes(fixture.Manifest);
+        File.WriteAllBytes(fixture.Manifest, corrupt);
+        Assert.Throws<InvalidDataException>(() => fixture.Integration.RemoveLinksForUninstall());
+        foreach (var path in fixture.LinkPaths) Assert.SequenceEqual(snapshot[path], File.ReadAllBytes(path));
+        Assert.SequenceEqual(corrupt, File.ReadAllBytes(fixture.Manifest));
+
+        File.WriteAllBytes(fixture.Manifest, manifest);
+        File.WriteAllText(fixture.Pending, "{}");
+        Assert.Throws<InvalidDataException>(() => fixture.Integration.RemoveLinksForUninstall());
+        fixture.AssertSnapshot(snapshot);
+    }
 
     private static void DefaultsAreReadOnly()
     {
