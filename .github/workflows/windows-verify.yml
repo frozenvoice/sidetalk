@@ -1,9 +1,7 @@
 name: Windows verification
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # Full remote checks are requested explicitly, including before release publication.
   workflow_dispatch:
 
 permissions:
@@ -27,14 +25,17 @@ jobs:
       DOTNET_NOLOGO: '1'
     steps:
       - name: Check out current source
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           persist-credentials: false
       - name: Install SDK required by global.json
+        id: sdk
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0 (Node 24)
         with:
           global-json-file: global.json
       - name: Verify current source and synthetic WPF fixtures
+        id: source
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
@@ -47,6 +48,7 @@ jobs:
           $verificationExitCode = $LASTEXITCODE
           exit $verificationExitCode
       - name: Verify build failure propagation and packaging guards
+        id: build_checks
         # Sequential: verify/build use shared outputs. These checks use temporary
         # fake tool/repository fixtures and never publish or run the real app.
         if: ${{ !cancelled() }}
@@ -57,6 +59,7 @@ jobs:
           $buildChecksExitCode = $LASTEXITCODE
           exit $buildChecksExitCode
       - name: Verify installer compile and isolated install regression
+        id: installer_checks
         # Sequential after verify: uses its Release output as payload. Compiles with the
         # pinned private Inno Setup 6.7.3 and installs/updates/uninstalls only under a
         # SIDETALKInstallerTest-* AppId and %TEMP% locations. No real SIDETALK, KakaoTalk
@@ -68,6 +71,29 @@ jobs:
           & pwsh -NoProfile -File tests/Sidetalk.InstallerChecks/Program.ps1 2>&1 | Tee-Object -FilePath artifacts/ci/installer-checks.log
           $installerChecksExitCode = $LASTEXITCODE
           exit $installerChecksExitCode
+      - name: Require every full verification stage to succeed
+        # A missing, skipped or cancelled required stage cannot qualify this run.
+        if: ${{ !cancelled() }}
+        env:
+          CHECKOUT_RESULT: ${{ steps.checkout.outcome }}
+          SDK_RESULT: ${{ steps.sdk.outcome }}
+          SOURCE_RESULT: ${{ steps.source.outcome }}
+          BUILD_CHECKS_RESULT: ${{ steps.build_checks.outcome }}
+          INSTALLER_CHECKS_RESULT: ${{ steps.installer_checks.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $results = [ordered]@{
+            checkout = $env:CHECKOUT_RESULT
+            sdk = $env:SDK_RESULT
+            source = $env:SOURCE_RESULT
+            build_checks = $env:BUILD_CHECKS_RESULT
+            installer_checks = $env:INSTALLER_CHECKS_RESULT
+          }
+          foreach ($stage in $results.GetEnumerator()) {
+            if ($stage.Value -cne 'success') {
+              throw "Required stage $($stage.Key) did not succeed: '$($stage.Value)'."
+            }
+          }
       - name: Preserve logs and synthetic images
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)

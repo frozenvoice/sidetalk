@@ -1,3 +1,5 @@
+# Local development: current-source checks only. UI fixtures are explicit; installer
+# regressions are a separate command. Keep the packaging caller's defaults intact.
 param([switch]$UiChecks)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'build-common.ps1')

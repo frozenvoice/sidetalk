@@ -319,6 +319,14 @@ function Test-VerifyLeavesDeployment {
 
 function Test-VerifyFailureCodes {
     $fixture = New-Fixture
+    foreach ($case in @(
+            @{ Stage = 'app-build'; Code = 10; Calls = 1 },
+            @{ Stage = 'probe-build'; Code = 12; Calls = 3 })) {
+        $failed = Invoke-Fixture $fixture 'verify.ps1' -Failure $case.Stage
+        Assert-Equal $case.Code $failed.ExitCode "$($case.Stage) failure exit code"
+        Assert-Equal $case.Calls @($failed.Log | Where-Object Kind -eq 'dotnet').Count 'verification continued after failure'
+        Assert-Contains $failed.Output 'exited with code 37' 'native failure code was lost'
+    }
     $result = Invoke-Fixture $fixture 'verify.ps1' -Failure tests
     Assert-Equal 11 $result.ExitCode 'safety test failure exit code'
     Assert-Contains $result.Output 'exited with code 37' 'native failure code was lost'
@@ -1093,6 +1101,54 @@ function Test-ScriptsAvoidAmbiguousNullConditional {
     }
 }
 
+function Test-ManualWorkflowGate {
+    $workflow = Get-Content -LiteralPath (Join-Path $repo '.github/workflows/windows-verify.yml') -Raw
+    $trigger = [regex]::Match($workflow, '(?ms)^on:\r?\n(?<body>.*?)(?=^\S)')
+    Assert-True $trigger.Success 'workflow trigger block is missing'
+    $events = @([regex]::Matches($trigger.Groups['body'].Value, '(?m)^  ([a-z_]+):') | ForEach-Object { $_.Groups[1].Value })
+    Assert-Equal 'workflow_dispatch' ($events -join ',') 'full verification must be manual only'
+    Assert-True ($workflow -notmatch '(?m)^\s*continue-on-error:') 'required checks must not ignore failure'
+
+    # Exercise the actual workflow gate body with isolated environment values. No
+    # GitHub calls, dotnet builds, real UI, installer compilation or installation.
+    $gateStep = [regex]::Match($workflow, '(?ms)^      - name: Require every full verification stage to succeed\r?\n(?<body>.*?)(?=^      - name:)')
+    Assert-True $gateStep.Success 'full verification gate is missing'
+    $bindings = [regex]::Matches($gateStep.Groups['body'].Value, '(?m)^          ([A-Z_]+): \$\{\{ steps\.([a-z_]+)\.outcome \}\}')
+    Assert-Equal 'checkout,sdk,source,build_checks,installer_checks' (($bindings | ForEach-Object { $_.Groups[2].Value }) -join ',') 'gate must cover every required stage'
+    $run = [regex]::Match($gateStep.Groups['body'].Value, '(?ms)^        run: \|\r?\n(?<body>.*)')
+    Assert-True $run.Success 'gate PowerShell body is missing'
+    $body = $run.Groups['body'].Value -replace '(?m)^          ', ''
+    $tokens = $null
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseInput($body, [ref]$tokens, [ref]$parseErrors) | Out-Null
+    Assert-Equal 0 $parseErrors.Count 'workflow gate PowerShell parse errors'
+    $gate = [scriptblock]::Create($body)
+    $saved = @{}
+    try {
+        foreach ($binding in $bindings) {
+            $name = $binding.Groups[1].Value
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, 'success')
+        }
+        & $gate
+        foreach ($binding in $bindings) {
+            $name = $binding.Groups[1].Value
+            foreach ($outcome in @('failure', 'cancelled', 'skipped', '', 'neutral', 'timed_out', 'action_required')) {
+                [Environment]::SetEnvironmentVariable($name, $outcome)
+                $rejected = $false
+                try { & $gate } catch {
+                    Assert-Contains $_.Exception.Message 'Required stage' 'gate failed for an unrelated reason'
+                    $rejected = $true
+                }
+                Assert-True $rejected "$name '$outcome' incorrectly qualified as full success"
+            }
+            [Environment]::SetEnvironmentVariable($name, 'success')
+        }
+    } finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
     Invoke-Case 'verify leaves deployment and profile untouched' { Test-VerifyLeavesDeployment }
@@ -1113,6 +1169,7 @@ try {
     Invoke-Case 'SDK bootstrap failures name the stage and stay recoverable' { Test-SdkBootstrapFailuresAreRecoverable }
     Invoke-Case 'SDK bootstrap lock cleanup on null and held locks' { Test-SdkBootstrapLockPaths }
     Invoke-Case 'scripts avoid ambiguous null-conditional variables' { Test-ScriptsAvoidAmbiguousNullConditional }
+    Invoke-Case 'manual workflow requires every full verification stage' { Test-ManualWorkflowGate }
     if ($failures.Count) {
         throw ($failures -join [Environment]::NewLine)
     }

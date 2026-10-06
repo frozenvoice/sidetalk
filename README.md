@@ -119,7 +119,11 @@ pwsh -File scripts/build-installer.ps1
 
 `verify.ps1`는 Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드만 수행합니다. 기존 배포 폴더·ZIP·사용자 설정을 변경하지 않으며, 실행 중인 배포본을 검사해 검증을 막지 않습니다. `bin/obj`와 테스트용 `artifacts/tests`에는 빌드·합성 검사 결과가 생깁니다. 실제 빌드 출력이 잠겼다면 dotnet이 출력한 파일 경로와 오류를 확인하세요. 스크립트가 프로세스를 종료하지는 않습니다. `-UiChecks` 결과는 매번 새 임시 폴더에 생성하고 위치를 출력합니다. 두 스크립트는 `bin/obj`를 공유하므로 동시에 실행하지 마세요.
 
-PR과 main push의 Windows CI는 같은 `verify.ps1 -UiChecks`, 빌드 스크립트 모의 회귀, 실제 Inno Setup 컴파일과 격리 설치 회귀(`tests/Sidetalk.InstallerChecks`)를 순차 실행합니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. 이 결과와 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
+일반 push/PR에는 원격 빌드·UI·설치 검증을 실행하지 않습니다. 일반 작업은 변경에 필요한 로컬 검증으로 완료할 수 있으며 CI 시작·watch·대기·자동 rerun을 요구하지 않습니다. UI 변경에는 `verify.ps1 -UiChecks`, 빌드 스크립트 변경에는 `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`, 설치/업데이트 변경에는 기본 검증 뒤 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`를 선택합니다. 일반 코드 수정마다 전체 UI·설치기 생성·설치 회귀를 실행하지 않습니다.
+
+전체 원격 검증은 명시적 요청 또는 릴리즈 공개 전에 **Windows verification**의 `workflow_dispatch`로 수행합니다. `verify.ps1 -UiChecks`, 빌드 스크립트 모의 회귀, 고정 Inno Setup 컴파일과 격리 설치/업데이트/제거 회귀(`tests/Sidetalk.InstallerChecks`)를 모두 순차 실행합니다. 필수 검사의 실패·취소·미실행은 전체 성공이 아닙니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. hosted Windows Server 합성 검증과 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
+
+현재 GitHub 릴리즈 게시 자동화는 없습니다. 공개 전 정확한 대상 SHA의 전체 검증 성공을 확인하고 같은 SHA의 깨끗한 checkout에서 payload·설치기를 준비해 공개 파일의 SHA-256 동일성을 확인하는 [수동 사전 검증 절차](docs/VERIFICATION.md#수동-릴리즈-사전-검증)를 따릅니다. 패키징이나 `build-local.cmd` 성공만으로 공개 승인을 대신하지 않습니다.
 
 `build.ps1`는 같은 검증을 한 번 수행한 뒤 각 프로젝트를 `win-x64`와 선택한 런타임 모드로 복원·publish합니다. 일반 빌드 결과만으로 RID별 publish를 생략하지 않습니다. README와 docs를 포함한 ZIP과 SHA-256을 staging에서 준비한 뒤 `artifacts/publish/win-x64`로 반영합니다. 빌드·테스트·publish·압축 실패 시 기존 배포본과 ZIP을 유지하고, 교체 실패 시 롤백합니다. 경로 경계·reparse point 검사, 실행 중 출력 보호와 publish lock도 유지합니다. 롤백까지 실패하면 원래 오류·롤백 오류·보존 경로를 출력하며 staging을 남깁니다. 버전별 ZIP은 `artifacts`에 계속 보관합니다.
 

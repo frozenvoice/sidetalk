@@ -4,7 +4,7 @@
 
 | 명령 | 동작 |
 |---|---|
-| `build-local.cmd` | SDK·Inno Setup 컴파일러 자동 준비 → 전체 검증 → self-contained publish → `artifacts\release\SIDETALK-Setup.exe` 생성 → 설치 프로그램을 열어 설치/업데이트 → 설치 결과 확인. 실행 여부는 설치 마지막 화면의 **SIDETALK 실행**으로 고릅니다. |
+| `build-local.cmd` | SDK·Inno Setup 컴파일러 자동 준비 → 앱·콘솔·시험 도구 검증 → self-contained publish → `artifacts\release\SIDETALK-Setup.exe` 생성 → 설치 프로그램을 열어 설치/업데이트 → 설치 결과 확인. 실행 여부는 설치 마지막 화면의 **SIDETALK 실행**으로 고릅니다. |
 | `build-local.cmd -NoInstall` | 설치 프로그램 생성까지. Windows 설치는 바꾸지 않고 아무것도 실행하지 않습니다(`-NoLaunch`를 함께 줘도 의미가 같습니다). |
 | `build-local.cmd -NoLaunch` | 설치/업데이트는 하되 마지막 화면에 실행 선택을 표시하지 않습니다. |
 | `build-local.cmd -NoPause` | 오류 뒤 키 입력을 기다리지 않습니다(자동화용). |

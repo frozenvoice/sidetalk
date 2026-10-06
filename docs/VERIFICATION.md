@@ -1,3 +1,56 @@
+# 검증 운영 정책 — 2026-10-06
+
+일반 push/PR에는 원격 검증을 실행하지 않는다. 일반 개발 작업은 변경 범위에 필요한 로컬 검사와 결과 보고로 완료할 수 있다. 원격 CI dispatch·watch·완료 대기·자동 rerun은 일반 완료 조건이 아니다. 아래의 과거 실행·CI 미확인 기록은 당시 검증 범위를 나타내며 현재 작업의 원격 실행 의무를 만들지 않는다.
+
+| 목적 / 변경 범위 | 명령과 완료 기준 |
+|---|---|
+| 일반 코드 개발 | `pwsh -File scripts/verify.ps1`: Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드 성공 |
+| UI 변경 | `pwsh -File scripts/verify.ps1 -UiChecks`: 기본 검증과 관련 합성 WPF 검사·이미지 확인 |
+| 빌드/검증 스크립트 변경 | `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`: 임시 fixture의 실패 전파·패키징 guard·롤백 회귀 |
+| 설치/업데이트 변경 | 기본 검증 후 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`: 고정 컴파일러와 테스트 전용 AppId/경로의 설치·업데이트·제거 회귀 |
+| 명시적 전체 원격 검증 / 릴리즈 공개 전 | `Windows verification`의 `workflow_dispatch`: 아래 세 검사와 필수 단계가 모두 실행되어 성공 |
+
+`verify.ps1`는 공통 `Invoke-SidetalkVerification`을 사용하며 기본값에서 UI·설치기 생성·설치 회귀를 실행하지 않는다. `-UiChecks`는 명시적 선택이다. 기본 검증과 배포용 `build.ps1`의 검증 의미를 축소하지 않는다. 패키징은 기본 검증을 포함하므로 직전에 같은 기본 검증을 반복할 필요는 없다. `build-local.cmd`는 SDK/컴파일러 준비·패키징·설치기 생성·대화형 설치/업데이트 경로이며 단순 개발 검사를 위한 명령이 아니다. `-NoInstall` 및 기존 설치·데이터 보존 계약은 [로컬 실행 안내](LOCAL-RUN.md)를 따른다.
+
+수동 전체 검증은 기존 구현을 순서대로 실행한다.
+
+```powershell
+pwsh -File scripts/verify.ps1 -UiChecks
+pwsh -File tests/Sidetalk.BuildChecks/Program.ps1
+pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1
+```
+
+각 명령의 비영 종료 코드·취소·미실행을 성공으로 취급하지 않는다. 원격 workflow도 checkout/SDK 준비와 세 검사가 모두 성공해야 통과하며 로그·합성 WPF 이미지를 보관한다. 일반 이벤트의 경량 자동 CI·정기 실행·성공만 반환하는 job을 대신 두지 않는다.
+
+hosted runner는 Windows Server 2022에서 고정된 SDK·Inno Setup 환경의 빌드와 합성/격리 fixture 경계를 검사한다. InstallerChecks는 임시 `SIDETALKInstallerTest-*` AppId·설치/시작 메뉴/바탕 화면 경로와 합성 데이터를 사용하며 사용자용 설치본을 시험 설치하지 않는다. 이 결과는 실제 Windows 11 + Sandboxie Plus 1.18.4 통합·로그인·송수신 성공을 의미하지 않는다. 실환경 검증은 별도로 [ACCEPTANCE.md](ACCEPTANCE.md), [ISOLATION-PROBE.md](ISOLATION-PROBE.md), [WINDOWS-RECOVERY-TEST.md](WINDOWS-RECOVERY-TEST.md)를 따른다.
+
+## 수동 릴리즈 사전 검증
+
+현재 게시 workflow나 GitHub Release 자동화는 없다. `build.ps1`의 publish는 로컬 산출물 준비이며 `build-local.cmd`는 사용자 로컬 설치 경로다. 새 게시 시스템을 만들지 않고, 설치기 전달/릴리즈 공개 담당자가 다음 조건을 공개 **전에** 확인한다.
+
+1. 공개 대상의 전체 커밋 SHA를 고정하고 깨끗한 checkout을 준비한다. `git rev-parse HEAD`와 `git status --porcelain` 결과를 기록한다. 검증 후 소스·빌드 입력을 바꾸거나 대상 ref가 이동하면 새 SHA를 기준으로 다시 판단한다.
+2. 그 SHA를 가리키는 ref에서 `Windows verification`을 수동 실행한다. 완료된 실행의 URL·run ID·attempt·`head_sha`·event를 기록하고 `head_sha`가 공개 대상 전체 SHA와 같고 event가 `workflow_dispatch`인지 확인한다. workflow 전체와 `verify` job이 성공하고 checkout, SDK 준비, `Verify current source and synthetic WPF fixtures`, `Verify build failure propagation and packaging guards`, `Verify installer compile and isolated install regression`가 모두 `success`인지 확인한다. 필수 단계의 실패·취소·skipped·누락, 과거 성공 실행이나 다른 SHA는 게시 조건을 충족하지 않는다. 로그와 이미지도 실행의 같은 attempt에서 확인한다. 공개 후 `release: published` 등의 이벤트를 사전 검증으로 사용하지 않는다.
+3. 같은 SHA의 깨끗한 checkout에서 `pwsh -File scripts/build.ps1 -SelfContained`를 실행하고 성공한 `artifacts/publish/win-x64`를 설치 원본으로 고정한다. 이 명령은 기본 빌드·안전성 테스트·시험 도구 검증을 다시 수행하고 두 RID publish·문서·ZIP을 준비한다. 전체 원격 성공으로 로컬 패키징의 검증을 생략하지 않는다. 필요할 때만 기존 배포 산출물의 사용자가 정상 종료한 후 진행하며 사용자 프로필·계정·Sandboxie 설정을 변경하지 않는다.
+4. payload 전체의 상대 경로·길이·SHA-256 목록을 보존한 뒤 `pwsh -File scripts/build-installer.ps1 -SourceDir artifacts/publish/win-x64`로 사용자용 Setup을 한 번 컴파일한다. 성공 후 payload 목록을 다시 비교해 입력 파일의 추가·누락·변경이 없는지 확인한다. 기존 builder의 고정 컴파일러·제품 버전/리소스·서명 상태 검사가 성공해야 한다. InstallerChecks의 임시 fixture Setup은 사용자용 Setup과 바이트가 다르므로 그 검사만으로 생산 설치기의 동일성을 주장하지 않는다.
+5. 위에서 생성한 Setup·ZIP·부속 `.sha256`/`.unsigned.txt`만 공개 준비 위치로 복사한다. Setup의 `Get-FileHash -Algorithm SHA256`이 `.sha256` 파일과 같고 준비 위치의 파일과도 같은지 확인한다. ZIP은 압축 해제한 전체 상대 경로·파일 SHA-256 목록이 고정 payload와 같은지 확인하고 ZIP 자체 해시를 기록한다. 공개할 모든 파일의 SHA-256을 저장해 원본 산출물과 공개 준비 파일을 비교한다. 재빌드·재압축·서명 등으로 파일이 바뀌면 이전 해시를 재사용하지 않고 다시 확인한다.
+6. 공개 대상 SHA, 전체 원격 실행/필수 단계 결과, payload 목록, Setup·ZIP·부속 파일 해시와 서명 상태를 함께 검토한 뒤 공개한다. 업로드한 파일의 해시도 보존한 목록과 같아야 한다. 이 수동 확인이 누락되면 공개를 진행하지 않는다. 현재 이를 강제하는 게시 자동화가 있다는 의미는 아니다.
+
+payload 해시 목록은 다음처럼 설치기 컴파일 전후 별도 파일에 보관할 수 있다. 출력 경로는 payload 밖이며 해시는 사용자 데이터가 아닌 배포 입력만 대상으로 한다.
+
+```powershell
+$payloadRoot = (Resolve-Path artifacts/publish/win-x64).Path
+Get-ChildItem -LiteralPath $payloadRoot -Recurse -File | Sort-Object FullName |
+    Select-Object @{ Name = 'Path'; Expression = { [IO.Path]::GetRelativePath($payloadRoot, $_.FullName) } },
+        Length, @{ Name = 'SHA256'; Expression = { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } } |
+    Export-Csv -LiteralPath artifacts/payload-before.csv -NoTypeInformation -Encoding utf8
+# 컴파일 후 같은 명령을 artifacts/payload-after.csv로 저장한다.
+Compare-Object (Import-Csv artifacts/payload-before.csv) (Import-Csv artifacts/payload-after.csv) -Property Path, Length, SHA256
+Get-FileHash -LiteralPath artifacts/release/SIDETALK-Setup.exe -Algorithm SHA256
+Get-Content -LiteralPath artifacts/release/SIDETALK-Setup.exe.sha256
+```
+
+`Compare-Object`에 차이가 없고 설치기 해시도 일치해야 한다. 파일 개수나 제품 버전만 같다는 이유로 파일 동일성을 판단하지 않는다. required check 설정이 이 수동 정책과 충돌하면 필요한 검사 항목만 조정하고 다른 보호를 유지한다. 권한/플랜 제한으로 적용할 수 없으면 정확한 검사명과 미적용 설정을 보고하며 보호 전체 해제·가짜 성공 check·우회 병합은 하지 않는다.
+
 # 빠른 실행 · 사용자 바로가기 · 보조 창 식별 — 2026-10-05
 
 시작 시 로컬 HEAD와 원격 main은 `0623c14a068cc5870bd4a1e50ed66727134157ea`로 같고 작업 트리는 깨끗했다. 기존 .NET 10 이전·주기적 점검 의도 접수·명령/복구 보호를 보존하며 `codex/secondary-quick-launch`에서 진행한다. 화면 정리는 환경 상세/설치 안내를 접고 복구·중단 흔적을 계속 표시하는 변경이며, 신규 기능은 별도의 실행 · 식별 탭·빠른 실행·사용자 링크·공식 표시 설정이다.

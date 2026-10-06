@@ -10,7 +10,7 @@
 저장소 루트에서 PowerShell로 실행한다. 컴파일 경고는 오류로 처리된다(`Directory.Build.props`).
 
 ```powershell
-# 개발 중 검증: 실행 중인 배포 앱을 닫지 않아도 된다.
+# 일반 개발용 검증: 앱·콘솔·시험 도구. 실행 중인 배포 앱을 닫지 않아도 된다.
 pwsh -File scripts/verify.ps1
 
 # 복구 UI 변경 시 합성 WPF 검사도 포함한다. 출력은 기본적으로 새 임시 폴더다.
@@ -28,6 +28,10 @@ build-local.cmd            # -NoInstall: Setup 생성까지, -NoLaunch, -NoPause
 
 - 검증은 Release 앱 빌드·자체 콘솔 테스트·시험 도구 빌드를 수행한다. `dotnet test`로 대체하지 않으며, publish·ZIP·배포 교체·앱/시험 도구 실행은 하지 않는다. 실제 `bin/obj` 출력이 잠기면 해당 빌드 오류를 해결해야 하며 프로세스를 임의 종료하지 않는다.
 - `-UiChecks`는 실제 설정·관리 UI·카카오톡에 접근하지 않는다. 일반 사용자 GUI 검증과 구분한다.
+- 일반 작업은 변경 범위에 필요한 로컬 검증 후 완료할 수 있다. UI 변경에는 관련 합성 WPF 검사, 빌드 스크립트 변경에는 BuildChecks, 설치/업데이트 변경에는 InstallerChecks를 선택한다. 일반 코드 수정마다 UI·설치기 생성·설치 회귀를 자동 호출하지 않는다. 원격 CI 시작·watch·완료 대기·자동 rerun은 일반 작업의 완료 조건이 아니다.
+- `verify.ps1`와 `Invoke-SidetalkVerification`의 기본 검증 및 `build.ps1`의 배포 검증은 생략하거나 축소하지 않는다. `build-local.cmd`는 설치/업데이트를 포함하는 사용자 진입점이며 개발용 검증 명령으로 대체하거나 설치 동작·데이터 보존 계약을 바꾸지 않는다.
+- `.github/workflows/windows-verify.yml`은 `workflow_dispatch`로만 전체 원격 검증을 수행한다. 일반 push/PR·정기 실행·성공만 반환하는 대체 job은 두지 않는다. 전체 검증은 `verify.ps1 -UiChecks`, BuildChecks, InstallerChecks를 모두 유지하며 필수 검사의 실패·취소·미실행을 성공으로 보고하지 않는다.
+- 설치기 전달/릴리즈 공개에는 개발용 검사보다 강한 기준을 적용한다. 현재 게시 자동화는 없으므로 `docs/VERIFICATION.md`의 수동 사전 검증 절차를 따른다. 공개할 정확한 커밋 SHA의 전체 원격 검증 성공과 필수 단계 실행 결과, 동일 SHA의 깨끗한 소스에서 만든 payload·설치기·공개 파일의 SHA-256 동일성을 확인한다. 과거 성공 실행·다른 SHA·공개 후 이벤트는 공개 전 검증을 대신하지 않는다.
 - 패키징은 같은 검증을 한 번 포함하므로 그 직전에 검증 명령을 중복 실행하지 않는다. `-SelfContained`를 생략하면 .NET Desktop Runtime이 필요한 배포본을 만든다. 배포본 교체 전에는 해당 SIDETALK와 배포된 IsolationProbe를 정상 종료해야 한다.
 - 스크립트 변경 시 `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`로 임시 fixture의 실패 전파·패키징 보호·롤백 회귀를 확인한다. 실제 publish나 앱 실행을 하지 않는 모의 검사다.
 - 설치 프로그램(`installer/SIDETALK.iss`, `scripts/build-installer.ps1`, `scripts/install-local.ps1`, `scripts/prepare-inno.ps1`) 변경 시 `verify.ps1` 뒤에 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`로 고정 Inno Setup 컴파일과 격리 설치/업데이트/제거 회귀를 확인한다. 테스트 전용 `SIDETALKInstallerTest-*` AppId·설치/시작 메뉴/바탕 화면 위치만 쓰며 실제 설치·바로가기·`%LOCALAPPDATA%\SIDETALK`는 읽기만 한다.

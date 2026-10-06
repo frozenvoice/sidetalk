@@ -22,6 +22,8 @@ function Invoke-SidetalkDotnet {
 }
 
 function Invoke-SidetalkVerification {
+    # Shared by verify.ps1 and build.ps1: always build app/tests/probe. Do not make
+    # synthetic UI or installer generation/installation implicit for code changes.
     param([switch]$UiChecks)
     Start-SidetalkStage 'verify/app' 10
     Invoke-SidetalkDotnet @('build', 'src/Sidetalk.App/Sidetalk.App.csproj', '-c', 'Release', '--nologo')
