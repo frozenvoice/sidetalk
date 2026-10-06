@@ -2,16 +2,16 @@
 
 Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용 Sandboxie Plus 환경**으로 실행하는 한국어 데스크톱 앱입니다.
 
-> **0.1.6 사전 검증 빌드.** 2026-09-16 현재 PC에서 사용자가 보조 계정 로그인과 본계정 동시 송수신을 확인했습니다. 계정 없는 파일/HKCU 격리 시험은 통과했으며, 실제 계정 데이터 분리·알림·재실행 후 로그인과 대화 유지 등은 추가 검증이 필요합니다. [검증 결과](docs/VERIFICATION.md)와 [실환경 검증 절차](docs/ACCEPTANCE.md)를 먼저 읽으세요.
+> **0.2.0 사전 검증 빌드 — 사용자별 설치형 배포.** 0.2.0은 배포 방식(`SIDETALK-Setup.exe`)과 제품 버전 단일화가 바뀌었고, 격리·실행·복구 규칙은 0.1.6과 같습니다. 아래 계정 검증은 0.1.6 기준입니다. 2026-09-16 현재 PC에서 사용자가 보조 계정 로그인과 본계정 동시 송수신을 확인했습니다. 계정 없는 파일/HKCU 격리 시험은 통과했으며, 실제 계정 데이터 분리·알림·재실행 후 로그인과 대화 유지 등은 추가 검증이 필요합니다. [검증 결과](docs/VERIFICATION.md)와 [실환경 검증 절차](docs/ACCEPTANCE.md)를 먼저 읽으세요.
 
 ## 실행
 
-저장소에서는 루트의 **`run-local.cmd`를 더블클릭**합니다. 기존 배포본은 재빌드 없이 바로 실행합니다. 직접 실행할 때는 `artifacts/publish/win-x64/Sidetalk.exe`를, 배포 ZIP을 받은 경우에는 압축을 푼 폴더의 `Sidetalk.exe`를 **일반 사용자 권한**으로 실행합니다. 실행 파일이 있는 폴더의 파일을 함께 보관하세요. SIDETALK를 닫아도 카카오톡은 종료되지 않습니다. 보조 카카오톡은 평소 카카오톡 자체 트레이 메뉴로 정상 종료하고, 보조 프로세스가 남을 때만 SIDETALK의 종료 버튼을 사용합니다.
+**`SIDETALK-Setup.exe`로 설치**한 뒤 Windows 키 → `sidetalk` → **SIDETALK**로 실행합니다. 관리자 권한 없이 `%LOCALAPPDATA%\Programs\SIDETALK`에 설치되고, 시작 메뉴와 **설정 → 앱 → 설치된 앱**에 등록되어 그곳에서 제거할 수 있습니다. 프로필·전용 환경·보조 계정 데이터는 설치 위치와 별개인 `%LOCALAPPDATA%\SIDETALK`에 남으며 설치·업데이트·제거가 이를 지우지 않습니다. [설치·업데이트·제거](docs/INSTALL.md)를 참고하세요. 소스 checkout에서는 `build-local.cmd`가 설치 프로그램을 만들어 설치까지 진행합니다([개발자 로컬 빌드](docs/LOCAL-RUN.md)). SIDETALK를 닫아도 카카오톡은 종료되지 않습니다. 보조 카카오톡은 평소 카카오톡 자체 트레이 메뉴로 정상 종료하고, 보조 프로세스가 남을 때만 SIDETALK의 종료 버튼을 사용합니다.
 
 - Windows 11 x64
 - 공식 서명이 유효한 카카오톡 (2026-09-16 현재 PC: 26.8.0.5312)
 - Sandboxie Plus 1.18.4 x64 (설치본의 사용자 구성요소 5.73.4 / 서명된 드라이버 5.73.2 조합)
-- framework-dependent 배포는 .NET 10 Desktop Runtime x64 필요. self-contained 배포는 런타임 포함.
+- `SIDETALK-Setup.exe`는 self-contained 배포라 .NET 런타임을 따로 설치할 필요가 없습니다. (framework-dependent ZIP은 .NET 10 Desktop Runtime x64 필요)
 
 .NET 10 이전의 저장 형식 호환성, 패키지 검사 재현 명령과 별도 실환경 확인 항목은 [.NET 10 이전 기록](docs/NET10-MIGRATION.md)에 있습니다.
 
@@ -19,7 +19,7 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 이전 버전에서 업그레이드할 때에는 먼저 이전 SIDETALK가 요청한 명령이 끝났는지 확인하세요. 재시작 복구 기록은 0.1.3부터 생성하므로, 이전 버전이 이미 시작한 기록 없는 명령을 소급 복구하지는 못합니다.
 
-배포본을 교체하기 전에는 SIDETALK와 배포본에 포함된 `tools/IsolationProbe`를 모두 종료하세요. 저장소에서 최신 파일을 반영하는 안정 경로는 이후 빌드에서도 항상 `artifacts/publish/win-x64`로 유지됩니다.
+설치·업데이트 전에는 SIDETALK와 설치본의 `tools/IsolationProbe`를 정상 종료하세요. 실행 중이면 설치 프로그램이 아무것도 바꾸지 않고 멈추며, 어떤 프로세스도 종료하지 않습니다. `artifacts/publish/win-x64`는 설치 프로그램을 만드는 빌드 산출물이며 일상 실행 위치가 아닙니다.
 
 ## 빠른 실행과 보조 창 식별
 
@@ -33,7 +33,7 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 공식 카카오톡과 Sandboxie Plus 1.18.4가 먼저 설치되어 있어야 합니다. SIDETALK는 설치 프로그램을 실행하거나 카카오톡에 자동 로그인하지 않습니다.
 
-1. 루트의 **`run-local.cmd`를 더블클릭**합니다.
+1. 시작 메뉴에서 **SIDETALK**를 엽니다.
 2. 앱이 현재 프로필·전용 box·설치·실제 설정 파일과 상속 규칙을 확인합니다. 준비가 필요하면 복구 영역에 변경 내용과 차단 이유가 표시됩니다.
 3. 내용을 확인하고 **복구하고 실행 준비**를 한 번 누릅니다. 같은 범위의 재발도 처리하려면 자동 복구 동의를 선택합니다. 이 동의는 앱에서 해제할 수 있습니다.
 4. 앱이 설정과 계획을 백업하고, 필요한 설정만 적용한 뒤 파일과 Sandboxie API를 다시 검사합니다. **실행 준비**가 되면 **보조 카카오톡 실행**을 누릅니다. 실행 확인과 로그인·기기 인증은 기존 공식 카카오톡 흐름을 따릅니다.
@@ -49,7 +49,7 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 처음 설정을 마친 뒤에는 다음 순서로 사용합니다.
 
-1. 공식 카카오톡이 설치된 PC에서 루트의 `run-local.cmd`를 더블클릭합니다. 본계정 카카오톡은 켜 둬도 됩니다.
+1. 공식 카카오톡이 설치된 PC에서 시작 메뉴의 **SIDETALK**를 엽니다. 본계정 카카오톡은 켜 둬도 됩니다.
 2. SIDETALK가 창을 열면서 상태를 자동 확인합니다. **실행 준비**가 표시되면 곧바로 다음 단계로 진행해도 됩니다. 이후 상태는 약 4초마다 자동으로 다시 확인되며, 짧은 안내에 마지막 확인 시각·확인 중·확인 실패가 표시됩니다. 필요할 때 **상태 새로 확인**을 눌러도 됩니다.
 3. 상태가 실행 준비일 때 라임색 **보조 카카오톡 실행**을 누릅니다. 정상적인 상태 점검 중에도 요청을 한 번 접수하고 바로 진행 안내를 보여 줍니다. 진행 중인 점검을 마친 뒤 기존 확인창을 표시하고, 확인을 수락하면 현재 상태를 새로 검사한 다음 실행합니다. **요청 취소**로 아직 보내지 않은 요청을 취소할 수 있습니다.
 4. 보조 카카오톡 창에서 보조 계정으로 로그인합니다. 프로세스가 보인다는 사실만으로 로그인·인증·송수신 성공을 판정하지 않습니다.
@@ -92,9 +92,15 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 ## 빌드와 검증
 
-PowerShell 7, .NET SDK 10.0.401 이상(10.0의 안정 버전, `global.json` 기준), 저장소 루트에서 실행합니다.
+PowerShell 7, .NET SDK 10.0.401 이상(10.0의 안정 버전, `global.json` 기준), 저장소 루트에서 실행합니다. `build-local.cmd`는 SDK가 없으면 `%LOCALAPPDATA%\SIDETALK-BuildTools`에 자동 준비하므로 PowerShell 7만 있으면 됩니다.
 
 ```powershell
+# 개발자 로컬: 검증 + publish + SIDETALK-Setup.exe + 설치/업데이트
+build-local.cmd
+
+# 설치 프로그램까지만 (Windows 설치는 변경하지 않음)
+build-local.cmd -NoInstall
+
 # 개발 중 코드 검증 (배포 앱을 켜 둔 채 실행 가능)
 pwsh -File scripts/verify.ps1
 
@@ -106,15 +112,18 @@ pwsh -File scripts/build.ps1 -SelfContained
 
 # framework-dependent 패키지 생성·교체 (.NET 10 Desktop Runtime 필요)
 pwsh -File scripts/build.ps1
+
+# 이미 publish된 결과로 SIDETALK-Setup.exe만 생성 (설치하지 않음)
+pwsh -File scripts/build-installer.ps1
 ```
 
 `verify.ps1`는 Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드만 수행합니다. 기존 배포 폴더·ZIP·사용자 설정을 변경하지 않으며, 실행 중인 배포본을 검사해 검증을 막지 않습니다. `bin/obj`와 테스트용 `artifacts/tests`에는 빌드·합성 검사 결과가 생깁니다. 실제 빌드 출력이 잠겼다면 dotnet이 출력한 파일 경로와 오류를 확인하세요. 스크립트가 프로세스를 종료하지는 않습니다. `-UiChecks` 결과는 매번 새 임시 폴더에 생성하고 위치를 출력합니다. 두 스크립트는 `bin/obj`를 공유하므로 동시에 실행하지 마세요.
 
-PR과 main push의 Windows CI는 같은 `verify.ps1 -UiChecks`와 빌드 스크립트 모의 회귀를 순차 실행합니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. 이 결과와 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
+PR과 main push의 Windows CI는 같은 `verify.ps1 -UiChecks`, 빌드 스크립트 모의 회귀, 실제 Inno Setup 컴파일과 격리 설치 회귀(`tests/Sidetalk.InstallerChecks`)를 순차 실행합니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. 이 결과와 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
 
 `build.ps1`는 같은 검증을 한 번 수행한 뒤 각 프로젝트를 `win-x64`와 선택한 런타임 모드로 복원·publish합니다. 일반 빌드 결과만으로 RID별 publish를 생략하지 않습니다. README와 docs를 포함한 ZIP과 SHA-256을 staging에서 준비한 뒤 `artifacts/publish/win-x64`로 반영합니다. 빌드·테스트·publish·압축 실패 시 기존 배포본과 ZIP을 유지하고, 교체 실패 시 롤백합니다. 경로 경계·reparse point 검사, 실행 중 출력 보호와 publish lock도 유지합니다. 롤백까지 실패하면 원래 오류·롤백 오류·보존 경로를 출력하며 staging을 남깁니다. 버전별 ZIP은 `artifacts`에 계속 보관합니다.
 
-패키징 전에는 해당 배포본의 SIDETALK와 `tools/IsolationProbe`를 정상 종료해야 합니다. `build-local.cmd`는 기존대로 self-contained 패키징 후 앱을 열며, `build-local.cmd -NoLaunch -NoPause`는 패키징만 합니다. `run-local.cmd`는 기존 배포본을 바로 열고 배포본이 없을 때만 패키징합니다. 단순 코드 검증에는 위 `verify.ps1`를 사용하세요.
+`build-local.cmd`는 위 self-contained 패키징 뒤 `artifacts/release/SIDETALK-Setup.exe`(+ `.sha256`, `.unsigned.txt`)를 만들고 설치 프로그램을 열어 결과를 기다립니다. 설치 후 설치된 파일이 이번 빌드와 SHA-256까지 같은지, 시작 메뉴 대상과 Installed Apps 버전, 사용자 데이터 불변을 확인합니다. `-NoInstall`은 설치 프로그램 생성까지, `-NoLaunch`는 설치 마지막의 실행 선택을 표시하지 않습니다. 설치 취소는 성공으로 처리하지 않습니다. `run-local.cmd`는 설치된 SIDETALK를 열고, 설치되어 있지 않으면 `build-local.cmd`로 설치 경로를 엽니다. 단순 코드 검증에는 위 `verify.ps1`를 사용하세요.
 
 각 단계는 경과 시간과 실패 단계를 출력합니다. 종료 코드 `0`은 성공이며, 다음 코드는 CMD 진입점에서도 전달됩니다.
 
@@ -125,6 +134,8 @@ PR과 main push의 Windows CI는 같은 `verify.ps1 -UiChecks`와 빌드 스크�
 | 21 / 22 / 23 | 앱 publish / 시험 도구 publish / 문서 복사·버전 확인 |
 | 30 | ZIP·SHA-256 생성 |
 | 40 / 41 | 배포 교체(롤백 완료 또는 교체 전 차단) / 교체와 롤백 모두 실패 |
+| 50 / 51 / 52 / 53 / 54 | 설치 프로그램 사전 검사 / ISCC 컴파일 / 결과 확인 / 교체 / 교체와 롤백 모두 실패 (모두 기존 설치 변경 없음) |
+| 60 / 61 / 62 / 63 / 64 | 설치 전 검사(SIDETALK 실행 중) / Setup 실패 / Setup 취소 / 설치 결과 불일치 / Setup이 복사 전 거부 |
 
 진입점·도구 실행·스크립트 로딩 오류는 일반 비영 종료 코드로 반환될 수 있습니다. 이전 검증 통과 기록으로 현재 안전성 테스트를 생략하는 옵션은 없습니다.
 교체 도중 PowerShell 강제 종료나 전원 장애가 발생하면 자동 복구되지 않을 수 있습니다. 이때 기존 배포본은 `artifacts/.publish-<고유 ID>/previous-win-x64`에 남을 수 있으므로, 임시 폴더를 삭제하지 말고 기존 파일과 반영 상태를 먼저 확인하세요.

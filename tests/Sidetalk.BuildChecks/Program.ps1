@@ -203,10 +203,11 @@ function New-Fixture {
     New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'scripts') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'profile') -Force | Out-Null
-    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1', 'ensure-dotnet.ps1')) {
+    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1', 'ensure-dotnet.ps1', 'install-local.ps1', 'build-installer.ps1', 'prepare-inno.ps1')) {
         Copy-Item -LiteralPath (Join-Path $repo ('scripts\' + $name)) -Destination (Join-Path $root ('scripts\' + $name))
     }
     Copy-Item -LiteralPath (Join-Path $repo 'build-local.cmd') -Destination (Join-Path $root 'build-local.cmd')
+    Copy-Item -LiteralPath (Join-Path $repo 'run-local.cmd') -Destination (Join-Path $root 'run-local.cmd')
     # The CMD entry point must resolve the repository's SDK, not the host default.
     Copy-Item -LiteralPath (Join-Path $repo 'global.json') -Destination (Join-Path $root 'global.json')
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination (Join-Path $root 'README.md')
@@ -472,6 +473,21 @@ function Test-ArtifactBoundaries {
         Assert-Equal 0 @(Get-ChildItem -LiteralPath $target -Force).Count 'linked target was modified'
     } finally { (Get-Item -LiteralPath $linkPath -Force).Delete() }
 }
+# Stands in for scripts\install-local.ps1: records the forwarded switches and
+# returns SIDETALK_BUILD_CHECK_INSTALL_EXIT, never touching Windows installation.
+function Set-InstallStub([string]$Fixture) {
+    Set-Content -LiteralPath (Join-Path $Fixture 'scripts\install-local.ps1') -Encoding utf8 -Value @'
+param([switch]$NoInstall, [switch]$NoLaunch)
+Add-Content -LiteralPath $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD -Value ('{0},{1}' -f [bool]$NoInstall, [bool]$NoLaunch)
+exit ([int]$env:SIDETALK_BUILD_CHECK_INSTALL_EXIT)
+'@
+}
+
+function Invoke-BuildLocal([string]$Fixture, [string]$Options = '-NoPause') {
+    $output = @(& cmd.exe /d /c ('"{0}" {1}' -f (Join-Path $Fixture 'build-local.cmd'), $Options) 2>&1 | ForEach-Object { [string]$_ })
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
+}
+
 function Test-BuildLocalExitCodes {
     $fixture = New-Fixture
     $fakeTools = Join-Path $fixture 'fake-dotnet'
@@ -486,19 +502,27 @@ exit 0
 '@
     Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureStub -Encoding utf8
 
+    Set-InstallStub $fixture
+    $installRecord = Join-Path $fixture 'install-calls.txt'
     $oldCi = $env:CI
     $oldDotnet = $env:SIDETALK_BUILD_CHECK_DOTNET
+    $oldRecord = $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD
+    $oldInstallExit = $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT
     try {
         $env:CI = '1'
         $env:SIDETALK_BUILD_CHECK_DOTNET = $fakeDotnet
+        $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD = $installRecord
+        $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = '0'
 
         $stub = @'
 param([switch]$SelfContained)
 exit 11
 '@
         Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
-        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
-        Assert-Equal 11 $LASTEXITCODE 'build-local failed build exit code'
+        $run = Invoke-BuildLocal $fixture
+        Assert-Equal 11 $run.ExitCode 'build-local failed build exit code'
+        Assert-True (-not (Test-Path -LiteralPath $installRecord)) 'Setup stage ran after a failed build'
+        Assert-Contains $run.Output 'Setup was not built or started' 'failed build guidance'
 
         $stub = @'
 param([switch]$SelfContained)
@@ -507,8 +531,23 @@ New-Item -ItemType Directory -Path (Join-Path $root 'artifacts\publish\win-x64')
 Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.exe') -Value 'synthetic app'
 '@
         Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Value $stub -Encoding utf8
-        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
-        Assert-Equal 0 $LASTEXITCODE 'build-local success exit code'
+        # Every option combination reaches install-local.ps1 with the documented meaning.
+        foreach ($case in @(@('-NoPause', 'False,False'), @('-NoLaunch -NoPause', 'False,True'),
+                @('-NoInstall -NoPause', 'True,False'), @('-NoInstall -NoLaunch -NoPause', 'True,False'))) {
+            $run = Invoke-BuildLocal $fixture $case[0]
+            Assert-Equal 0 $run.ExitCode "build-local success exit code ($($case[0]))"
+            Assert-Equal $case[1] @(Get-Content -LiteralPath $installRecord)[-1] "install-local switches for $($case[0])"
+        }
+
+        # Setup cancelled (62), refused (64) or failed, including native negative codes.
+        foreach ($code in @(62, 64, 61, -1, $script:hostNativeFailure)) {
+            $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = [string]$code
+            $run = Invoke-BuildLocal $fixture
+            Assert-Equal $code $run.ExitCode "build-local Setup result $code"
+            Assert-Contains $run.Output 'SIDETALK was not installed by this run' "Setup result $code explanation"
+        }
+        $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = '0'
+        Remove-Item -LiteralPath $installRecord -Force
 
         $marker = Join-Path $fixture 'build-should-not-run.marker'
         $oldMarker = $env:SIDETALK_BUILD_CHECK_MARKER
@@ -523,21 +562,25 @@ Set-Content -LiteralPath $env:SIDETALK_BUILD_CHECK_MARKER -Value 'unexpected'
         foreach ($code in @(-1, $script:hostNativeFailure)) {
             $ensureFailure = "param([Parameter(Mandatory=`$true)][string]`$ResultPath)`nexit $code"
             Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureFailure -Encoding utf8
-            $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
-            Assert-Equal $code $LASTEXITCODE "build-local SDK bootstrap failure code $code"
+            $run = Invoke-BuildLocal $fixture
+            Assert-Equal $code $run.ExitCode "build-local SDK bootstrap failure code $code"
             Assert-True (-not (Test-Path -LiteralPath $marker)) "build-local continued after SDK bootstrap failure $code"
-            Assert-Contains ($output -join [Environment]::NewLine) 'could not prepare the required .NET SDK automatically' 'bootstrap failure explanation missing'
+            Assert-True (-not (Test-Path -LiteralPath $installRecord)) "Setup stage ran after SDK bootstrap failure $code"
+            Assert-Contains $run.Output 'could not prepare the required .NET SDK automatically' 'bootstrap failure explanation missing'
         }
 
         Set-Content -LiteralPath (Join-Path $fixture 'scripts\ensure-dotnet.ps1') -Value $ensureStub -Encoding utf8
         Set-FakeDotnet $fakeTools '10.0.401' -ExitCode $script:hostNativeFailure
-        $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
-        Assert-Equal $script:hostNativeFailure $LASTEXITCODE 'build-local dotnet --version failure code'
+        $run = Invoke-BuildLocal $fixture
+        Assert-Equal $script:hostNativeFailure $run.ExitCode 'build-local dotnet --version failure code'
         Assert-True (-not (Test-Path -LiteralPath $marker)) 'build-local continued after dotnet --version failure'
+        Assert-True (-not (Test-Path -LiteralPath $installRecord)) 'Setup stage ran after dotnet --version failure'
     } finally {
         $env:CI = $oldCi
         $env:SIDETALK_BUILD_CHECK_DOTNET = $oldDotnet
         $env:SIDETALK_BUILD_CHECK_MARKER = $oldMarker
+        $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD = $oldRecord
+        $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = $oldInstallExit
     }
 }
 
@@ -551,6 +594,7 @@ function Test-BuildLocalWithRealBootstrap {
     $systemDir = Join-Path $fixture $name
     Set-FakeDotnet $systemDir '10.0.401'
     $record = Join-Path $fixture 'build-environment.json'
+    Set-InstallStub $fixture
     Set-Content -LiteralPath (Join-Path $fixture 'scripts\build.ps1') -Encoding utf8 -Value @'
 param([switch]$SelfContained)
 $root = Split-Path -Parent $PSScriptRoot
@@ -561,8 +605,12 @@ Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.ex
 '@
     $oldCi = $env:CI
     $oldPath = $env:PATH
+    $oldRecord = $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD
+    $oldInstallExit = $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT
     try {
         $env:CI = '1'
+        $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD = Join-Path $fixture 'install-calls.txt'
+        $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = '0'
         $pwshDir = Split-Path -Parent (Get-Command pwsh -ErrorAction Stop).Source
         $env:PATH = "$systemDir;$pwshDir;$env:SystemRoot\System32"
         $output = @(& cmd.exe /d /c ('"{0}" -NoLaunch -NoPause' -f (Join-Path $fixture 'build-local.cmd')) 2>&1 | ForEach-Object { [string]$_ })
@@ -570,11 +618,159 @@ Set-Content -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\Sidetalk.ex
     } finally {
         $env:CI = $oldCi
         $env:PATH = $oldPath
+        $env:SIDETALK_BUILD_CHECK_INSTALL_RECORD = $oldRecord
+        $env:SIDETALK_BUILD_CHECK_INSTALL_EXIT = $oldInstallExit
     }
+    Assert-Equal 'False,True' @(Get-Content -LiteralPath (Join-Path $fixture 'install-calls.txt'))[-1] 'Setup stage after the bootstrapped build'
     $seen = Get-Content -LiteralPath $record -Raw -Encoding utf8 | ConvertFrom-Json
     Assert-Equal ($systemDir + '\') $seen.DotnetRoot 'DOTNET_ROOT given to build.ps1'
     Assert-Equal (Join-Path $systemDir 'dotnet.exe') $seen.Dotnet 'dotnet on PATH for build.ps1'
     Assert-True $seen.SelfContained 'build-local must package self-contained'
+}
+
+function Test-RunLocal {
+    $fixture = New-Fixture
+    $localAppData = Join-Path $fixture 'LocalAppData'
+    New-Item -ItemType Directory -Path $localAppData -Force | Out-Null
+    # The fixture's artifacts build must never be the fallback; its bytes stay put.
+    $artifactsExe = Join-Path $fixture 'artifacts\publish\win-x64\Sidetalk.exe'
+    $artifactsBefore = (Get-FileHash -LiteralPath $artifactsExe).Hash
+    Set-Content -LiteralPath (Join-Path $fixture 'build-local.cmd') -Encoding ascii -Value "@echo build-local stub %*`r`n@exit /b 9"
+    $oldCi = $env:CI
+    $oldLocal = $env:LOCALAPPDATA
+    try {
+        $env:CI = '1'
+        $env:LOCALAPPDATA = $localAppData
+        $output = @(& cmd.exe /d /c ('"{0}" -NoPause' -f (Join-Path $fixture 'run-local.cmd')) 2>&1 | ForEach-Object { [string]$_ }) -join "`n"
+        Assert-Equal 9 $LASTEXITCODE 'run-local must hand a missing installation to build-local'
+        Assert-Contains $output 'SIDETALK is not installed. Building and opening Setup...' 'run-local missing-install message'
+        Assert-Contains $output 'build-local stub -NoPause' 'run-local forwards -NoPause to build-local'
+        Assert-Equal $artifactsBefore (Get-FileHash -LiteralPath $artifactsExe).Hash 'artifacts build changed'
+
+        # Installed: the real installed path starts, without building.
+        $installed = Join-Path $localAppData 'Programs\SIDETALK'
+        Set-FakeDotnet $installed '0.0.0'
+        Move-Item -LiteralPath (Join-Path $installed 'dotnet.exe') -Destination (Join-Path $installed 'Sidetalk.exe')
+        Set-Content -LiteralPath (Join-Path $installed 'Sidetalk.dll') -Value 'synthetic'
+        Set-Content -LiteralPath (Join-Path $installed 'unins000.exe') -Value 'synthetic'
+        $output = @(& cmd.exe /d /c ('"{0}" -NoPause' -f (Join-Path $fixture 'run-local.cmd')) 2>&1 | ForEach-Object { [string]$_ }) -join "`n"
+        Assert-Equal 0 $LASTEXITCODE "run-local installed exit code`n$output"
+        Assert-True (-not $output.Contains('build-local stub')) 'run-local rebuilt an installed SIDETALK'
+        $log = Join-Path $installed 'fake-dotnet.log'
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not (Test-Path -LiteralPath $log) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        Assert-True (Test-Path -LiteralPath $log) 'run-local did not start the installed Sidetalk.exe'
+    } finally {
+        $env:CI = $oldCi
+        $env:LOCALAPPDATA = $oldLocal
+    }
+}
+
+function Test-InstallLocalStages {
+    $fixture = New-Fixture
+    . (Join-Path $fixture 'scripts\install-local.ps1') -LoadOnly
+    foreach ($case in @(@(0, 'Installed'), @(2, 'Cancelled'), @(5, 'Cancelled'), @(7, 'Blocked'), @(1, 'Failed'), @(3, 'Failed'), @(-1, 'Failed'))) {
+        Assert-Equal $case[1] (Resolve-SetupOutcome $case[0]) "Setup exit $($case[0])"
+    }
+
+    $installRoot = Join-Path $fixture 'LocalAppData\Programs\SIDETALK'
+    $programs = Join-Path $fixture 'StartMenu\Programs'
+    $dataRoot = Join-Path $fixture 'LocalAppData\SIDETALK'
+    New-Item -ItemType Directory -Path (Join-Path $dataRoot 'Boxes\synthetic') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $dataRoot 'profile.json') -Value '{"synthetic":true}'
+    $dataBefore = Get-UserDataFingerprint $dataRoot
+
+    # Only processes running from the installation (or with an unreadable path) block.
+    function Get-Process {
+        param($Name, $ErrorAction)
+        @([pscustomobject]@{ Id = 11; Path = (Join-Path $installRoot 'Sidetalk.exe') },
+          [pscustomobject]@{ Id = 12; Path = 'C:\Elsewhere\Sidetalk.exe' },
+          [pscustomobject]@{ Id = 13; Path = $null })
+    }
+    Assert-Equal '11,13' ((@(Get-OwnedRunningProcesses $installRoot) | ForEach-Object Id) -join ',') 'owned running processes'
+
+    $release = Join-Path $fixture 'artifacts\release'
+    New-Item -ItemType Directory -Path $release -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination (Join-Path $fixture 'artifacts\publish\win-x64\Sidetalk.dll')
+    $setupLog = Join-Path $release 'fake-dotnet.log'
+    $installerExit = Join-Path $fixture 'build-installer-exit.txt'
+    Set-Content -LiteralPath (Join-Path $fixture 'scripts\build-installer.ps1') -Encoding utf8 -Value @"
+exit ([int](Get-Content -LiteralPath '$installerExit'))
+"@
+    function Invoke-Stage([int]$BuildInstaller, [int]$Setup, [switch]$NoInstall) {
+        Set-Content -LiteralPath $installerExit -Value $BuildInstaller
+        Set-FakeDotnet $release 'setup' -ExitCode $Setup
+        Move-Item -LiteralPath (Join-Path $release 'dotnet.exe') -Destination (Join-Path $release 'SIDETALK-Setup.exe') -Force
+        Remove-Item -LiteralPath $setupLog -Force -ErrorAction SilentlyContinue
+        try {
+            $code = Invoke-InstallLocal -NoInstall:$NoInstall -InstallRoot $installRoot -ProgramsDir $programs -DataRoot $dataRoot 6>$null
+        } catch {
+            $code = Write-SidetalkFailure $_ 2>$null
+        }
+        [pscustomobject]@{ Code = $code; SetupStarted = (Test-Path -LiteralPath $setupLog) }
+    }
+
+    $run = Invoke-Stage 51 0
+    Assert-Equal 51 $run.Code 'installer build failure code'
+    Assert-True (-not $run.SetupStarted) 'Setup started after the installer build failed'
+    $run = Invoke-Stage 0 0 -NoInstall
+    Assert-Equal 0 $run.Code '-NoInstall exit code'
+    Assert-True (-not $run.SetupStarted) '-NoInstall started Setup'
+    $run = Invoke-Stage 0 0
+    Assert-Equal 60 $run.Code 'running installed SIDETALK must block before Setup'
+    Assert-True (-not $run.SetupStarted) 'Setup started while the installed SIDETALK was running'
+
+    function Get-Process { param($Name, $ErrorAction) @() }
+    foreach ($case in @(@(2, 62), @(5, 62), @(7, 64), @(1, 61), @(-1, 61))) {
+        $run = Invoke-Stage 0 $case[0]
+        Assert-True $run.SetupStarted "Setup exit $($case[0]) was not started"
+        Assert-Equal $case[1] $run.Code "Setup exit $($case[0]) build-local code"
+    }
+    Assert-Equal $dataBefore (Get-UserDataFingerprint $dataRoot) 'synthetic user data changed'
+    Assert-True (-not (Test-Path -LiteralPath $installRoot)) 'stage tests created an installation'
+
+    # Post-install verification compares bytes, the Start Menu target and registration.
+    $publish = Join-Path $fixture 'publish copy'
+    foreach ($relative in @('Sidetalk.exe', 'Sidetalk.dll', 'Sidetalk.Core.dll', 'tools\IsolationProbe\Sidetalk.IsolationProbe.exe')) {
+        foreach ($root in @($publish, $installRoot)) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $root $relative)) -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root $relative) -Value "build $relative"
+        }
+    }
+    New-Item -ItemType Directory -Path $programs -Force | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut((Join-Path $programs 'SIDETALK.lnk'))
+        $link.TargetPath = Join-Path $installRoot 'Sidetalk.exe'
+        $link.Save()
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+    $key = 'HKCU:\Software\SIDETALK-BuildChecks\' + [Guid]::NewGuid().ToString('N')
+    New-Item -Path $key -Force | Out-Null
+    try {
+        New-ItemProperty -LiteralPath $key -Name DisplayName -Value 'SIDETALK' | Out-Null
+        New-ItemProperty -LiteralPath $key -Name DisplayVersion -Value '0.2.0' | Out-Null
+        $verify = { Assert-InstalledBuild -PublishDir $publish -InstallRoot $installRoot -ProgramsDir $programs -Version '0.2.0' -UninstallKey $key }
+        & $verify | Out-Null
+        Set-Content -LiteralPath (Join-Path $installRoot 'Sidetalk.dll') -Value 'previous build left in place'
+        $failed = $false
+        try { & $verify } catch { $failed = $_.Exception.Message.Contains('is not this build') }
+        Assert-True $failed 'a same-version install that kept old bytes was accepted'
+        Set-Content -LiteralPath (Join-Path $installRoot 'Sidetalk.dll') -Value 'build Sidetalk.dll'
+        Set-ItemProperty -LiteralPath $key -Name DisplayVersion -Value '0.1.6'
+        $failed = $false
+        try { & $verify } catch { $failed = $_.Exception.Message.Contains('expected 0.2.0') }
+        Assert-True $failed 'a stale Installed Apps version was accepted'
+        Set-ItemProperty -LiteralPath $key -Name DisplayVersion -Value '0.2.0'
+        Remove-Item -LiteralPath (Join-Path $programs 'SIDETALK.lnk')
+        $failed = $false
+        try { & $verify } catch { $failed = $_.Exception.Message.Contains('Start Menu shortcut is missing') }
+        Assert-True $failed 'a missing Start Menu shortcut was accepted'
+    } finally {
+        Remove-Item -LiteralPath $key -Recurse -Force
+        if (-not @(Get-ChildItem -LiteralPath 'HKCU:\Software\SIDETALK-BuildChecks' -ErrorAction SilentlyContinue).Count) {
+            Remove-Item -LiteralPath 'HKCU:\Software\SIDETALK-BuildChecks' -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # ---- SDK bootstrap (scripts/ensure-dotnet.ps1) ----------------------------
@@ -909,6 +1105,8 @@ try {
     Invoke-Case 'artifact boundary and nested reparse point guards' { Test-ArtifactBoundaries }
     Invoke-Case 'build-local bootstraps SDK and forwards exit codes' { Test-BuildLocalExitCodes }
     Invoke-Case 'build-local passes the bootstrapped SDK to packaging' { Test-BuildLocalWithRealBootstrap }
+    Invoke-Case 'run-local opens the installation or routes to Setup' { Test-RunLocal }
+    Invoke-Case 'install-local stages, Setup outcomes and installed-build checks' { Test-InstallLocalStages }
     Invoke-Case 'SDK bootstrap uses a satisfying system SDK' { Test-SdkBootstrapUsesSystemSdk }
     Invoke-Case 'SDK bootstrap prefers the private cache over an old system SDK' { Test-SdkBootstrapUsesPrivateCache }
     Invoke-Case 'SDK bootstrap installs once, cleans up, and reuses the cache' { Test-SdkBootstrapInstallsThenReuses }

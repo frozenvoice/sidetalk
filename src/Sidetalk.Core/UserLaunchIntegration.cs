@@ -10,7 +10,8 @@ using Microsoft.Win32.SafeHandles;
 namespace Sidetalk.Core;
 
 public sealed record UserLaunchOptions(bool DesktopShortcut = false, bool StartMenuShortcut = false, bool LoginStartup = false);
-public sealed record UserLaunchIntegrationStatus(UserLaunchOptions Options, bool NeedsUpdate);
+public sealed record UserLaunchIntegrationStatus(UserLaunchOptions Options, bool NeedsUpdate, IReadOnlyList<string>? PreviousTargets = null);
+public sealed record UserLaunchUninstallResult(IReadOnlyList<string> Removed, IReadOnlyList<string> Preserved);
 
 public sealed record UserLaunchLocations(string Desktop, string StartMenu, string Startup, string SettingsRoot)
 {
@@ -69,14 +70,20 @@ public sealed class UserLaunchIntegration
         var manifest = ReadManifest();
         if (manifest is null) return new(new(), false);
         var needsUpdate = false;
+        var previousTargets = new List<string>();
         foreach (var record in manifest.Links)
         {
             var bytes = ReadOptional(record.Path);
             if (bytes is null) needsUpdate = true;
             else RequireOwned(record, bytes);
-            if (!SamePath(record.Link.TargetPath, executable)) needsUpdate = true;
+            if (!SamePath(record.Link.TargetPath, executable))
+            {
+                needsUpdate = true;
+                if (!previousTargets.Contains(record.Link.TargetPath, StringComparer.OrdinalIgnoreCase))
+                    previousTargets.Add(record.Link.TargetPath);
+            }
         }
-        return new(manifest.Options, needsUpdate);
+        return new(manifest.Options, needsUpdate, previousTargets);
     }
 
     /// <summary>Called only after an explicit settings choice. Startup defaults to OFF.</summary>
@@ -126,6 +133,40 @@ public sealed class UserLaunchIntegration
         }
         ApplyTransaction(changes);
         return Inspect();
+    }
+
+    /// <summary>
+    /// Uninstall cleanup for this executable only. Removes owned links that target it after
+    /// verifying their exact bytes, so none is left pointing at deleted files. Edited links
+    /// and links for another installation are preserved. The manifest and the saved choice
+    /// stay as they are: a later install reports the missing links and repairs them only on
+    /// an explicit settings save. Reads nothing beyond the manifest and its listed paths.
+    /// </summary>
+    public UserLaunchUninstallResult RemoveLinksForUninstall()
+    {
+        RequireDirectoriesSafe();
+        if (!Directory.Exists(locations.SettingsRoot)) return new([], []);
+        var lockPath = Path.Combine(locations.SettingsRoot, "integration.lock");
+        ProfileStore.RejectReparseAncestors(lockPath);
+        using var integrationLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var manifest = ReadManifest();
+        if (manifest is null) return new([], []);
+        var removed = new List<string>();
+        var preserved = new List<string>();
+        foreach (var record in manifest.Links.Where(record => SamePath(record.Link.TargetPath, executable)))
+        {
+            var bytes = ReadOptional(record.Path);
+            if (bytes is null) continue;
+            try { RequireOwned(record, bytes); }
+            catch (InvalidDataException)
+            {
+                preserved.Add(record.Path);
+                continue;
+            }
+            DeleteVerified(record.Path, bytes);
+            removed.Add(record.Path);
+        }
+        return new(removed, preserved);
     }
 
     private Manifest? ReadManifest()

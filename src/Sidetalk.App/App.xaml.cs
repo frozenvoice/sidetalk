@@ -18,6 +18,11 @@ public partial class App : Application
     public void OnStartup(object sender, StartupEventArgs e)
     {
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        if (e.Args.Length == 1 && e.Args[0].Equals(UninstallIntegrationOption, StringComparison.OrdinalIgnoreCase))
+        {
+            Shutdown(RemoveOwnedIntegrationForUninstall());
+            return;
+        }
         var utilityMode = TryGetOption(e.Args, "--render", out _) || TryGetOption(e.Args, "--render-setup", out _) || TryGetOption(e.Args, "--render-small", out _) || TryGetOption(e.Args, "--diagnose", out _);
         _ = utilityMode ? StartAsync(e.Args) : StartInstanceAsync(e.Args);
     }
@@ -33,6 +38,7 @@ public partial class App : Application
                                   !value.Equals("--login-startup", StringComparison.OrdinalIgnoreCase))))
                 throw new ArgumentException("사용법: Sidetalk.exe [--launch-secondary [--login-startup]]");
 
+            AppIdentity.Apply();
             _broker = new InstanceRequestBroker(ProfileStore.CurrentSid() + ":" + Process.GetCurrentProcess().SessionId);
             if (!_broker.TryAcquire())
             {
@@ -44,7 +50,7 @@ public partial class App : Application
             await _broker.ListenAsync(request => Dispatcher.InvokeAsync(() => AcceptRemoteRequest(request)).Task);
             _ = ObserveBrokerAsync(_broker);
             if (quick) await RunQuickLaunchAsync(startup);
-            else ShowMainWindow();
+            else ShowMainWindow(reason: PreviousInstallShortcutNotice());
         }
         catch (Exception exception)
         {
@@ -156,6 +162,49 @@ public partial class App : Application
             // Only a settled result may end this process; uncertain commands keep
             // the same controller and journal in the visible recovery UI.
             if (closeApplication) Shutdown(0);
+        }
+    }
+
+    internal const string UninstallIntegrationOption = "--uninstall-owned-integration";
+
+    /// <summary>
+    /// Run by SIDETALK's uninstaller before it deletes files. Removes only owned
+    /// "보조 카카오톡 실행" links that target this executable. No window, profile,
+    /// box, consent or command history is touched, and nothing else is a fallback.
+    /// Exit 0: done or nothing to do; 3: an edited link was preserved; 1: not inspected.
+    /// </summary>
+    private static int RemoveOwnedIntegrationForUninstall()
+    {
+        try
+        {
+            HostProfileContext.RequireUnredirected(new ProfileStore());
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("현재 SIDETALK 실행 경로를 확인하지 못했습니다.");
+            var result = new UserLaunchIntegration(UserLaunchLocations.ForCurrentUser(), executable).RemoveLinksForUninstall();
+            return result.Preserved.Count == 0 ? 0 : 3;
+        }
+        catch (Exception)
+        {
+            return 1;
+        }
+    }
+
+    /// <summary>Read-only. Points at the explicit settings save; never rewrites links itself.</summary>
+    private static string? PreviousInstallShortcutNotice()
+    {
+        try
+        {
+            HostProfileContext.RequireUnredirected(new ProfileStore());
+            var executable = Environment.ProcessPath;
+            if (executable is null) return null;
+            var status = new UserLaunchIntegration(UserLaunchLocations.ForCurrentUser(), executable).Inspect();
+            return status.PreviousTargets is { Count: > 0 }
+                ? "SIDETALK가 만든 '보조 카카오톡 실행' 바로가기가 이전 설치 위치를 실행합니다. '실행 · 식별' 탭에서 '바로가기 선택 저장'을 누르면 소유가 확인된 바로가기만 이 설치 위치로 갱신합니다."
+                : null;
+        }
+        catch (Exception)
+        {
+            // The settings tab reports unreadable or edited shortcut state in full.
+            return null;
         }
     }
 

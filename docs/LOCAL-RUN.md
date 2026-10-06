@@ -1,13 +1,17 @@
-# 루트에서 로컬 실행
+# 루트에서 로컬 빌드·설치 (개발자)
 
-설치 프로그램을 만들거나 하위 폴더를 열 필요 없이 저장소 루트의 CMD 파일을 일반 사용자 권한으로 더블클릭합니다.
+최종 사용자는 `SIDETALK-Setup.exe`로 설치하고 시작 메뉴의 **SIDETALK**로 실행합니다([설치·업데이트·제거](INSTALL.md)). 이 문서는 소스 checkout에서 같은 설치본을 만들고 갱신하는 개발 경로입니다. 저장소 루트의 CMD 파일을 일반 사용자 권한으로 더블클릭합니다.
 
-| 파일 | 동작 |
+| 명령 | 동작 |
 |---|---|
-| `run-local.cmd` | 이미 빌드된 SIDETALK를 바로 엽니다. 배포 파일이 없으면 최초 한 번 빌드한 뒤 엽니다. |
-| `build-local.cmd` | 현재 체크아웃을 빌드·검증하고 self-contained 배포본으로 교체한 뒤 SIDETALK를 엽니다. 소스를 업데이트한 뒤 사용합니다. |
+| `build-local.cmd` | SDK·Inno Setup 컴파일러 자동 준비 → 전체 검증 → self-contained publish → `artifacts\release\SIDETALK-Setup.exe` 생성 → 설치 프로그램을 열어 설치/업데이트 → 설치 결과 확인. 실행 여부는 설치 마지막 화면의 **SIDETALK 실행**으로 고릅니다. |
+| `build-local.cmd -NoInstall` | 설치 프로그램 생성까지. Windows 설치는 바꾸지 않고 아무것도 실행하지 않습니다(`-NoLaunch`를 함께 줘도 의미가 같습니다). |
+| `build-local.cmd -NoLaunch` | 설치/업데이트는 하되 마지막 화면에 실행 선택을 표시하지 않습니다. |
+| `build-local.cmd -NoPause` | 오류 뒤 키 입력을 기다리지 않습니다(자동화용). |
+| `run-local.cmd` | 설치된 SIDETALK(`%LOCALAPPDATA%\Programs\SIDETALK\Sidetalk.exe`)를 엽니다. 설치되어 있지 않으면 "SIDETALK is not installed. Building and opening Setup..."을 표시하고 `build-local.cmd`로 정상 설치 경로를 엽니다. |
+| `pwsh -File scripts\verify.ps1` | 코드 검증만. publish·설치·실행을 하지 않습니다. |
 
-기존 실행 경로는 `artifacts/publish/win-x64/Sidetalk.exe` 그대로입니다. 실행 파일만 루트로 복사하지 않습니다. `run-local.cmd`를 사용할 때마다 다시 빌드하지 않으며, 소스의 최신 여부를 자동으로 판단하지 않습니다.
+`artifacts\publish\win-x64`는 설치 프로그램의 원본이자 개발 검증 산출물이며 일상 실행 위치가 아닙니다. `run-local.cmd`는 설치본이 없을 때 이 폴더를 대신 실행하지 않고, 프로필을 새로 만들거나 전용 환경을 초기화하지 않습니다. `run-local.cmd`를 사용할 때마다 다시 빌드하지 않으며, 소스의 최신 여부를 자동으로 판단하지 않습니다.
 
 ## 빌드 전제와 실패 처리
 
@@ -24,22 +28,34 @@
 
 관리자 권한이나 시스템 전역 SDK 변경은 없으며 기존 .NET 8/10 설치도 삭제·교체하지 않습니다(`dotnet --list-sdks` 목록은 그대로입니다). **첫 실행만** 약 300MB SDK 다운로드 때문에 수 분 이상 걸릴 수 있고 인터넷 연결이 필요합니다. 이후 같은 SDK 버전은 캐시를 재사용하므로 다시 내려받지 않습니다. 준비 중 실패하거나 창을 닫아도 다음 실행이 남은 staging을 정리하고 다시 시도합니다. SDK 준비가 실패하면 `build.ps1`, 기존 배포본 실행, 카카오톡·Sandboxie 종료 중 어느 것도 하지 않습니다.
 
-이미 만들어진 self-contained 배포본을 실행할 때는 PowerShell이나 SDK가 필요하지 않습니다. 빌드 진입점은 Git pull·브랜치 전환을 자동 수행하지 않습니다.
+설치 프로그램 컴파일러도 같은 방식입니다. `scripts/prepare-inno.ps1`이 `[inno/bootstrap] <단계>`를 출력하며 공식 `jrsoftware/issrc` 릴리스의 Inno Setup 6.7.3 패키지를 HTTPS로 받아 고정 SHA-256과 게시자(Pyrsys B.V.) Authenticode 서명을 확인한 뒤, 공식 portable 모드(`/PORTABLE=1`)로 `%LOCALAPPDATA%\SIDETALK-BuildTools\innosetup\6.7.3`에 풀어 둡니다. Installed Apps 등록·파일 연결·시스템 전역 Inno Setup 설치는 하지 않습니다. 캐시는 고정 해시가 있는 핵심 파일과 준비 당시 기록한 전체 파일 해시가 모두 같을 때만 사용하고, 불완전하거나 바뀐 캐시는 쓰지 않고 새로 준비합니다. 사용자는 Inno Setup을 설치할 필요가 없고, 설치 프로그램을 받는 최종 사용자에게는 필요하지 않습니다.
 
-`build-local.cmd`는 기존 `scripts/build.ps1 -SelfContained`를 재사용합니다. 콘솔 회귀 테스트와 시험 도구 빌드·publish·ZIP 단계를 생략하지 않고 기존 배포 교체·롤백 로직도 바꾸지 않습니다. 빌드가 실패하거나 취소되면 오류를 반환하며 이전 실행 파일을 대신 실행하지 않습니다. 필요한 .NET SDK 자동 다운로드 외에는 관리자 승격·프로세스 강제 종료를 추가하지 않습니다. SDK 준비, `dotnet --version`, `build.ps1`의 결과는 모두 실제 종료 코드를 저장해 `0`일 때만 성공으로 보므로 음수 native 종료 코드도 실패로 처리합니다.
+설치된 SIDETALK를 실행할 때는 PowerShell·SDK·Inno Setup이 필요하지 않습니다. 빌드 진입점은 Git pull·브랜치 전환을 자동 수행하지 않습니다.
 
-빌드 전에 **SIDETALK 창과 배포된 IsolationProbe만 정상 종료**하세요. 카카오톡을 대신 종료하지 않습니다. 프로필·전용 박스·명령 저널·Sandboxie 설정은 이 진입점에서 삭제하거나 변경하지 않습니다. 기존 빌드 스크립트는 빌드 과정에서 필요한 패키지를 복원할 수 있습니다.
+`build-local.cmd`는 기존 `scripts/build.ps1 -SelfContained`를 재사용합니다. 콘솔 회귀 테스트와 시험 도구 빌드·publish·ZIP 단계를 생략하지 않고 기존 배포 교체·롤백 로직도 바꾸지 않습니다. 이어서 `scripts/install-local.ps1`이 단계별로 진행합니다.
+
+| 단계 | 실패 시 기존 설치 |
+|---|---|
+| `[installer/*]` 설치 프로그램 생성(`scripts/build-installer.ps1`, 종료 코드 50–54) | 변경 없음. 이전 `SIDETALK-Setup.exe`도 새 결과가 검증될 때까지 유지 |
+| `[install/preflight]` 설치 위치의 SIDETALK·IsolationProbe 실행 여부 확인(60) | 변경 없음. 설치 프로그램을 열지 않음 |
+| `[install/setup]` 설치 프로그램 실행·대기(61 실패, 62 취소, 64 복사 전 거부) | 취소·거부는 변경 없음. 실패는 설치 로그 확인 필요 |
+| `[install/verify]` 설치 결과 확인(63) | 설치 프로그램이 이미 실행됨. 이전 버전이 남아 있다고 가정하지 않음 |
+
+설치 결과 확인은 설치된 `Sidetalk.exe`·`Sidetalk.dll`·`Sidetalk.Core.dll`·IsolationProbe가 이번 publish와 SHA-256까지 같은지, 시작 메뉴 **SIDETALK** 대상, Installed Apps 이름·버전, `%LOCALAPPDATA%\SIDETALK`의 `profile.json` 해시와 최상위 항목이 설치 전과 같은지 봅니다. 설치 로그는 `artifacts\release\logs`에 남습니다. 설치 취소는 성공으로 처리하지 않습니다(종료 코드 62). 빌드나 설치가 실패하면 이전 실행 파일을 대신 실행하지 않습니다. 필요한 SDK·컴파일러 자동 준비 외에는 관리자 승격·프로세스 강제 종료를 추가하지 않습니다. SDK 준비, `dotnet --version`, `build.ps1`, 설치 단계의 결과는 모두 실제 종료 코드를 저장해 `0`일 때만 성공으로 보므로 음수 native 종료 코드도 실패로 처리합니다.
+
+설치 전에 **설치된 SIDETALK 창과 IsolationProbe만 정상 종료**하세요. 실행 중이면 `build-local.cmd`와 설치 프로그램이 모두 멈추며 아무것도 종료하지 않습니다. 카카오톡과 Sandboxie는 닫을 필요가 없고 대신 종료하지도 않습니다. 프로필·전용 박스·명령 저널·Sandboxie 설정은 이 진입점에서 삭제하거나 변경하지 않습니다. 기존 빌드 스크립트는 빌드 과정에서 필요한 패키지를 복원할 수 있습니다.
 
 PowerShell의 `RemoteSigned` 실행 정책은 빌드 프로세스에만 적용하고 영구 설정을 바꾸지 않습니다. 조직 정책이나 다운로드 표시 때문에 실행이 차단되면 오류를 확인하세요. 스크립트는 정책을 영구 변경하거나 다운로드 표시를 자동 제거하지 않습니다.
 
 오류가 나면 대화형 콘솔에서만 키 입력을 기다립니다. 성공 시 콘솔은 종료됩니다. 자동화에서는 `-NoPause`를 사용합니다.
 
 ```bat
+build-local.cmd -NoInstall -NoPause
 build-local.cmd -NoLaunch -NoPause
 run-local.cmd -NoPause
 ```
 
-두 명령 모두 **SIDETALK 런처만** 엽니다. 보조 카카오톡 실행·종료는 기존 GUI의 사용자 확인과 격리 검사를 그대로 거칩니다. 저장소 경로를 기준으로 실행하므로 다른 작업 디렉터리에서 호출해도 하위 폴더를 직접 찾을 필요가 없습니다.
+어떤 명령도 카카오톡을 직접 실행하지 않으며 **SIDETALK 런처만** 엽니다. 보조 카카오톡 실행·종료는 기존 GUI의 사용자 확인과 격리 검사를 그대로 거칩니다. 저장소 경로를 기준으로 실행하므로 다른 작업 디렉터리에서 호출해도 하위 폴더를 직접 찾을 필요가 없습니다.
 
 ## 루트 진입점 최초 추가 당시의 검증 범위
 
@@ -68,3 +84,17 @@ Windows에서 확인할 항목: 기존 배포본 즉시 실행, 배포본 없는
 
 - `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`: 16개 검사 그룹 / 35개 임시 저장소 성공. 실제 native `dotnet.exe` 대역(.NET Framework `csc.exe`로 생성)과 다운로드·Authenticode 경계만 대체한 실제 `ensure-dotnet.ps1` 실행으로 시스템 SDK 선택, 오래된 시스템 SDK + 전용 캐시(다운로드 0회), 설치 후 정리·승격·재실행 설치 0회, 다운로드·SHA-256·설치 예외·설치 종료 코드·SDK 버전·서명 상태·인증서 없음·발급자 실패 각각의 단계 표시와 다음 실행 복구, 잠금 미획득(null)/잠금 중 성공 `exit` 경로, 음수 종료 코드에서 `build.ps1` 0회, 한글 경로의 `DOTNET_ROOT` 전달을 확인했다.
 - 실제 PC(시스템 SDK 8.0.424만 존재, 이전 실패의 `.staging-*` 잔존)에서 `build-local.cmd -NoLaunch -NoPause` 1회차: 남은 staging 정리 → 공식 설치 스크립트 SHA-256 확인 → SDK zip 300,608,304바이트 다운로드·설치 → 버전·Microsoft 서명 확인 → 캐시 승격 → 같은 실행에서 `build.ps1 -SelfContained`의 검증·publish·ZIP·교체까지 성공, 전체 2분 19초. 2회차: 캐시 재사용(다운로드·설치 0회), 1분 5초 성공. 두 실행 후에도 `dotnet --list-sdks`는 `8.0.424`만 표시했다.
+
+## 2026-10-06 사용자별 설치형 배포 전환 검증
+
+`artifacts/publish/win-x64` 직접 실행에서 `SIDETALK-Setup.exe`(Inno Setup 6.7.3, per-user) 설치로 바꾸고 다음을 이 PC(Windows 11 10.0.26300)에서 실제로 실행했다.
+
+- `pwsh -File scripts/verify.ps1`: 콘솔 안전성 테스트 246/246 성공(소유 바로가기 제거·이전 설치 경로 표시 5건 추가).
+- `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`: 18개 검사 그룹 / 37개 임시 저장소 성공. `build-local.cmd`의 네 옵션 조합 전달, 빌드·SDK 실패 시 설치 0회, Setup 취소(62)·거부(64)·실패(61)·음수 종료 코드 전달, `run-local.cmd`의 설치본 실행과 미설치 시 build-local 연결(artifacts 실행 0회), 설치 결과 SHA-256·시작 메뉴·Installed Apps 버전 불일치 거부를 포함한다.
+- `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`: 8개 그룹 성공(322초). 고정 컴파일러로 실제 SIDETALK.iss를 컴파일하고, 테스트 전용 AppId·임시 설치/시작 메뉴/바탕 화면 위치에서 연결된 설치 폴더 거부 → 새 설치(파일 해시, Programs 루트 `SIDETALK.lnk` 대상·작업 폴더·AppUserModelID `SIDETALK.SIDETALK`, 바탕 화면 선택, HKCU 등록의 이름·버전·게시자·아이콘·위치) → 같은 버전 재설치 → 업데이트(버전 갱신·남은 문서 제거·바탕 화면 선택 유지) → 하위 버전·`/DIR` 변경·실행 중(파일 잠금) 설치와 제거 거부 → 제거(바로가기 정리 실행이 파일 삭제 전에 설치 위치에서 `--uninstall-owned-integration`으로 실행됨, 정리 실패 1·3에도 제거 완료) 순서로 확인했다. 매 단계 사용자 데이터 대역 파일은 바뀌지 않았고, 실제 설치·시작 메뉴·바탕 화면·`%LOCALAPPDATA%\SIDETALK`·실제 등록은 시험 전후 동일했다. `build-installer.ps1`은 성공 시 staging→교체와 SHA-256·unsigned 표시를 만들고, 원본 파일 누락·버전 불일치·KakaoTalk 파일 포함·연결된 원본·고정되지 않은 컴파일러·ISCC 실패에서 이전 Setup 산출물을 바이트 그대로 유지했다.
+- 실제 `build-local.cmd -NoPause`(5분 31초): SDK 확인 → 전체 검증·publish → Inno 캐시 재사용 → `SIDETALK-Setup.exe` 생성(72,394,373바이트, SHA-256 `14dd4a980a1cb3094b3658439e80625136f3e85fb85628cbe3261c4ca708e8c9`, unsigned) → 대화형 설치를 사용자가 승인 → 설치 결과 확인 성공. 설치 위치 `%LOCALAPPDATA%\Programs\SIDETALK`, 시작 메뉴 `SIDETALK.lnk` 대상은 설치된 `Sidetalk.exe`(AppUserModelID `SIDETALK.SIDETALK`), HKCU Installed Apps `SIDETALK 0.2.0`(HKLM 등록 없음). 이 실행 중 시스템에 .NET SDK 10.0.401 MSI가 별도로 설치되어(13:02–13:03, 이 작업 밖) build-local은 우선순위대로 시스템 SDK를 사용했다. 시스템 dotnet을 PATH에서 뺀 실제 `ensure-dotnet.ps1`은 다운로드 없이 전용 캐시 10.0.401을 0.9초에 선택했다.
+- 시작 메뉴 바로가기로 설치본을 실행해 창과 앱 자체의 읽기 전용 검사(공식 카카오톡·Sandboxie Plus 1.18.4 확인)를 본 뒤 창을 정상적으로 닫았다. 보조 카카오톡 실행은 누르지 않았다.
+- 실제 설치에서 같은 버전 업데이트(`/SILENT`) → 제거 → 재설치를 수행했다. 제거 시 실제 `Sidetalk.exe --uninstall-owned-integration`이 종료 코드 0으로 실행되었고(이 PC에는 앱이 만든 빠른 실행 바로가기 없음), 프로그램 폴더·시작 메뉴·등록이 모두 제거되었다. `%LOCALAPPDATA%\SIDETALK` 전체 목록(경로·크기·수정 시각, 1MB 미만 파일 해시)은 업데이트·제거·재설치 뒤 모두 0줄 차이였다. 첫 번째 비교 스크립트의 Boxes 목록 해시가 한 번 달랐으나 수정 시각이 바뀐 항목이 없었고, 전체 목록으로 다시 수행한 위 시험에서는 재현되지 않았다. `profile.json` 해시와 명령 기록은 모든 단계에서 같았다.
+- 모든 단계에서 KakaoTalk(PID 17780)·SbieSvc(PID 4632)는 그대로였고 어떤 프로세스도 종료하지 않았다.
+
+검증하지 못한 항목: Windows 검색 색인 반영(시작 메뉴 항목 생성·대상까지만 확인), 설정 앱 화면에서의 제거 버튼 조작(같은 `unins000.exe` 등록 경로로 대체), 옛 artifacts 경로를 가리키는 실제 빠른 실행 바로가기의 이전(이 PC에 없음, 합성 테스트로 대체), 서명된 설치 프로그램, GitHub Actions(계정 결제/지출 한도로 job 미시작).

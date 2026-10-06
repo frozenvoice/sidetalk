@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 set "ROOT=%~dp0"
-set "OUTPUT=%ROOT%artifacts\publish\win-x64"
+set "INSTALLED=%LOCALAPPDATA%\Programs\SIDETALK"
 set "NO_PAUSE="
 set "BUILD_OPTIONS="
 set "RC=0"
@@ -21,35 +21,36 @@ set "RC=2"
 goto finish
 
 :launch
-if not exist "%OUTPUT%\Sidetalk.exe" goto build
-if not exist "%OUTPUT%\Sidetalk.dll" goto build
-if not exist "%OUTPUT%\Sidetalk.Core.dll" goto build
-if not exist "%OUTPUT%\Sidetalk.runtimeconfig.json" goto build
-if not exist "%OUTPUT%\Sidetalk.deps.json" goto build
-rem The existing build starts immediately; no SDK, PowerShell 7, or rebuild is needed.
-rem This starts SIDETALK, not KakaoTalk or a Sandboxie command.
-start "" /D "%OUTPUT%" "%OUTPUT%\Sidetalk.exe"
+if not defined LOCALAPPDATA goto build
+if not exist "%INSTALLED%\Sidetalk.exe" goto build
+if not exist "%INSTALLED%\Sidetalk.dll" goto build
+if not exist "%INSTALLED%\unins000.exe" goto build
+rem Opens the installed SIDETALK (same as the Start Menu entry). No SDK, rebuild or
+rem PowerShell is needed. This starts SIDETALK, not KakaoTalk or a Sandboxie command.
+start "" /D "%INSTALLED%" "%INSTALLED%\Sidetalk.exe"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" echo SIDETALK could not be started. See the error above.
 goto finish
 
 :build
 if not exist "%ROOT%build-local.cmd" (
-    echo No published app or build-local.cmd was found. Keep both CMD files in the repository root.
+    echo SIDETALK is not installed and build-local.cmd was not found next to this file.
     set "RC=1"
     goto finish
 )
-echo No complete local build was found. Building once before opening SIDETALK...
+rem Never falls back to artifacts\publish and never creates or resets a profile:
+rem the only answer to "not installed" is the normal Setup path.
+echo SIDETALK is not installed. Building and opening Setup...
 rem Tail-chain without CALL: a percent sign in the repository path is not expanded twice.
 "%ROOT%build-local.cmd" %BUILD_OPTIONS%
 exit /b %ERRORLEVEL%
 
 :help
 echo Usage: run-local.cmd [-NoPause]
-echo Opens the published SIDETALK launcher. If it is missing, builds once and opens it.
+echo Opens the installed SIDETALK from %%LOCALAPPDATA%%\Programs\SIDETALK.
+echo If SIDETALK is not installed, runs build-local.cmd to build and open SIDETALK-Setup.exe.
 echo Source updates are applied only by build-local.cmd; this file does not rebuild every time.
-echo -NoPause  Do not wait for a key after an error.
-echo See docs\LOCAL-RUN.md.
+echo Everyday use: Start Menu - SIDETALK. See docs\LOCAL-RUN.md.
 exit /b 0
 
 :finish

@@ -6,4 +6,13 @@
     <Deterministic>true</Deterministic>
     <LangVersion>12</LangVersion>
   </PropertyGroup>
+  <PropertyGroup>
+    <!-- The single product version. The app, Core, IsolationProbe, diagnostics and
+         SIDETALK-Setup.exe (read back from the published Sidetalk.dll) all use it.
+         Persisted schema versions are separate and never follow this value. -->
+    <SidetalkVersion>0.2.0</SidetalkVersion>
+    <Version>$(SidetalkVersion)</Version>
+    <AssemblyVersion>$(SidetalkVersion).0</AssemblyVersion>
+    <FileVersion>$(SidetalkVersion).0</FileVersion>
+  </PropertyGroup>
 </Project>

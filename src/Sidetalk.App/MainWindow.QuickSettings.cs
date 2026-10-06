@@ -116,9 +116,14 @@ public partial class MainWindow
         DesktopShortcutCheckBox.IsChecked = status.Options.DesktopShortcut;
         StartMenuShortcutCheckBox.IsChecked = status.Options.StartMenuShortcut;
         LoginStartupCheckBox.IsChecked = status.Options.LoginStartup;
-        ShortcutStateText.Text = status.NeedsUpdate
-            ? "설치 경로가 바뀌었거나 바로가기가 없습니다. 선택 저장으로 이 설치 위치에 맞춰 갱신하세요."
-            : "저장된 선택을 확인했습니다. SIDETALK가 만든 바로가기만 관리합니다.";
+        ShortcutStateText.Text = status switch
+        {
+            { PreviousTargets.Count: > 0 } =>
+                "SIDETALK가 만든 바로가기가 이전 설치 위치를 실행합니다:\n" + string.Join("\n", status.PreviousTargets) +
+                "\n'바로가기 선택 저장'을 누르면 소유가 확인된 바로가기만 이 설치 위치로 갱신합니다. 사용자가 바꾼 바로가기는 그대로 둡니다.",
+            { NeedsUpdate: true } => "SIDETALK가 만든 바로가기가 없습니다(제거·재설치 포함). '바로가기 선택 저장'으로 이 설치 위치에 다시 만드세요.",
+            _ => "저장된 선택을 확인했습니다. SIDETALK가 만든 바로가기만 관리합니다."
+        };
     }
 
     private void ApplyQuickSettingsAvailability(bool busy)
