@@ -15,7 +15,11 @@ public sealed partial class SidetalkController
         try
         {
             using var lease = journal.TryAcquireInspectionLease(recoverMissingLock: false);
-            return await Task.Run(() => RequireSetupRecovery().Inspect());
+            return await Task.Run(() =>
+            {
+                var plan = RequireSetupRecovery().Inspect();
+                return plan with { ResidualCleanupApproval = TryIssueResidualCleanupApproval(plan) };
+            });
         }
         finally { ReleaseGate(); }
     }

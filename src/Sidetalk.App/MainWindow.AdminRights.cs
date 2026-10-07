@@ -12,10 +12,14 @@ public partial class MainWindow
         plan.Changes.Any(change => !change.IsNoOp && change.Kind == SetupRecoveryChangeKind.RepairOwnedBoxSetting &&
             change.Key.Equals("DropAdminRights", StringComparison.OrdinalIgnoreCase));
 
-    private static string SummarizeAdminRightsDetail(AppSnapshot snapshot, string detail) =>
-        snapshot.AdminRights?.Condition is AdminRightsCondition.MissingOrEmpty or AdminRightsCondition.Disabled
-            ? $"DropAdminRights 명시 값: {FormatAdminRightsValues(snapshot.AdminRights.ExplicitValues)}. 업데이트 중 권한 허용으로 바뀔 수 있습니다. 새 실행과 강제 종료는 차단됩니다."
-            : detail;
+    private static string SummarizeAdminRightsDetail(AppSnapshot snapshot, string detail)
+    {
+        var observation = snapshot.AdminRights;
+        if (observation?.Condition is not (AdminRightsCondition.MissingOrEmpty or AdminRightsCondition.Disabled))
+            return detail;
+
+        return $"DropAdminRights 명시 값: {FormatAdminRightsValues(observation.ExplicitValues)}. 새 실행과 일반 강제 종료는 차단됩니다.";
+    }
 
     private void ApplyAdminRightsRecoveryPresentation(SetupRecoveryPlan plan)
     {
@@ -39,6 +43,7 @@ public partial class MainWindow
     {
         var observation = snapshot.AdminRights;
         var changed = observation?.Condition is AdminRightsCondition.MissingOrEmpty or AdminRightsCondition.Disabled;
+        var processState = GetProcessState(observation);
         SetText(AdminRightsSummaryText, observation?.Condition switch
         {
             AdminRightsCondition.Expected => "현재 관리자 권한 제한 설정은 확인됐습니다. 과거 업데이트 완료와 로그인 성공은 별도 확인이 필요합니다.",
@@ -50,15 +55,24 @@ public partial class MainWindow
         SetText(AdminRightsValuesText, observation is null ? "DropAdminRights: 미확인" :
             $"DropAdminRights 명시 값: {FormatAdminRightsValues(observation.ExplicitValues)}\n상속 포함 값: {FormatAdminRightsValues(observation.EffectiveValues)}\n" +
             (observation.ProcessesQueried
-                ? observation.ProcessIds.Count == 0 ? "전용 프로세스: 조회 시점에 없음" : $"전용 프로세스: {observation.ProcessIds.Count}개 · 시작 당시 적용 규칙과 실제 토큰은 미확인"
+                ? processState switch
+                {
+                    BoxProcessState.Empty => "전용 프로세스: 조회 시점에 없음",
+                    BoxProcessState.KakaoRunning => $"전용 프로세스: KakaoTalk.exe {observation.KakaoProcessCount}개 포함 · 시작 당시 적용 규칙과 실제 토큰은 미확인",
+                    BoxProcessState.ResidualOnly => $"전용 프로세스: 잔여 {observation.ResidualProcessCount}개 · KakaoTalk.exe 없음",
+                    _ => "전용 프로세스: 신원 미확인" + (observation.ProcessFailure is null ? string.Empty : " · " + ReadableFailure(observation.ProcessFailure))
+                }
                 : "전용 프로세스: 미확인" + (observation.ProcessFailure is null ? string.Empty : " · " + ReadableFailure(observation.ProcessFailure))));
 
-        var action = changed ? observation!.ProcessesQueried
-            ? observation.ProcessIds.Count > 0
-                ? "보조 카카오톡 트레이 메뉴에서 정상 종료한 뒤 상태를 다시 확인하세요. 로그아웃할 필요는 없습니다. 실행 중 권한은 설정 복구로 소급 변경되지 않습니다."
-                : "전용 환경에 프로세스가 없음을 확인했습니다. ‘초기 설정 · 진단’에서 변경 계획을 확인하고 관리자 권한 제한 복구를 새로 승인하세요."
-            : "전용 프로세스 상태가 미확인입니다. 정상 종료와 빈 환경 확인 전에는 설정 복구를 진행할 수 없습니다."
-            : string.Empty;
+        ApplyResidualProcessList(observation);
+
+        var action = changed ? processState switch
+        {
+            BoxProcessState.KakaoRunning => "보조 카카오톡이 아직 실행 중입니다. 카카오톡 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃할 필요는 없습니다. 실행 중 권한은 설정 복구로 소급 변경되지 않습니다.",
+            BoxProcessState.ResidualOnly => $"보조 카카오톡은 종료됐습니다. 전용 환경에 잔여 프로세스 {observation!.ResidualProcessCount}개가 남아 있습니다. ‘초기 설정 · 진단’에서 이름과 PID를 확인하고 ‘잔여 프로세스 정리 후 복구’를 승인하세요.",
+            BoxProcessState.Empty => "전용 환경이 비어 있는 것을 확인했습니다. 관리자 권한 제한 복구를 새로 승인할 수 있습니다.",
+            _ => "전용 프로세스 상태가 미확인입니다. 빈 환경 확인 전에는 설정 복구나 잔여 프로세스 정리를 진행할 수 없습니다."
+        } : string.Empty;
         SetText(AdminRightsActionText, action);
         AdminRightsActionText.Visibility = string.IsNullOrEmpty(action) ? Visibility.Collapsed : Visibility.Visible;
         if (changed && !_adminRightsAttentionShown)
@@ -92,6 +106,49 @@ public partial class MainWindow
         }
         else images.Add("박스 내부 프로그램 사본과 실제 사용 파일은 미확인입니다. 프로그램 폴더나 계정 데이터를 탐색·삭제하지 않습니다.");
         SetText(KakaoUpdateEvidenceText, string.Join("\n", images));
+    }
+
+    private void ApplyResidualProcessList(AdminRightsObservation? observation)
+    {
+        if (observation is null)
+        {
+            ResidualProcessesText.Text = string.Empty;
+            ResidualProcessesText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var processes = observation.BoxProcesses.Count > 0
+            ? observation.BoxProcesses
+            : observation.ProcessIds.Select(pid => new BoxProcessObservation(pid, string.Empty, 0, false)).ToArray();
+        var residual = processes
+            .Where(process => !process.IdentityVerified || !process.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase))
+            .Select(process => process.IdentityVerified
+                ? $"- {SafeProcessImageName(process.ImageName)} · PID {process.ProcessId}"
+                : $"- 신원 미확인 전용 프로세스 · PID {process.ProcessId}")
+            .ToArray();
+        if (residual.Length == 0)
+        {
+            ResidualProcessesText.Text = string.Empty;
+            ResidualProcessesText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ResidualProcessesText.Text = "잔여 프로세스\n" + string.Join("\n", residual);
+        ResidualProcessesText.Visibility = Visibility.Visible;
+    }
+
+    private static BoxProcessState GetProcessState(AdminRightsObservation? observation)
+    {
+        if (observation is null || !observation.ProcessesQueried ||
+            (observation.BoxProcesses.Count == 0 && observation.ProcessIds.Count > 0))
+            return BoxProcessState.Unknown;
+        return observation.ProcessState;
+    }
+
+    private static string SafeProcessImageName(string imageName)
+    {
+        var value = string.IsNullOrWhiteSpace(imageName) ? "알 수 없는 이미지" : imageName.Trim();
+        return value.Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", string.Empty, StringComparison.Ordinal);
     }
 
     private static string FormatAdminRightsValues(IReadOnlyList<string> values) => values.Count == 0

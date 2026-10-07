@@ -39,6 +39,7 @@ internal static class Program
         var allTests = tests.Concat(ConfigurationRegressionTests.Cases).Concat(CommandLifecycleTests.Cases).Concat(ServiceIdentityTests.Cases).Concat(ProfileStoreAtomicTests.Cases).Concat(CommandJournalTests.Cases).Concat(ControllerRecoveryTests.Cases).Concat(ControllerSetupRecoveryTests.Cases).Concat(SetupRecoveryTests.Cases).Concat(RecoveryTemplateRulesTests.Cases).Concat(SandboxieIniSnapshotTests.Cases).Concat(SandboxieServiceReplyTests.Cases).Concat(SandboxieSettingCommandsTests.Cases).Concat(SetupRecoverySafetyTests.Cases).Concat(SetupRecoveryJournalTests.Cases).Concat(WindowsSetupRecoveryTokenTests.Cases).Concat(InspectionFailureTests.Cases).Concat(Net8PersistenceCompatibilityTests.Cases).Concat(AuthenticodeCompatibilityTests.Cases).ToArray();
         allTests = allTests.Concat(QuickLaunchTests.Cases).Concat(UserLaunchIntegrationTests.Cases).Concat(SecondaryAppearanceTests.Cases).ToArray();
         allTests = allTests.Concat(AdminRightsRecoveryTests.Cases).Concat(AdminRightsDiagnosticTests.Cases).ToArray();
+        allTests = allTests.Concat(ResidualCleanupJournalTests.Cases).Concat(ResidualDiagnosticsTests.Cases).Concat(ResidualRecoveryTests.Cases).ToArray();
         foreach (var test in allTests)
         {
             try

@@ -67,5 +67,7 @@ public interface ISidetalkController : IDisposable
     Task<AppSnapshot> PrepareAsync(SetupRecoveryPlan approvedPlan, bool allowAutomatic, IProgress<string>? progress = null);
     Task<AppSnapshot> PrepareAutomaticallyAsync(IProgress<string>? progress = null);
     Task RevokeAutomaticRecoveryAsync();
+    Task<AppSnapshot> CleanResidualBoxAndPrepareAsync(ResidualBoxRecoveryApproval approval, IProgress<string>? progress = null) =>
+        throw new InvalidOperationException("이 실행 환경에서는 잔여 프로세스 복구를 지원하지 않습니다.");
     string RecoveryHistoryPath { get; }
 }

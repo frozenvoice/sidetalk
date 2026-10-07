@@ -8,6 +8,8 @@ namespace Sidetalk.Core;
 
 public enum AdminRightsCondition { Expected, MissingOrEmpty, Disabled, Unrecognized }
 public enum ProgramPhysicalResolution { Unknown, VerifiedBoxCopy }
+public enum BoxProcessState { Unknown, Empty, KakaoRunning, ResidualOnly }
+public sealed record BoxProcessObservation(int ProcessId, string ImageName, uint SessionId, bool IdentityVerified);
 public sealed record ProgramFileEvidence(string Path, string Version, bool PublisherVerified, string? Failure)
 {
     public bool PhysicalPathVerified { get; init; }
@@ -19,6 +21,23 @@ public sealed record AdminRightsObservation(IReadOnlyList<string> ExplicitValues
     AdminRightsCondition Condition, bool ProcessesQueried, IReadOnlyList<int> ProcessIds, string? ProcessFailure,
     IReadOnlyList<KakaoImageEvidence> Images)
 {
+    public IReadOnlyList<BoxProcessObservation> BoxProcesses { get; init; } = [];
+
+    /// <summary>Counts only process identities that passed the profile and image-name checks.</summary>
+    public int KakaoProcessCount => BoxProcesses.Count(process => process.IdentityVerified && IsKakaoName(process.ImageName));
+    public int ResidualProcessCount => BoxProcesses.Count(process => process.IdentityVerified && !IsKakaoName(process.ImageName));
+    public int UnknownProcessCount => BoxProcesses.Count(process => !process.IdentityVerified);
+    public BoxProcessState ProcessState => !ProcessesQueried || !ProcessEvidenceMatches
+        ? BoxProcessState.Unknown
+        : BoxProcesses.Count == 0
+            ? BoxProcessState.Empty
+            : KakaoProcessCount != 0
+                ? BoxProcessState.KakaoRunning
+                : UnknownProcessCount != 0 ? BoxProcessState.Unknown : BoxProcessState.ResidualOnly;
+
+    private bool ProcessEvidenceMatches =>
+        ProcessIds.OrderBy(processId => processId).SequenceEqual(BoxProcesses.Select(process => process.ProcessId).OrderBy(processId => processId));
+
     public static AdminRightsObservation FromConfiguration(ConfigurationLayers configuration)
     {
         var explicitValues = Values(configuration.ExplicitBox);
@@ -41,12 +60,39 @@ public sealed record AdminRightsObservation(IReadOnlyList<string> ExplicitValues
     private static string[] Values(IReadOnlyDictionary<string, string[]> section) =>
         section.TryGetValue("DropAdminRights", out var values) ? values.ToArray() : [];
 
+    internal static bool IsKnownProcess(BoxProcess process, BoxProfile profile) =>
+        process.Id > 0 &&
+        !string.IsNullOrEmpty(profile.UserSid) &&
+        string.Equals(process.UserSid, profile.UserSid, StringComparison.Ordinal) &&
+        IsValidImageName(process.ImageName);
+
+    internal static IReadOnlyList<BoxProcessObservation> FromProcesses(BoxProfile profile, IReadOnlyList<BoxProcess> processes)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(processes);
+        var duplicateIds = processes.GroupBy(process => process.Id).Where(group => group.Count() > 1)
+            .Select(group => group.Key).ToHashSet();
+        return processes.Select(process => new BoxProcessObservation(process.Id, process.ImageName, process.SessionId,
+            !duplicateIds.Contains(process.Id) && IsKnownProcess(process, profile))).ToArray();
+    }
+
     public static IReadOnlyList<KakaoImageEvidence> UnavailableImages(IReadOnlyList<BoxProcess> processes) =>
         processes.Where(IsKakao).Select(process => new KakaoImageEvidence(process.Id, process.ImageName,
             null, null, ProgramPhysicalResolution.Unknown, null, null, "이 조회 경계에서는 실제 실행 이미지 경로를 확인하지 않았습니다.")).ToArray();
 
-    internal static bool IsKakao(BoxProcess process) =>
-        process.ImageName.Equals("KakaoTalk.exe", StringComparison.OrdinalIgnoreCase);
+    internal static bool IsKakao(BoxProcess process) => IsKakaoName(process.ImageName);
+
+    private static bool IsKakaoName(string? imageName) =>
+        string.Equals(imageName, "KakaoTalk.exe", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsValidImageName(string? imageName)
+    {
+        if (string.IsNullOrEmpty(imageName) || imageName != imageName.Trim() || imageName.Length > 255 ||
+            imageName.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+            imageName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || imageName.Any(char.IsControl))
+            return false;
+        return imageName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>Reads only API-validated process identities and an exact physical KakaoTalk executable. No token or account data is read.</summary>

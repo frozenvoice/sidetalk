@@ -10,6 +10,7 @@ namespace Sidetalk.Core;
 internal sealed partial class SetupRecovery
 {
     private const int PlanRevision = 1;
+    internal const string ProcessesBlocker = "전용 환경 프로세스가 실행 중이어서 설정 복구를 안전하게 적용할 수 없습니다.";
     private readonly ProfileStore store;
     private readonly ISetupRecoveryEnvironment environment;
     private readonly string recoveryRoot;
@@ -145,7 +146,7 @@ internal sealed partial class SetupRecovery
         if (otherBoxes.Length != 0 && changes.Any(change => string.Equals(change.Section, "GlobalSettings", StringComparison.OrdinalIgnoreCase)))
             blockers.Add("SIDETALK 외 샌드박스가 확인되어 전역 설정 변경을 차단했습니다: " + string.Join(", ", otherBoxes));
         if (observation.BoxProcessIds.Count != 0 && changes.Length != 0)
-            blockers.Add("전용 환경 프로세스가 실행 중이어서 설정 복구를 안전하게 적용할 수 없습니다.");
+            blockers.Add(ProcessesBlocker);
 
         foreach (var process in observation.Ui.ApprovedManagementProcesses)
             evidence.Add($"관리 UI 종료 대상: {Path.GetFileName(process.ImagePath)} ({process.ImagePath}), PID {process.ProcessId}, 세션 {process.SessionId?.ToString() ?? "확인되지 않음"}");
@@ -418,7 +419,8 @@ internal sealed partial class SetupRecovery
         SetupRecoveryObservation observation, SetupRecoveryFingerprint fingerprint, bool firstSetup, RecoveryEvent? interrupted = null) =>
         new(Guid.NewGuid().ToString("N"), PlanRevision, state, summary, changes.ToArray(), blockers.ToArray(), evidence.ToArray(),
             requiresApproval, allowAutomatic, observation.ConfigPath, fingerprint, null, historyRoot, firstSetup, DateTimeOffset.UtcNow,
-            interrupted is not null, interrupted?.OperationId, firstSetup ? CandidateProfile(observation) : null);
+            interrupted is not null, interrupted?.OperationId, firstSetup ? CandidateProfile(observation) : null)
+        { ManagementProcesses = Array.AsReadOnly(observation.Ui.ApprovedManagementProcesses.ToArray()) };
 
     private static SetupRecoveryPlan BlockedPlan(string summary, IReadOnlyList<string> blockers, string historyPath) =>
         new(Guid.NewGuid().ToString("N"), PlanRevision, SetupRecoveryState.Blocked, summary, Array.Empty<SetupRecoveryChange>(),

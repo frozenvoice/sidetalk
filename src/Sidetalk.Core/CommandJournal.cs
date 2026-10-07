@@ -22,6 +22,7 @@ public sealed record PendingCommandRecord(
     public int Schema { get; init; } = 1;
     public CommandRecoveryContext? RecoveryContext { get; init; }
     public CommandFailure? Failure { get; init; }
+    public string? RecoveryObservationFingerprint { get; init; }
 }
 
 public sealed record CommandFailure(string Stage, string ErrorType, string Message, string? InnerCause, bool IsCancellation);
@@ -149,7 +150,8 @@ public sealed class CommandJournal
     }
 
     /// <summary>Publishes an immutable intent before the caller starts Start.exe.</summary>
-    public PendingCommandRecord Prepare(BoxProfile profile, SidetalkCommandAction action, string startExe)
+    public PendingCommandRecord Prepare(BoxProfile profile, SidetalkCommandAction action, string startExe,
+        string? recoveryObservationFingerprint = null)
     {
         RequireLease();
         var expectedStart = ValidateProfileAndStart(profile, startExe);
@@ -157,6 +159,7 @@ public sealed class CommandJournal
             throw new InvalidOperationException("완료되지 않은 Sandboxie 명령이 있어 새 명령을 실행할 수 없습니다.");
         if (!Enum.IsDefined(action))
             throw new ArgumentOutOfRangeException(nameof(action));
+        ValidateRecoveryFingerprint(action, recoveryObservationFingerprint);
 
         var operationId = Guid.NewGuid().ToString("N");
         // Failure to collect optional evidence must not fabricate metadata or block
@@ -165,7 +168,7 @@ public sealed class CommandJournal
         try { context = WindowsCommandEvidence.Capture(operationId); }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidDataException or UnauthorizedAccessException) { }
         var record = new PendingCommandRecord(operationId, action, profile, expectedStart, DateTimeOffset.UtcNow, null)
-        { Schema = CurrentSchema, RecoveryContext = context };
+        { Schema = CurrentSchema, RecoveryContext = context, RecoveryObservationFingerprint = recoveryObservationFingerprint };
         Publish(record, "intent");
         return record;
     }
@@ -254,7 +257,8 @@ public sealed class CommandJournal
             ? state.Intent
             : state.Started;
         Publish(new PendingCommandRecord(completion.OperationId, completion.Action, completion.Profile, completion.StartExe, completion.RequestedAtUtc, completion.Process)
-        { Schema = completion.Schema, RecoveryContext = completion.RecoveryContext }, "completed");
+        { Schema = completion.Schema, RecoveryContext = completion.RecoveryContext,
+            RecoveryObservationFingerprint = completion.RecoveryObservationFingerprint }, "completed");
     }
 
     public bool IsCompleted(PendingCommandRecord record)
@@ -278,7 +282,8 @@ public sealed class CommandJournal
         if (phase is not ("intent" or "started" or "failed" or "completed"))
             throw new ArgumentOutOfRangeException(nameof(phase));
         var entry = new JournalEntry(record.Schema, phase, operation, record.Action, record.Profile, record.StartExe,
-            record.RequestedAtUtc, record.Process, record.RecoveryContext, phase == "failed" ? record.Failure : null);
+            record.RequestedAtUtc, record.Process, record.RecoveryContext, phase == "failed" ? record.Failure : null,
+            record.RecoveryObservationFingerprint);
         var temporary = Path.Combine(journalDirectory, $".{operation}.{phase}.{Guid.NewGuid():N}.tmp");
         var final = Path.Combine(journalDirectory, $"{operation}.{phase}.json");
         try
@@ -374,6 +379,8 @@ public sealed class CommandJournal
             entry.RequestedAtUtc.Offset != TimeSpan.Zero || entry.RequestedAtUtc.UtcTicks <= DateTime.MinValue.Ticks)
             throw new InvalidDataException("명령 기록의 식별자 또는 버전이 유효하지 않습니다.");
 
+        ValidateRecoveryFingerprint(entry.Action, entry.RecoveryObservationFingerprint);
+
         if (entry.Schema == 1 && entry.RecoveryContext is not null)
             throw new InvalidDataException("이전 버전 명령 기록에 새 복구 근거가 포함되어 있습니다.");
         if (entry.RecoveryContext is { } context)
@@ -441,10 +448,22 @@ public sealed class CommandJournal
         return operationId;
     }
 
+    private static void ValidateRecoveryFingerprint(SidetalkCommandAction action, string? fingerprint)
+    {
+        if (action == SidetalkCommandAction.RecoveryBoxCleanup)
+        {
+            if (fingerprint is null || !Regex.IsMatch(fingerprint, @"\A[A-F0-9]{64}\z", RegexOptions.CultureInvariant))
+                throw new InvalidDataException("전용 박스 정리 명령의 승인된 관찰 지문이 유효하지 않습니다.");
+        }
+        else if (fingerprint is not null)
+            throw new InvalidDataException("전용 박스 정리 이외의 명령에 관찰 지문을 추가할 수 없습니다.");
+    }
+
     private static bool SameRecordMetadata(PendingCommandRecord first, JournalEntry second) =>
         first.OperationId.Equals(second.OperationId, StringComparison.Ordinal) && first.Action == second.Action &&
         SameProfile(first.Profile, second.Profile) && SamePath(first.StartExe, second.StartExe) &&
-        first.RequestedAtUtc == second.RequestedAtUtc && first.Schema == second.Schema && first.RecoveryContext == second.RecoveryContext;
+        first.RequestedAtUtc == second.RequestedAtUtc && first.Schema == second.Schema && first.RecoveryContext == second.RecoveryContext &&
+        first.RecoveryObservationFingerprint == second.RecoveryObservationFingerprint;
 
     private static bool SameProfile(BoxProfile first, BoxProfile second) =>
         first.Schema == second.Schema && first.BoxName.Equals(second.BoxName, StringComparison.Ordinal) &&
@@ -522,12 +541,14 @@ public sealed class CommandJournal
 
         public PendingCommandRecord ToPending() =>
             new(OperationId, Intent!.Action, Intent.Profile, Intent.StartExe, Intent.RequestedAtUtc, Started?.Process)
-            { Schema = Intent.Schema, RecoveryContext = Intent.RecoveryContext, Failure = Failed?.Failure };
+            { Schema = Intent.Schema, RecoveryContext = Intent.RecoveryContext, Failure = Failed?.Failure,
+                RecoveryObservationFingerprint = Intent.RecoveryObservationFingerprint };
 
         private static bool SameMetadata(JournalEntry first, JournalEntry second) =>
             first.Schema == second.Schema && first.Phase != second.Phase && first.OperationId.Equals(second.OperationId, StringComparison.Ordinal) &&
             first.Action == second.Action && SameProfile(first.Profile, second.Profile) && SamePath(first.StartExe, second.StartExe) &&
-            first.RequestedAtUtc == second.RequestedAtUtc && first.RecoveryContext == second.RecoveryContext;
+            first.RequestedAtUtc == second.RequestedAtUtc && first.RecoveryContext == second.RecoveryContext &&
+            first.RecoveryObservationFingerprint == second.RecoveryObservationFingerprint;
     }
 
     private sealed record JournalEntry(
@@ -540,7 +561,8 @@ public sealed class CommandJournal
         DateTimeOffset RequestedAtUtc,
         CommandProcessIdentity? Process,
         CommandRecoveryContext? RecoveryContext = null,
-        CommandFailure? Failure = null);
+        CommandFailure? Failure = null,
+        string? RecoveryObservationFingerprint = null);
 
     private static bool SameIdentity(CommandProcessIdentity? first, CommandProcessIdentity? second) =>
         first is null && second is null || first is not null && second is not null && first.ProcessId == second.ProcessId &&
