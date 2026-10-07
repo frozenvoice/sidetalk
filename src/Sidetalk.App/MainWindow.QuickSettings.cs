@@ -39,6 +39,7 @@ public partial class MainWindow
         finally
         {
             _operationInFlight = false;
+            _actionFeedback = null;
             ApplyActionAvailability();
             if (!_closed) await InspectAndApplyAsync();
         }

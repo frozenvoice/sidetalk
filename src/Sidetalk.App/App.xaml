@@ -13,6 +13,14 @@
         <SolidColorBrush x:Key="DividerBrush" Color="#3A3F47" />
         <SolidColorBrush x:Key="WarningInkBrush" Color="#F2CE8B" />
         <SolidColorBrush x:Key="ErrorInkBrush" Color="#FFADA3" />
+        <CornerRadius x:Key="PanelCornerRadius">16</CornerRadius>
+        <Thickness x:Key="ShellMargin">32,22,32,18</Thickness>
+        <Style x:Key="SurfaceCard" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource DividerBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{StaticResource PanelCornerRadius}" />
+        </Style>
         <Style x:Key="BodyText" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Segoe UI, Malgun Gothic" />
             <Setter Property="FontSize" Value="14" />
@@ -28,6 +36,24 @@
             <Setter Property="FontSize" Value="18" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style x:Key="StatusHeading" TargetType="TextBlock" BasedOn="{StaticResource BodyText}">
+            <Setter Property="FontSize" Value="29" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="HeaderIndicatorText" TargetType="TextBlock" BasedOn="{StaticResource SecondaryText}">
+            <Setter Property="Focusable" Value="True" />
+            <Setter Property="KeyboardNavigation.IsTabStop" Value="True" />
+            <Setter Property="Padding" Value="5,3" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+                    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="ActionButton" TargetType="Button">
             <Setter Property="FontFamily" Value="Segoe UI, Malgun Gothic" />
