@@ -171,9 +171,11 @@
                             <StackPanel Margin="0,10,0,0">
                                 <TextBlock x:Name="AdminRightsSummaryText" Text="현재 관리자 권한 제한과 전용 프로세스 상태는 아직 확인하지 않았습니다." Style="{StaticResource BodyText}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="AdminRightsValuesText" Style="{StaticResource SecondaryText}" Margin="0,8,0,8" TextWrapping="Wrap" />
+                                <TextBlock x:Name="ResidualProcessesText" Style="{StaticResource SecondaryText}" Margin="0,0,0,10" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <TextBlock x:Name="KakaoUpdateEvidenceText" Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <TextBlock Text="호스트 카카오톡 업데이트가 필요하면 공식 카카오톡의 업데이트 안내 또는 공식 다운로드 경로를 이용하세요. 본계정 앱의 종료가 필요한지는 공식 안내에서 확인하고 진행하세요. 완료 후 ‘상태 새로 확인’으로 공식 파일과 전용 환경을 다시 검사하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,10" TextWrapping="Wrap" />
                                 <TextBlock Text="박스 안에 별도 프로그램 사본이 있으면 호스트 업데이트만으로 함께 갱신됐다고 판단하지 않습니다. 데이터 보존이 입증되지 않은 사본 교체는 지원하지 않습니다. SIDETALK는 업데이트를 위해 관리자 권한 제한을 해제하지 않습니다. 로그인과 과거 오류창 종료는 업데이트 완료의 증거가 아닙니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
+                                <Button x:Name="ResidualCleanupButton" Content="잔여 프로세스 정리 후 복구" Style="{StaticResource ActionButton}" Click="ResidualCleanupButton_Click" HorizontalAlignment="Left" Visibility="Collapsed" ToolTipService.ShowOnDisabled="True" />
                                 <Button x:Name="KakaoUpdateGuideButton" Content="카카오톡 공식 안내 열기" Style="{StaticResource ActionButton}" Click="KakaoOfficialButton_Click" HorizontalAlignment="Left" />
                             </StackPanel>
                         </Expander>

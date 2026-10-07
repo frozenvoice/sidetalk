@@ -122,11 +122,16 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
                 var detail = changed
                     ? "현재 전용 박스의 DropAdminRights가 필수 값 y와 다릅니다. 카카오톡 업데이트 중 권한 허용을 선택하면 이 설정이 바뀔 수 있습니다. 사용자가 승인한 창이나 실제 관리자 토큰·업데이트 완료 여부는 확인하지 않았습니다. 새 실행과 강제 종료는 차단합니다."
                     : "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.";
-                detail += !adminRights.ProcessesQueried
+                var processDetail = !adminRights.ProcessesQueried
                     ? " 프로세스 상태를 확인하지 못했습니다. 빈 상자로 간주하지 않습니다."
-                    : adminRights.ProcessIds.Count != 0
-                        ? " 보조 카카오톡을 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃이나 계정 삭제는 필요하지 않습니다. 현재 설정 변경은 기존 프로세스에 소급 적용됐다고 판단하지 않습니다."
-                        : " 최신 조회에서 전용 박스가 빈 것을 확인했습니다. 초기 설정 · 진단에서 필요한 변경 계획을 확인하세요.";
+                    : adminRights.ProcessState switch
+                    {
+                        BoxProcessState.KakaoRunning => " 보조 카카오톡을 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃이나 계정 삭제는 필요하지 않습니다. 현재 설정 변경은 기존 프로세스에 소급 적용됐다고 판단하지 않습니다.",
+                        BoxProcessState.ResidualOnly => $" 보조 카카오톡은 종료됐지만 전용 환경에 잔여 프로세스 {adminRights.ResidualProcessCount}개가 있습니다. 일반 종료 권한을 부여하지 않고, 이름과 PID를 확인한 뒤 별도 잔여 정리 승인을 요구합니다.",
+                        BoxProcessState.Unknown => " 전용 환경 프로세스의 신원을 확인하지 못했습니다. 빈 상자로 간주하지 않으며 정리를 차단합니다.",
+                        _ => " 최신 조회에서 전용 박스가 빈 것을 확인했습니다. 초기 설정 · 진단에서 필요한 변경 계획을 확인하세요."
+                    };
+                detail += processDetail;
                 return Snapshot(Readiness.Blocked, title, detail, notes, observedProcesses);
             }
             currentConfigurationVerified = true;
@@ -155,13 +160,27 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
                 pendingRecord = null;
             }
             commandPending = pendingRecord is not null || commandLifecycle.IsPending;
-            if (processes.Count > 0)
+            if (adminRights.ProcessState == BoxProcessState.KakaoRunning)
             {
                 processPolicy = ProcessPolicyStatus.EffectiveRulesUnverified;
                 var detail = "현재 설정은 검증됐지만 실행 중 프로세스의 시작 당시 적용 규칙은 직접 확인할 수 없습니다. 설정을 다시 불러와도 기존 프로세스의 규칙이 바뀌었다고 판단하지 않습니다. 외부에서 시작했거나 실행 중 설정을 바꿨다면 보조 앱을 정상 종료해 상자가 빈 것을 확인한 뒤 새로 실행하세요.";
                 if (lifecycle.Action is not null) detail = lifecycle.Message + " " + detail;
                 return Snapshot(Readiness.RunningUnverified, "실행 중 · 적용 정책 미확인",
                     detail, checks, processes, canStop: true);
+            }
+            if (adminRights.ProcessState == BoxProcessState.ResidualOnly)
+            {
+                processPolicy = ProcessPolicyStatus.EffectiveRulesUnverified;
+                return Snapshot(Readiness.RunningUnverified, "전용 환경에 잔여 프로세스가 있어요",
+                    $"보조 카카오톡은 조회 시점에 없지만 전용 환경에 잔여 프로세스 {adminRights.ResidualProcessCount}개가 있습니다. 현재 격리 정책은 검증됐으며 기존 전용 환경 종료 경로를 사용할 수 있습니다.",
+                    checks, processes, canStop: true);
+            }
+            if (adminRights.ProcessState == BoxProcessState.Unknown)
+            {
+                processPolicy = ProcessPolicyStatus.EffectiveRulesUnverified;
+                return Snapshot(Readiness.Unknown, "전용 환경 프로세스 신원을 확인할 수 없어요",
+                    "프로세스 신원이 확인되지 않아 빈 상자로 판단하거나 정리하지 않습니다. 상태를 다시 확인하세요.",
+                    checks, processes);
             }
             processPolicy = ProcessPolicyStatus.NoProcesses;
             // Current policy, ownership and command evidence determine execution.
@@ -200,6 +219,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
 
         AdminRightsObservation ObserveImages(ISidetalkRuntimeSession session, AdminRightsObservation observation, IReadOnlyList<BoxProcess> processes)
         {
+            var boxProcesses = AdminRightsObservation.FromProcesses(profile!, processes);
             IReadOnlyList<KakaoImageEvidence> images;
             try { images = session.ReadKakaoImageEvidence(profile!, kakao, processes); }
             catch (Exception error)
@@ -208,7 +228,13 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
                     process.Id, process.ImageName, null, null, ProgramPhysicalResolution.Unknown, null, null,
                     InspectionFailure.Sanitize(error.Message))).ToArray();
             }
-            return observation with { ProcessesQueried = true, ProcessIds = processes.Select(process => process.Id).ToArray(), Images = images };
+            return observation with
+            {
+                ProcessesQueried = true,
+                ProcessIds = processes.Select(process => process.Id).ToArray(),
+                BoxProcesses = boxProcesses,
+                Images = images
+            };
 
         }
     }
@@ -221,6 +247,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
         if (pendingRecord is not null && (saved is null || saved.OperationId != pendingRecord.OperationId ||
             saved.Action != pendingRecord.Action || saved.Profile != pendingRecord.Profile ||
             saved.Schema != pendingRecord.Schema || saved.RecoveryContext != pendingRecord.RecoveryContext ||
+            saved.RecoveryObservationFingerprint != pendingRecord.RecoveryObservationFingerprint ||
             saved.StartExe != pendingRecord.StartExe || saved.RequestedAtUtc != pendingRecord.RequestedAtUtc ||
             (pendingRecord.Process is not null && saved.Process != pendingRecord.Process)))
             throw new InvalidDataException("명령 기록이 확인 중 변경됐습니다. 새 명령을 차단했습니다.");
@@ -378,6 +405,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
         var setupReport = preparation is null ? null : new
         {
             preparation.PlanRevision, preparation.State, preparation.Summary, preparation.AllowAutomatic,
+            CanCleanResidualBoxForRecovery = preparation.ResidualCleanupApproval is not null,
             Changes = preparation.Changes.Select(change => new { change.Section, change.Key, change.Description }).ToArray(),
             preparation.Blockers, preparation.BackupPath, preparation.HistoryPath
         };

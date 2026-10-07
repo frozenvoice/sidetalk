@@ -657,6 +657,81 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ResidualCleanupButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _settingsLoading ||
+            _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan?.ResidualCleanupApproval is not { } approval ||
+            GetProcessState(_lastSnapshot?.AdminRights) != BoxProcessState.ResidualOnly)
+        {
+            return;
+        }
+
+        _operationInFlight = true;
+        ApplyActionAvailability();
+        var changeLines = approval.RepairPlan.Changes
+            .Where(change => !change.IsNoOp)
+            .Select(FormatRecoveryChange)
+            .ToArray();
+        var changes = changeLines.Length == 0 ? "표시된 관리자 권한 제한 복구 범위" : string.Join("\n", changeLines);
+        var processes = approval.ResidualProcesses.Count == 0
+            ? "- 잔여 프로세스 목록 없음"
+            : string.Join("\n", approval.ResidualProcesses.Select(FormatResidualProcess));
+        var answer = MessageBox.Show(this,
+            $"SIDETALK 전용 box ‘{SafeRecoveryText(approval.BoxName)}’에서 확인된 잔여 프로세스입니다.\n\n" +
+            processes +
+            $"\n\nSIDETALK 전용 환경의 잔여 프로세스만 공식 Sandboxie 종료 경로로 정리한 뒤, box가 비었는지 다시 확인하고 다음 복구 범위를 이어서 확인합니다:\n{changes}\n\n" +
+            "보조 계정 데이터·전용 환경·복구 기록은 삭제하지 않습니다. 다른 box, 호스트 카카오톡, Sandboxie 서비스·드라이버·관리 UI는 종료하지 않습니다.\n\n진행할까요?",
+            "잔여 프로세스 정리 후 복구 승인", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK)
+        {
+            _operationInFlight = false;
+            SetRecoveryResult("잔여 프로세스 정리 후 복구를 취소했습니다.");
+            ApplyActionAvailability();
+            return;
+        }
+
+        BeginRecoveryOperation("잔여 프로세스 정리와 관리자 권한 제한 복구를 준비하고 있습니다.");
+        SetRecoveryProgress("잔여 프로세스 종료 전 안전 조건을 다시 확인 중…");
+        ApplyActionAvailability();
+        try
+        {
+            var progress = RecoveryProgressForCurrentOperation();
+            var snapshot = await _controller.CleanResidualBoxAndPrepareAsync(approval, progress);
+            ApplySnapshot(snapshot);
+            if (snapshot.InspectionFailure is { } failure)
+            {
+                _recoveryActionsInvalidated = true;
+                RecoveryStateText.Text = "잔여 정리 후 확인 실패";
+                SetRecoveryResult("잔여 프로세스 정리 후 상태를 확인하지 못했습니다: " + ReadableFailure(failure.Message));
+                return;
+            }
+
+            ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
+            SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
+                ? "잔여 프로세스를 정리하고 관리자 권한 제한 복구를 확인했습니다. 카카오톡은 자동으로 실행하지 않습니다."
+                : ReadableFailure(snapshot.RecoveryResultDetail));
+        }
+        catch (Exception exception)
+        {
+            ApplyRecoveryOperationError(exception, "잔여 프로세스 정리·복구");
+            SetRecoveryResult($"잔여 프로세스 정리 후 복구를 완료하지 못했습니다: {ReadableException(exception)}");
+        }
+        finally
+        {
+            _operationInFlight = false;
+            RecoveryProgressText.Visibility = Visibility.Collapsed;
+            ApplyActionAvailability();
+        }
+    }
+
+    private static string FormatResidualProcess(BoxProcessObservation process)
+    {
+        var image = process.IdentityVerified && !string.IsNullOrWhiteSpace(process.ImageName)
+            ? process.ImageName.Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", string.Empty, StringComparison.Ordinal)
+            : "신원 미확인 전용 프로세스";
+        return $"- {image} · PID {process.ProcessId}";
+    }
+
     private async void RevokeAutomaticButton_Click(object sender, RoutedEventArgs e)
     {
         if (_closed || _isRenderMode || _actionInFlight || _inspectionInFlight || _settingsLoading || _recoveryActionsInvalidated || _operationInFlight || _recoveryPlan is not { AllowAutomatic: true })
@@ -1171,6 +1246,14 @@ public partial class MainWindow : Window
         ExportSetupButton.IsEnabled = !busy;
         ExportDiagnosticsButton.IsEnabled = !busy;
         PrepareRecoveryButton.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { CanApply: true };
+        var residualState = GetProcessState(_lastSnapshot?.AdminRights) == BoxProcessState.ResidualOnly &&
+            _lastSnapshot?.AdminRights?.Condition is AdminRightsCondition.MissingOrEmpty or AdminRightsCondition.Disabled;
+        var residualApprovalAvailable = _recoveryPlan?.ResidualCleanupApproval is not null;
+        ResidualCleanupButton.Visibility = residualState ? Visibility.Visible : Visibility.Collapsed;
+        ResidualCleanupButton.IsEnabled = !busy && !_recoveryActionsInvalidated && residualApprovalAvailable;
+        ResidualCleanupButton.ToolTip = residualApprovalAvailable
+            ? "확인된 SIDETALK 전용 box의 잔여 프로세스만 정리한 뒤 같은 복구 범위를 다시 확인합니다."
+            : "소유권·저장 경로·데이터 보존 정책·명령 상태를 새로 검증할 수 없어 잔여 프로세스 정리를 차단했습니다.";
         AutomaticRecoveryCheckBox.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { RequiresApproval: true } && !IsAdminRightsRepair(_recoveryPlan);
         KakaoUpdateGuideButton.IsEnabled = !commandBusy;
         RevokeAutomaticButton.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { AllowAutomatic: true };

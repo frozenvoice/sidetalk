@@ -6,7 +6,8 @@ namespace Sidetalk.Core;
 public enum SidetalkCommandAction
 {
     Launch,
-    Stop
+    Stop,
+    RecoveryBoxCleanup
 }
 
 /// <summary>A process handle retained until its exit and the box state are known.</summary>
@@ -64,7 +65,10 @@ public enum CommandLifecycleOutcome
     BoxOnlyResidual,
     StopSucceeded,
     StopResidual,
-    StopFailed
+    StopFailed,
+    RecoveryBoxCleanupSucceeded,
+    RecoveryBoxCleanupResidual,
+    RecoveryBoxCleanupFailed
 }
 
 public enum CommandWaitOutcome
@@ -182,6 +186,13 @@ public sealed class CommandLifecycle : IDisposable
         var hasResidual = processes.Count > 0;
         var result = current.Action switch
         {
+            SidetalkCommandAction.RecoveryBoxCleanup when exitCode == 0 && !hasResidual => new CommandLifecycleResult(CommandLifecycleOutcome.RecoveryBoxCleanupSucceeded, current.Action, exitCode, false, false, 0,
+                "전용 박스 정리 명령의 종료 코드 0과 빈 상자를 확인했습니다. 관리자 권한 제한 복구는 변경 계획을 다시 확인하고 별도로 승인하세요. 저장 데이터는 삭제하지 않았습니다."),
+            SidetalkCommandAction.RecoveryBoxCleanup when exitCode == 0 => new CommandLifecycleResult(CommandLifecycleOutcome.RecoveryBoxCleanupResidual, current.Action, exitCode, false, hasKakao, processes.Count,
+                "전용 박스 정리 명령은 끝났지만 프로세스가 남아 있습니다. 설정 복구를 진행하지 않습니다. 최신 상태를 확인하고 필요한 정리를 다시 승인하세요."),
+            SidetalkCommandAction.RecoveryBoxCleanup => new CommandLifecycleResult(CommandLifecycleOutcome.RecoveryBoxCleanupFailed, current.Action, exitCode, false, hasKakao, processes.Count,
+                exitCode is null ? "전용 박스 정리 명령의 종료는 확인됐지만 종료 코드는 미확인입니다. 정리 성공으로 판단하지 않습니다. 현재 상자 상태를 다시 확인하세요."
+                    : $"전용 박스 정리 명령이 오류 코드 {exitCode}를 반환했습니다. 정리 성공으로 판단하지 않습니다. 현재 상자 상태를 다시 확인하세요."),
             SidetalkCommandAction.Launch when hasKakao => new CommandLifecycleResult(CommandLifecycleOutcome.LaunchObserved, current.Action, exitCode, false, true, processes.Count,
                 "보조 카카오톡 프로세스가 전용 환경에서 확인되었습니다. 로그인 상태는 창에서 직접 확인하세요."),
             SidetalkCommandAction.Launch when hasResidual => new CommandLifecycleResult(CommandLifecycleOutcome.BoxOnlyResidual, current.Action, exitCode, false, false, processes.Count,

@@ -124,6 +124,16 @@ public sealed record SetupRecoveryFingerprint(
     public string ScopeKey => string.Join("|", ConfigPath, IniSha256, ExplicitSha256, EffectiveSha256,
         SectionsSha256, ProfileSha256, InstallSha256, UiSha256, UserSid, BoxName, StoragePath);
 
+    internal bool MatchesConfiguration(ConfigurationLayers configuration) =>
+        ExplicitSha256 == HashConfiguration(configuration.ExplicitBox, configuration.ExplicitGlobals) &&
+        EffectiveSha256 == HashConfiguration(configuration.EffectiveBox, configuration.EffectiveGlobals);
+
+    internal bool MatchesInstallation(string folder, string startExe, string version) =>
+        InstallSha256 == HashText(JsonSerializer.Serialize(new
+        {
+            SandboxiePath = folder, StartExePath = startExe, Version = version, Verified = true
+        }, RecoveryJson.Options));
+
     public static SetupRecoveryFingerprint FromObservation(SetupRecoveryObservation observation, BoxProfile? profile)
     {
         ArgumentNullException.ThrowIfNull(observation);
@@ -248,6 +258,8 @@ public sealed record SetupRecoveryPlan(
     string? InterruptedOperationId = null,
     BoxProfile? ProposedProfile = null)
 {
+    public ResidualBoxRecoveryApproval? ResidualCleanupApproval { get; init; }
+    public IReadOnlyList<SetupRecoveryProcessIdentity> ManagementProcesses { get; init; } = [];
     public bool CanApply => State is SetupRecoveryState.FirstSetup or SetupRecoveryState.ApprovalRequired or SetupRecoveryState.AutomaticallyApplicable or SetupRecoveryState.Interrupted;
     public bool IsHealthy => State == SetupRecoveryState.Healthy;
     public string ScopeFingerprint => Fingerprint.ScopeKey;

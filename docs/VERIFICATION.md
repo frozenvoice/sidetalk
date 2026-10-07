@@ -51,6 +51,14 @@ Get-Content -LiteralPath artifacts/release/SIDETALK-Setup.exe.sha256
 
 `Compare-Object`에 차이가 없고 설치기 해시도 일치해야 한다. 파일 개수나 제품 버전만 같다는 이유로 파일 동일성을 판단하지 않는다. required check 설정이 이 수동 정책과 충돌하면 필요한 검사 항목만 조정하고 다른 보호를 유지한다. 권한/플랜 제한으로 적용할 수 없으면 정확한 검사명과 미적용 설정을 보고하며 보호 전체 해제·가짜 성공 check·우회 병합은 하지 않는다.
 
+# 잔여 프로세스 정리와 제한 복구 — 2026-10-07
+
+시작 기준 main/origin/main은 `ce625661e94cd232e95135f5144b552e5a55b951`이며 별도 `codex/residual-box-recovery`에서 구현했다. 최종 `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`는 **117.00초, 종료 코드 0**이다. Release 앱·IsolationProbe 빌드 경고/오류 0, 콘솔 **324/324**(신규 52개), 새 잔여 WPF **6개**, 기존 관리자 권한 WPF **6개**·상호작용 **16개**·빠른 실행 **20개**·조용한 조회 **15개**가 통과했다. production 타이머 **24초·220표본·8회 조회**에서 표시·배치·포커스·스크롤 위반은 0이었다. 기본/최소 창의 실제 WPF 합성 화면과 비렌더 버튼 가용성을 확인했다.
+
+첫 통합 실행의 새 진단 fixture는 정상 제한 값을 넣고 차단을 기대해 실패했다. 대상인 제한 누락으로 fixture를 고치고 정상 helper-only 정책의 기존 Stop 보존 검사를 별도로 추가했다. 관리 UI가 초기·정리 후·Apply 직전에 나타나는 세 경우 모두 종료·설정 쓰기 전에 차단하는 회귀까지 포함한 최종 전체 검사 결과다. 합성 계정/파일/레지스트리·프로필·동의·기록·호스트·다른 박스 sentinel 보존과 read-only/render/타이머 정리·설정 쓰기 0을 확인했다.
+
+현재 사용자 환경의 읽기 전용 진단은 물리 프로필 경로 보호에 걸려 실제 box 상태가 미확인이다. 사용자 제공 4개 프로세스 진단과 합성 helper 4개 재현을 실제 환경의 종료 성공으로 보고하지 않는다. 현재 workspace의 vm-lab 및 확인한 VirtualBox CLI가 없어 승인된 별도 실제 Sandboxie terminate/SbieIni 통합 시험은 미수행이다. 실제 사용자 박스·설정·프로필·설치본을 변경하지 않았으며 BuildChecks·InstallerChecks·패키징·원격 CI dispatch·main 병합은 수행하지 않는다. [현재 동작·안전 조건·검사와 화면](RESIDUAL-BOX-RECOVERY.md)에 근거와 남은 범위를 기록했다.
+
 # 관리자 권한 제한 진단과 승인 복구 — 2026-10-07
 
 최종 `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`는 종료 코드 0으로 완료했다(98.44초). Release 앱·IsolationProbe 빌드 경고/오류 0, 콘솔 272/272, 새 관리자 권한 WPF 6개, 기존 상호작용 16개·빠른 실행 20개·조용한 조회 15개와 production 타이머 24초 관찰이 통과했다. 초기 통합 실행은 미검증 정책 조회의 기존 빠른 실행 범위 계약에서 실패했으며, 원래 차단 계약을 유지해 수정했다. 마지막 버전 미확인 처리와 UI 문구·캡처 수정 후 전체 통합 명령을 다시 실행했다. 기본/최소 창의 실제 WPF 합성 화면을 확인했고 최소 근거만 [ADMIN-RIGHTS-RECOVERY.md](ADMIN-RIGHTS-RECOVERY.md)에 보관했다.

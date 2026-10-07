@@ -33,7 +33,11 @@ internal static class AdminRightsUiChecks
             Check(Text(window, "RecoveryScopeText").Contains("새 승인", StringComparison.Ordinal), "Security repair displays automatic consent scope");
         });
         Verify(disabled with { BoxProcessIds = [10001], ProcessPolicy = ProcessPolicyStatus.EffectiveRulesUnverified,
-            AdminRights = disabled.AdminRights! with { ProcessIds = [10001] } },
+            AdminRights = disabled.AdminRights! with
+            {
+                ProcessIds = [10001],
+                BoxProcesses = [new BoxProcessObservation(10001, "KakaoTalk.exe", 1, true)]
+            } },
             plan with { State = SetupRecoveryState.Blocked, RequiresApproval = false, Blockers = ["전용 프로세스가 실행 중입니다."] },
             "running", output, window =>
         {
