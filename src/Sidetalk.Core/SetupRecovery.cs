@@ -111,7 +111,9 @@ internal sealed partial class SetupRecovery
         if (!observation.HostContextVerified) blockers.Add("일반 사용자 실행 컨텍스트를 확인하지 못했습니다.");
         if (!observation.Install.Verified) blockers.Add("검토된 Sandboxie 설치 경로·서명·버전을 확인하지 못했습니다.");
         if (!observation.OfficialTemplateBaselineVerified) blockers.Add("공식 Sandboxie 1.18.4 템플릿 기준을 확인하지 못했습니다.");
-        if (firstSetup ? !firstSetupPolicySafe : !observation.PolicySafe) blockers.Add("전용 환경에 검토되지 않은 설정이 있어 복구를 차단했습니다.");
+        if (firstSetup ? !firstSetupPolicySafe : !observation.PolicySafe &&
+            (profile is null || !AdminRightsRecovery.CapturePermitsRepair(observation, profile)))
+            blockers.Add("전용 환경에 검토되지 않은 설정이 있어 복구를 차단했습니다.");
         if (!observation.ProcessesQueried) blockers.Add("전용 환경 프로세스를 조회하지 못했습니다.");
         if (!observation.Ui.Fresh) blockers.Add("관리 UI 또는 설정 도구 때문에 공유 설정을 안전하게 변경할 수 없습니다. " + observation.Ui.Detail);
         if (observation.Ui.ForeignManagementProcesses.Count != 0)
@@ -128,6 +130,9 @@ internal sealed partial class SetupRecovery
         if (interrupted is not null)
             evidence.Add("완료되지 않은 복구 기록을 명시적으로 재조정해야 합니다: " + interrupted.OperationId);
         var changes = observation.ProposedChanges.Where(change => !change.Normalize().IsNoOp).ToArray();
+        if (!firstSetup && profile is not null && AdminRightsRecovery.ProposedChange(profile, observation.Configuration) is { } rightsRepair &&
+            !changes.Any(change => change.Identity.Equals(rightsRepair.Identity, StringComparison.OrdinalIgnoreCase)))
+            changes = changes.Append(rightsRepair).ToArray();
         if (proposedProfile is not null)
             changes = changes.Concat(FirstSetupChanges(observation, proposedProfile)).ToArray();
         var duplicate = changes.GroupBy(change => change.Identity, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1);
@@ -167,7 +172,11 @@ internal sealed partial class SetupRecovery
             return NewPlan(SetupRecoveryState.Healthy, "Sandboxie 전용 환경이 검증된 상태입니다.", changes, blockers, evidence,
                 requiresApproval: false, allowAutomatic: consent, observation, fingerprint, false);
         var state = consent ? SetupRecoveryState.AutomaticallyApplicable : (firstSetup ? SetupRecoveryState.FirstSetup : SetupRecoveryState.ApprovalRequired);
-        var summary = !firstSetup && changes.All(change => change.Kind == SetupRecoveryChangeKind.SetUserSetting)
+        var hasAdminRightsRepair = !firstSetup && changes.Any(change => change.Kind == SetupRecoveryChangeKind.RepairOwnedBoxSetting &&
+            change.Key.Equals(AdminRightsRecovery.Key, StringComparison.OrdinalIgnoreCase));
+        var summary = hasAdminRightsRepair
+            ? "보조 환경의 관리자 권한 제한이 변경되었습니다. 전용 앱을 정상 종료한 뒤 변경 계획을 새로 승인하여 제한을 복구하세요."
+            : !firstSetup && changes.All(change => change.Kind == SetupRecoveryChangeKind.SetUserSetting)
             ? "현재 격리 정책이 정상이라면 실행할 수 있습니다. 현재 사용자 자동 호환성 검사 재발 방지는 선택적 준비입니다."
             : firstSetup
             ? "SIDETALK 전용 환경을 처음 준비하려면 설정 변경을 승인해야 합니다."
@@ -191,6 +200,8 @@ internal sealed partial class SetupRecovery
         bool requireExistingConsent, IProgress<string>? progress, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        if (grantAutomaticConsent && AdminRightsRecovery.ContainsRepair(plan))
+            return Failed(string.Empty, "관리자 권한 제한 복구는 새 명시적 승인이 필요하며 자동 복구 동의에 포함할 수 없습니다.", null);
         if (!plan.CanApply)
             return Failed(string.Empty, "현재 복구 계획은 적용 가능한 상태가 아닙니다.", null);
         if (requireExistingConsent && !plan.AllowAutomatic)
@@ -870,7 +881,8 @@ internal sealed partial class SetupRecovery
 
     private static bool CapturePermitsRepair(SetupRecoveryObservation observation, BoxProfile? profile, SetupRecoveryPlan plan) =>
         CaptureIsSafe(observation) && profile is not null &&
-        (plan.IsFirstSetup ? IsFirstSetupCandidateSafe(observation, profile) : observation.PolicySafe);
+        (plan.IsFirstSetup ? IsFirstSetupCandidateSafe(observation, profile) : observation.PolicySafe ||
+            AdminRightsRecovery.ContainsRepair(plan) && AdminRightsRecovery.CapturePermitsRepair(observation, profile));
     private static bool IsApprovedUiTransition(SetupRecoveryUiState before, SetupRecoveryUiState after)
     {
 var afterIds = after.ApprovedManagementProcesses.Select(process => process.Normalize())

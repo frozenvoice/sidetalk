@@ -13,6 +13,7 @@ public sealed record AppSnapshot(
     bool ActionsPermitted = true)
 {
     public InspectionFailure? InspectionFailure { get; init; }
+    public AdminRightsObservation? AdminRights { get; init; }
     public string? RecoveryResultDetail { get; init; }
     /// <summary>Null when policy or journal state could not be verified; false only after validated reconciliation.</summary>
     public bool? CommandPending { get; init; }

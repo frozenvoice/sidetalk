@@ -18,6 +18,9 @@ public interface ISidetalkRuntimeSession : IDisposable
     ConfigurationLayers ReadConfiguration(string boxName);
     string FileRoot(string boxName);
     IReadOnlyList<BoxProcess> Processes(BoxProfile profile);
+    // Existing fake runtimes never fall through to native image or file inspection.
+    IReadOnlyList<KakaoImageEvidence> ReadKakaoImageEvidence(BoxProfile profile, DependencyInfo host, IReadOnlyList<BoxProcess> processes) =>
+        AdminRightsObservation.UnavailableImages(processes);
 }
 
 public sealed class SidetalkRuntime : ISidetalkRuntime
@@ -51,6 +54,8 @@ public sealed class SidetalkRuntime : ISidetalkRuntime
         public ConfigurationLayers ReadConfiguration(string boxName) => api.ReadConfiguration(boxName);
         public string FileRoot(string boxName) => api.FileRoot(boxName);
         public IReadOnlyList<BoxProcess> Processes(BoxProfile profile) => api.Processes(profile);
+        public IReadOnlyList<KakaoImageEvidence> ReadKakaoImageEvidence(BoxProfile profile, DependencyInfo host, IReadOnlyList<BoxProcess> processes) =>
+            WindowsKakaoImageDiagnostics.Read(profile, host, processes, () => api.Processes(profile));
         public void Dispose() => api.Dispose();
     }
 }

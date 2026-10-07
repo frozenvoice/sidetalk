@@ -54,6 +54,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
         var processPolicy = ProcessPolicyStatus.NotObserved;
         InspectionFailure? inspectionFailure = null;
         ConfigurationLayers? verifiedConfiguration = null;
+        AdminRightsObservation? adminRights = null;
         bool? commandPending = pendingRecord is not null || commandLifecycle.IsPending ? true : null;
         try
         {
@@ -79,15 +80,61 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             if (config.ExplicitBox.Count == 0)
                 return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "초기 설정 · 진단에서 필요한 전용 환경 설정과 복구 가능 여부를 확인하세요.");
             var policy = IsolationPolicy.Validate(profile, config);
-            if (!policy.Safe)
+            if (!policy.Owned)
                 return Blocked("격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.", policy.Issues);
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Blocked("저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
+            adminRights = AdminRightsObservation.FromConfiguration(config);
+            if (!policy.Safe)
+            {
+                // Observation is not permission: an owned box can be diagnosed despite
+                // a policy mismatch, without reconciling commands or enabling control.
+                IReadOnlyList<BoxProcess>? observedProcesses = null;
+                try
+                {
+                    observedProcesses = api.Processes(profile);
+                    adminRights = ObserveImages(api, adminRights, observedProcesses);
+                    processPolicy = observedProcesses.Count == 0 ? ProcessPolicyStatus.NoProcesses : ProcessPolicyStatus.EffectiveRulesUnverified;
+                }
+                catch (Exception error)
+                {
+                    adminRights = adminRights with { ProcessesQueried = false, ProcessIds = [],
+                        ProcessFailure = InspectionFailure.Sanitize(error.Message), Images = [] };
+                }
+                var notes = policy.Issues.ToList();
+                try
+                {
+                    var start = Path.Combine(Path.GetDirectoryName(sandboxie.Path!)!, "Start.exe");
+                    var hasPendingRecord = journal.ReadPending(profile, start) is not null;
+                    // A diagnostic read can prove an intent exists, but absence is
+                    // not the validated command reconciliation required for false.
+                    commandPending = hasPendingRecord || commandLifecycle.IsPending || pendingRecord is not null ? true : null;
+                    notes.Add(hasPendingRecord ? "읽기 전용 명령 기록 조회: 미완료 의도 있음"
+                        : "읽기 전용 명령 기록 조회: 미완료 의도 없음 · 명령 종료 재조정은 수행하지 않음");
+                }
+                catch (Exception error)
+                {
+                    commandPending = null;
+                    notes.Add("미완료 명령 기록 확인 실패: " + InspectionFailure.Sanitize(error.Message));
+                }
+                var changed = adminRights.Condition is AdminRightsCondition.MissingOrEmpty or AdminRightsCondition.Disabled;
+                var title = changed ? "보조 환경의 관리자 권한 제한이 변경되었습니다" : "격리 설정을 확인해주세요";
+                var detail = changed
+                    ? "현재 전용 박스의 DropAdminRights가 필수 값 y와 다릅니다. 카카오톡 업데이트 중 권한 허용을 선택하면 이 설정이 바뀔 수 있습니다. 사용자가 승인한 창이나 실제 관리자 토큰·업데이트 완료 여부는 확인하지 않았습니다. 새 실행과 강제 종료는 차단합니다."
+                    : "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.";
+                detail += !adminRights.ProcessesQueried
+                    ? " 프로세스 상태를 확인하지 못했습니다. 빈 상자로 간주하지 않습니다."
+                    : adminRights.ProcessIds.Count != 0
+                        ? " 보조 카카오톡을 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃이나 계정 삭제는 필요하지 않습니다. 현재 설정 변경은 기존 프로세스에 소급 적용됐다고 판단하지 않습니다."
+                        : " 최신 조회에서 전용 박스가 빈 것을 확인했습니다. 초기 설정 · 진단에서 필요한 변경 계획을 확인하세요.";
+                return Snapshot(Readiness.Blocked, title, detail, notes, observedProcesses);
+            }
             currentConfigurationVerified = true;
             verifiedConfiguration = config;
             var startExe = Path.Combine(Path.GetDirectoryName(sandboxie.Path!)!, "Start.exe");
             RecoverPending(profile, startExe);
             var (lifecycle, processes) = commandLifecycle.InspectProcesses(() => api.Processes(profile));
+            adminRights = ObserveImages(api, adminRights, processes);
             commandPending = lifecycle.IsPending || pendingRecord is not null;
             var checks = new[] {
                 "현재 전용 환경 소유 정보와 저장 경로 일치",
@@ -143,12 +190,26 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             var snapshot = new AppSnapshot(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
                 processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop,
                 DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed)
-            { InspectionFailure = inspectionFailure, CommandPending = commandPending };
+            { InspectionFailure = inspectionFailure, CommandPending = commandPending, AdminRights = adminRights };
             if (captureValidatedScope is not null && profile is not null && verifiedConfiguration is not null &&
                 currentConfigurationVerified && inspectionFailure is null && commandPending == false &&
                 (canLaunch || canStop))
                 captureValidatedScope(profile, kakao, sandboxie, verifiedConfiguration);
             return snapshot;
+        }
+
+        AdminRightsObservation ObserveImages(ISidetalkRuntimeSession session, AdminRightsObservation observation, IReadOnlyList<BoxProcess> processes)
+        {
+            IReadOnlyList<KakaoImageEvidence> images;
+            try { images = session.ReadKakaoImageEvidence(profile!, kakao, processes); }
+            catch (Exception error)
+            {
+                images = processes.Where(AdminRightsObservation.IsKakao).Select(process => new KakaoImageEvidence(
+                    process.Id, process.ImageName, null, null, ProgramPhysicalResolution.Unknown, null, null,
+                    InspectionFailure.Sanitize(error.Message))).ToArray();
+            }
+            return observation with { ProcessesQueried = true, ProcessIds = processes.Select(process => process.Id).ToArray(), Images = images };
+
         }
     }
 
