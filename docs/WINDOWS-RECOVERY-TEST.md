@@ -54,7 +54,7 @@
 
 ## CI 범위
 
-[Windows verification](../.github/workflows/windows-verify.yml)은 PR과 main push에서 `global.json` SDK 및 PowerShell 7로 `scripts/verify.ps1 -UiChecks`, `tests/Sidetalk.BuildChecks/Program.ps1`를 순서대로 실행한다. 빌드 상태를 공유하는 병렬 verify/publish는 없다. 배포본 교체·릴리스·Sandboxie 설치는 하지 않는다. `contents: read`와 고정된 공식 Actions 커밋을 사용하고 checkout 자격 증명을 남기지 않는다.
+[Windows verification](../.github/workflows/windows-verify.yml)은 명시적 `workflow_dispatch`에서만 `global.json` SDK 및 PowerShell 7로 `scripts/verify.ps1 -UiChecks`, `tests/Sidetalk.BuildChecks/Program.ps1`, `tests/Sidetalk.InstallerChecks/Program.ps1`를 순서대로 실행한다. 일반 PR·main push에는 원격 검증을 실행하지 않는다. 빌드 상태를 공유하는 병렬 verify/publish는 없다. 사용자 배포본 교체·릴리스·Sandboxie 설치는 하지 않는다. InstallerChecks는 테스트 전용 AppId·격리된 설치 위치만 사용한다. `contents: read`와 고정된 공식 Actions 커밋을 사용하고 checkout 자격 증명을 남기지 않는다.
 
 실패 로그와 합성 PNG만 7일간 보관한다. 실제 프로필/계정/INI 백업이나 fixture 전체 폴더는 업로드하지 않는다. Windows Server 기반 hosted runner 성공은 Windows 11 일반 사용자 GUI나 Sandboxie 승인 복구 성공의 증거가 아니다.
 

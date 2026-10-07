@@ -154,6 +154,8 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
                 configuration.ExplicitBox,
                 candidateGlobal,
                 candidateEffectiveGlobal)).Safe);
+        if (profile is not null && owned is not null && AdminRightsRecovery.ProposedChange(profile, configuration) is { } rightsRepair)
+            proposed.Add(rightsRepair);
         var processIds = profile is null ? Array.Empty<int>() : api.Processes(profile).Select(process => process.Id).ToArray();
         var management = CaptureManagementProcesses(folder, sid);
         var tools = CaptureActiveSbieIni(folder, sid);
@@ -249,6 +251,8 @@ internal sealed class WindowsSetupRecoveryEnvironment : ISetupRecoveryEnvironmen
         }
         if (isOwnedSetting)
         {
+            if (!plan.IsFirstSetup && !AdminRightsRecovery.IsRepairChange(change, lastProfile!))
+                return new(false, false, "기존 전용 환경에서는 승인된 관리자 권한 제한 한 항목만 복구할 수 있습니다.");
             var expected = IsolationPolicy.ExpectedForRecovery(lastProfile!, observation.Configuration.ExplicitBox);
             if (!expected.TryGetValue(change.Key, out var expectedValues) || !expectedValues.SequenceEqual(change.DesiredValues, StringComparer.Ordinal))
                 return new(false, false, "전용 환경 설정 목표가 IsolationPolicy.Expected와 다릅니다.");

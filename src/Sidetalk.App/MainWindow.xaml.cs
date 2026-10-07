@@ -359,13 +359,14 @@ public partial class MainWindow : Window
         var detail = string.IsNullOrWhiteSpace(snapshot.Detail) ? ReadinessDetail(snapshot.State) : snapshot.Detail;
         SetText(StatusTitleText, running ? "보조 환경 실행 중"
             : string.IsNullOrWhiteSpace(snapshot.Title) ? ReadinessTitle(snapshot.State) : snapshot.Title);
-        StatusDetailText.Text = running ? SummarizeRunningDetail(detail) : detail;
+        StatusDetailText.Text = running ? SummarizeRunningDetail(detail) : SummarizeAdminRightsDetail(snapshot, detail);
         PolicyDetailText.Text = detail;
         PolicySummaryText.Text = running
             ? (snapshot.CurrentConfigurationVerified ? "현재 격리 설정 확인됨 · 시작 당시 적용 규칙은 확인 불가" : "현재 격리 설정과 시작 당시 적용 규칙을 확인할 수 없습니다.")
             : string.Empty;
         PolicySummaryText.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
         PolicySummaryText.Foreground = (Brush)FindResource("WarningInkBrush");
+        ApplyAdminRightsPresentation(snapshot);
         StatusBadgeText.Text = ReadinessBadge(snapshot.State);
         var statusBrush = snapshot.State switch
         {
@@ -443,6 +444,7 @@ public partial class MainWindow : Window
         RecoverySummaryText.Text = string.IsNullOrWhiteSpace(plan.Summary)
             ? "현재 설정을 확인했습니다."
             : plan.Summary;
+        ApplyAdminRightsRecoveryPresentation(plan);
 
         var recoveryChanges = new List<string>();
         foreach (var change in plan.Changes.Where(change => !change.IsNoOp && change.Kind != SetupRecoveryChangeKind.AddOwnedBoxSetting))
@@ -600,6 +602,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (IsAdminRightsRepair(plan))
+        {
+            _operationInFlight = true;
+            ApplyActionAvailability();
+            var answer = MessageBox.Show(this,
+                "현재 조회로 확인한 관리자 권한 제한을 복구합니다. 아래 변경 계획을 새로 승인해야 하며 기존 자동 복구 동의로 적용하지 않습니다.\n\n" +
+                string.Join("\n", plan.Changes.Select(FormatRecoveryChange)) +
+                "\n\n승인된 관리 창 정리 대상은 복구 패널의 영향 범위를 확인하세요. 보조 환경이 비어 있고 현재 소유·설정이 승인 계획과 같을 때만 적용합니다. 프로필·계정 데이터·기존 기록은 보존합니다.\n\n표시된 변경 계획을 승인하고 복구할까요?",
+                "관리자 권한 제한 복구 승인", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+            if (answer != MessageBoxResult.OK)
+            {
+                _operationInFlight = false;
+                SetRecoveryResult("관리자 권한 제한 복구를 취소했습니다.");
+                ApplyActionAvailability();
+                return;
+            }
+        }
         BeginRecoveryOperation("복구를 준비하고 있습니다. 기존 실행 가능 상태는 해제했습니다.");
         _operationInFlight = true;
         SetRecoveryProgress("설정 백업 중…");
@@ -610,7 +629,7 @@ public partial class MainWindow : Window
             var progress = RecoveryProgressForCurrentOperation();
             var snapshot = await _controller.PrepareAsync(
                 plan,
-                AutomaticRecoveryCheckBox.IsChecked == true,
+                !IsAdminRightsRepair(plan) && AutomaticRecoveryCheckBox.IsChecked == true,
                 progress);
             ApplySnapshot(snapshot);
             if (snapshot.InspectionFailure is { } failure)
@@ -785,6 +804,8 @@ public partial class MainWindow : Window
 
     private static string FormatRecoveryChange(SetupRecoveryChange change)
     {
+        if (change.Kind == SetupRecoveryChangeKind.RepairOwnedBoxSetting && change.Key.Equals("DropAdminRights", StringComparison.OrdinalIgnoreCase))
+            return $"전용 box {SafeRecoveryText(change.Section)}의 DropAdminRights: {FormatAdminRightsValues(change.CurrentValues)} → y · 관리자 권한 제한 복구";
         if (change.Kind == SetupRecoveryChangeKind.RemoveGlobalTemplate)
             return "GlobalSettings의 Template 제거: " + string.Join(", ", change.CurrentValues.Except(change.DesiredValues, StringComparer.OrdinalIgnoreCase));
         if (change.Kind == SetupRecoveryChangeKind.SetUserSetting && change.Key == "SbieCtrl_AutoRunSoftCompat")
@@ -1150,7 +1171,8 @@ public partial class MainWindow : Window
         ExportSetupButton.IsEnabled = !busy;
         ExportDiagnosticsButton.IsEnabled = !busy;
         PrepareRecoveryButton.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { CanApply: true };
-        AutomaticRecoveryCheckBox.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { RequiresApproval: true };
+        AutomaticRecoveryCheckBox.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { RequiresApproval: true } && !IsAdminRightsRepair(_recoveryPlan);
+        KakaoUpdateGuideButton.IsEnabled = !commandBusy;
         RevokeAutomaticButton.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { AllowAutomatic: true };
         OpenRecoveryHistoryButton.IsEnabled = !busy;
         OpenEvidenceHistoryButton.IsEnabled = !busy && _evidenceInspection is { Items.Count: > 0 };

@@ -61,6 +61,7 @@ internal static class Program
         }
         RenderBasicFixtures(app, output, baseSnapshot);
         RenderRecoveryFixtures(app, output, baseSnapshot);
+        AdminRightsUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         AssertInterruptedChoiceReset(baseSnapshot);
         RunRefreshFailureFixtures(baseSnapshot);
         InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
