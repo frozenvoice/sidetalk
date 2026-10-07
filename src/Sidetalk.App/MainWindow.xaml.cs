@@ -65,6 +65,8 @@ public partial class MainWindow : Window
         _isRenderMode = isRenderMode;
         _confirmAction = confirmAction ?? ConfirmActionAsync;
         InitializeComponent();
+        AppVersionText.Text = "v" + SidetalkBuild.Version;
+        UpdateInspectionDetails();
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         ChecksList.ItemsSource = _checks;
         RecoveryChangesList.ItemsSource = _recoveryChanges;
@@ -115,6 +117,7 @@ public partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _closed = true;
+        CancelManualRefreshPresentation();
         _inspectionGeneration++;
         _intentGeneration++;
         _inspectionTimer.Stop();
@@ -136,6 +139,7 @@ public partial class MainWindow : Window
         _windowMinimized = minimized;
         if (minimized)
         {
+            CancelManualRefreshPresentation();
             CancelPendingAction();
             ApplyActionAvailability();
             return;
@@ -154,11 +158,11 @@ public partial class MainWindow : Window
 
     private async void InspectButton_Click(object sender, RoutedEventArgs e)
     {
-        await InspectAndApplyAsync(allowAutomaticRecovery: true);
+        await RequestManualRefreshAsync(allowAutomaticRecovery: true);
     }
 
     /// <summary>Runs one normal, asynchronous refresh. Test and render callers can await the same path.</summary>
-    public Task RefreshNowAsync() => InspectAndApplyAsync(allowAutomaticRecovery: false);
+    public Task RefreshNowAsync() => RequestManualRefreshAsync(allowAutomaticRecovery: false);
 
     private Task InspectAndApplyAsync(bool allowAutomaticRecovery = false)
     {
@@ -172,7 +176,6 @@ public partial class MainWindow : Window
         _lastSnapshot = null;
         _recoveryActionsInvalidated = true;
         _evidenceInspection = null;
-        _actionFeedback = null;
         UpdateRefreshSummary();
         ApplyActionAvailability();
         _inspectionTask = InspectCoreAsync(allowAutomaticRecovery, _inspectionGeneration);
@@ -188,56 +191,79 @@ public partial class MainWindow : Window
             // Display affordances survive a routine read, but _lastSnapshot is
             // empty until a current successful response earns authority again.
             var mainFailed = false;
+            AppSnapshot? observed = null;
+            Exception? mainError = null;
             try
             {
-                var snapshot = await _controller.InspectAsync();
+                observed = await _controller.InspectAsync();
                 if (!IsCurrentInspection(generation)) return;
                 _restoreInspectionRequired = false;
-                if (snapshot.InspectionFailure is { } failure)
-                {
-                    ApplyMainInspectionFailure(failure);
-                    mainFailed = true;
-                }
-                else ApplySnapshot(snapshot);
+                mainFailed = observed.InspectionFailure is not null;
             }
             catch (Exception exception)
             {
                 if (!IsCurrentInspection(generation)) return;
                 _restoreInspectionRequired = false;
-                ApplyMainInspectionError(exception);
+                mainError = exception;
                 mainFailed = true;
             }
 
             var recoveryFresh = false;
+            SetupRecoveryPlan? recovery = null;
+            Exception? recoveryError = null;
             try
             {
-                var plan = await _controller.InspectSetupRecoveryAsync();
+                recovery = await _controller.InspectSetupRecoveryAsync();
                 if (!IsCurrentInspection(generation)) return;
-                ApplyRecoveryPlan(plan);
                 recoveryFresh = true;
             }
             catch (Exception exception)
             {
                 if (!IsCurrentInspection(generation)) return;
-                ApplyRecoveryFailure(exception, "recovery-inspection", "복구 상태 확인", preserveFreshExecution: !mainFailed);
+                recoveryError = exception;
             }
 
             // This action has separate safety conditions and remains inspectable
             // when the ordinary repair plan cannot be applied.
+            SetupRecoveryEvidenceInspection? evidence = null;
+            Exception? evidenceError = null;
             try
             {
-                var evidence = await _controller.InspectInterruptedEvidenceAsync();
+                evidence = await _controller.InspectInterruptedEvidenceAsync();
                 if (!IsCurrentInspection(generation)) return;
-                ApplyInterruptedEvidence(evidence);
             }
             catch (Exception exception)
             {
                 if (!IsCurrentInspection(generation)) return;
+                evidenceError = exception;
+            }
+
+            // Publish the completed observation together, so a successful main
+            // read cannot briefly erase a still-unverified recovery failure.
+            if (mainError is not null) ApplyMainInspectionError(mainError);
+            else if (observed?.InspectionFailure is { } failure) ApplyMainInspectionFailure(failure);
+            else if (observed is not null) ApplySnapshot(observed, updateChecks: false);
+            if (recovery is not null) ApplyRecoveryPlan(recovery);
+            if (recoveryError is not null)
+                ApplyRecoveryFailure(recoveryError, "recovery-inspection", "복구 상태 확인", preserveFreshExecution: !mainFailed);
+            if (evidence is not null) ApplyInterruptedEvidence(evidence);
+            if (evidenceError is not null)
+            {
                 _evidenceInspection = null;
+                _evidenceInspectionFailure = ReadableException(evidenceError);
                 EvidencePanel.Visibility = Visibility.Visible;
                 EvidenceSummaryText.Text = "중단 흔적을 확인하지 못했습니다. 진단 저장 또는 상태 새로 확인을 이용하세요.";
-                InspectionDiagnostics.Record("evidence-inspection", exception, persist: !_isRenderMode);
+                InspectionDiagnostics.Record("evidence-inspection", evidenceError, persist: !_isRenderMode);
             }
+            if (!mainFailed && observed is not null)
+            {
+                var checks = observed.Checks.Count == 0
+                    ? new List<string> { "Sandboxie 연결 및 설정 적용 후 검사합니다." } : observed.Checks.ToList();
+                if (recoveryError is not null) checks.Add("복구 상태 확인 오류: " + ReadableException(recoveryError));
+                if (evidenceError is not null) checks.Add("중단 흔적 확인 오류: " + ReadableException(evidenceError));
+                ReplaceIfChanged(_checks, checks);
+            }
+            UpdateInspectionDetails();
             if (allowAutomaticRecovery && recoveryFresh && !mainFailed &&
                 !_isRenderMode && !_actionInFlight && !_restoreInspectionRequired &&
                 !_automaticRecoveryAttempted &&
@@ -272,9 +298,17 @@ public partial class MainWindow : Window
 
         try
         {
-            var progress = new Progress<string>(SetRecoveryProgress);
+            var progress = RecoveryProgressForCurrentOperation();
             var snapshot = await _controller.PrepareAutomaticallyAsync(progress);
             ApplySnapshot(snapshot);
+            if (snapshot.InspectionFailure is { } failure)
+            {
+                _recoveryActionsInvalidated = true;
+                RecoveryStateText.Text = "복구 후 확인 실패";
+                SetRecoveryResult("복구 작업 후 상태를 확인하지 못했습니다: " + ReadableFailure(failure.Message));
+                _automaticRecoveryFailureScopeFingerprint = _recoveryPlan?.ScopeFingerprint;
+                return;
+            }
             ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
                 ? "자동 복구를 마쳤습니다. 카카오톡은 자동으로 실행하지 않습니다."
@@ -297,18 +331,34 @@ public partial class MainWindow : Window
     }
 
     public void ApplySnapshot(AppSnapshot snapshot)
+        => ApplySnapshot(snapshot, updateChecks: true);
+
+    private void ApplySnapshot(AppSnapshot snapshot, bool updateChecks)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (_closed) return;
+        if (snapshot.InspectionFailure is { } failure)
+        {
+            ApplyMainInspectionFailure(failure);
+            return;
+        }
         _lastSnapshot = snapshot;
         _unsafeActionsInvalidated = false;
         _lastObservedSnapshot = snapshot;
+        _lastSuccessfulInspectionAt = snapshot.CheckedAt;
+        _mainInspectionFailure = null;
+        if (!_actionInFlight && _actionFeedbackRequiresRevalidation)
+        {
+            _actionFeedback = null;
+            _actionFeedbackRequiresRevalidation = false;
+        }
+        UpdateInspectionDetails();
         if (_windowMinimized) return;
 
         var running = snapshot.State is Readiness.Running or Readiness.RunningUnverified;
         var detail = string.IsNullOrWhiteSpace(snapshot.Detail) ? ReadinessDetail(snapshot.State) : snapshot.Detail;
-        StatusTitleText.Text = running ? "보조 환경 실행 중"
-            : string.IsNullOrWhiteSpace(snapshot.Title) ? ReadinessTitle(snapshot.State) : snapshot.Title;
+        SetText(StatusTitleText, running ? "보조 환경 실행 중"
+            : string.IsNullOrWhiteSpace(snapshot.Title) ? ReadinessTitle(snapshot.State) : snapshot.Title);
         StatusDetailText.Text = running ? SummarizeRunningDetail(detail) : detail;
         PolicyDetailText.Text = detail;
         PolicySummaryText.Text = running
@@ -325,6 +375,8 @@ public partial class MainWindow : Window
         };
         StatusDot.Fill = (Brush)FindResource(statusBrush);
         StatusBadgeText.Foreground = (Brush)FindResource(statusBrush);
+        InitialSetupPanel.Visibility = snapshot.State is Readiness.SetupRequired or Readiness.MissingDependency
+            ? Visibility.Visible : Visibility.Collapsed;
         UpdateRefreshSummary();
         KakaoSummaryText.Text = DependencySummary(snapshot.Kakao);
         SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
@@ -339,18 +391,8 @@ public partial class MainWindow : Window
         ApplyDependency(KakaoAvailabilityText, KakaoInfoText, snapshot.Kakao);
         ApplyDependency(SandboxieAvailabilityText, SandboxieInfoText, snapshot.Sandboxie);
 
-        _checks.Clear();
-        if (snapshot.Checks.Count == 0)
-        {
-            _checks.Add("Sandboxie 연결 및 설정 적용 후 검사합니다.");
-        }
-        else
-        {
-            foreach (var check in snapshot.Checks)
-            {
-                _checks.Add(check);
-            }
-        }
+        if (updateChecks) ReplaceIfChanged(_checks, snapshot.Checks.Count == 0
+            ? ["Sandboxie 연결 및 설정 적용 후 검사합니다."] : snapshot.Checks);
 
         if (!string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail))
             SetRecoveryResult(ReadableFailure(snapshot.RecoveryResultDetail));
@@ -369,6 +411,12 @@ public partial class MainWindow : Window
         }
 
         _recoveryPlan = plan;
+        if (_recoveryInspectionFailure is not null)
+        {
+            _recoveryInspectionFailure = null;
+            SetRecoveryResult(string.Empty);
+        }
+        UpdateInspectionDetails();
         if (_automaticRecoveryFailureScopeFingerprint is not null &&
             !string.Equals(_automaticRecoveryFailureScopeFingerprint, plan.ScopeFingerprint, StringComparison.Ordinal))
         {
@@ -396,22 +444,22 @@ public partial class MainWindow : Window
             ? "현재 설정을 확인했습니다."
             : plan.Summary;
 
-        _recoveryChanges.Clear();
+        var recoveryChanges = new List<string>();
         foreach (var change in plan.Changes.Where(change => !change.IsNoOp && change.Kind != SetupRecoveryChangeKind.AddOwnedBoxSetting))
         {
-            _recoveryChanges.Add(FormatRecoveryChange(change));
+            recoveryChanges.Add(FormatRecoveryChange(change));
         }
 
         var ownedChanges = plan.Changes.Count(change => !change.IsNoOp && change.Kind == SetupRecoveryChangeKind.AddOwnedBoxSetting);
         if (ownedChanges > 0)
-            _recoveryChanges.Add($"SIDETALK 전용 환경 생성: 표시된 전용 저장 경로에 격리 설정 {ownedChanges}개 적용 · 기존 데이터 보존");
+            recoveryChanges.Add($"SIDETALK 전용 환경 생성: 표시된 전용 저장 경로에 격리 설정 {ownedChanges}개 적용 · 기존 데이터 보존");
 
-        if (_recoveryChanges.Count == 0)
+        if (recoveryChanges.Count == 0)
         {
-            _recoveryChanges.Add(plan.IsHealthy ? "변경할 설정이 없습니다." : "확인된 변경 항목이 없습니다.");
+            recoveryChanges.Add(plan.IsHealthy ? "변경할 설정이 없습니다." : "확인된 변경 항목이 없습니다.");
         }
 
-        _recoveryAffected.Clear();
+        var recoveryAffected = new List<string>();
         var evidenceTargets = plan.Evidence
             .Where(text => !plan.Changes.Any(change => text == change.Section + "." + change.Key))
             .Select(SafeRecoveryText)
@@ -420,19 +468,23 @@ public partial class MainWindow : Window
             .ToArray();
         foreach (var evidence in evidenceTargets)
         {
-            _recoveryAffected.Add("영향 확인: " + evidence);
+            recoveryAffected.Add("영향 확인: " + evidence);
         }
 
-        _recoveryAffected.Add(evidenceTargets.Any(text => text.StartsWith("관리 UI 종료 대상:", StringComparison.Ordinal))
+        recoveryAffected.Add(evidenceTargets.Any(text => text.StartsWith("관리 UI 종료 대상:", StringComparison.Ordinal))
             ? "열린 Sandboxie 관리 창: 위에 표시된 종료 대상은 승인 후 닫힙니다."
             : "열린 Sandboxie 관리 창: 확인된 종료 대상이 없습니다.");
 
 
-        _recoveryPreserved.Clear();
-        _recoveryPreserved.Add("서비스·드라이버·Start.exe·메인 카카오톡·다른 Sandboxie 상자는 종료하거나 변경하지 않습니다.");
-        _recoveryPreserved.Add("보조 계정과 대화 데이터는 삭제하거나 복사하지 않습니다.");
-        _recoveryPreserved.Add("profile.json·소유 식별자·전용 저장 공간과 미완료 명령 기록을 보존합니다.");
-        _recoveryPreserved.Add("확인된 범위 밖의 설정과 데이터는 건드리지 않습니다.");
+        var recoveryPreserved = new List<string>();
+        recoveryPreserved.Add("서비스·드라이버·Start.exe·메인 카카오톡·다른 Sandboxie 상자는 종료하거나 변경하지 않습니다.");
+        recoveryPreserved.Add("보조 계정과 대화 데이터는 삭제하거나 복사하지 않습니다.");
+        recoveryPreserved.Add("profile.json·소유 식별자·전용 저장 공간과 미완료 명령 기록을 보존합니다.");
+        recoveryPreserved.Add("확인된 범위 밖의 설정과 데이터는 건드리지 않습니다.");
+
+        ReplaceIfChanged(_recoveryChanges, recoveryChanges);
+        ReplaceIfChanged(_recoveryAffected, recoveryAffected);
+        ReplaceIfChanged(_recoveryPreserved, recoveryPreserved);
 
         var safeBlockers = plan.Blockers.Select(SafeRecoveryText).Where(text => !string.IsNullOrWhiteSpace(text)).ToArray();
         RecoveryBlockerText.Text = safeBlockers.Length == 0
@@ -464,6 +516,8 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(inspection);
         if (_closed) return;
         _evidenceInspection = inspection;
+        _evidenceInspectionFailure = null;
+        UpdateInspectionDetails();
         if (_windowMinimized) return;
         EvidencePanel.Visibility = inspection.Items.Count == 0 && !inspection.BlocksExecution ? Visibility.Collapsed : Visibility.Visible;
         EvidenceSummaryText.Text = ReadableFailure(inspection.Detail);
@@ -517,9 +571,15 @@ public partial class MainWindow : Window
         ApplyActionAvailability();
         try
         {
-            var progress = new Progress<string>(SetRecoveryProgress);
+            var progress = RecoveryProgressForCurrentOperation();
             var snapshot = await _controller.ReconcileInterruptedEvidenceAsync(inspection, progress);
             ApplySnapshot(snapshot);
+            if (snapshot.InspectionFailure is { } failure)
+            {
+                _recoveryActionsInvalidated = true;
+                SetRecoveryResult("원본 보존 작업 후 상태를 확인하지 못했습니다: " + ReadableFailure(failure.Message));
+                return;
+            }
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
                 ? "원본 보존과 재조정을 확인했습니다. 남은 차단 이유와 승인할 복구 항목을 확인하세요."
                 : ReadableFailure(snapshot.RecoveryResultDetail));
@@ -547,12 +607,19 @@ public partial class MainWindow : Window
 
         try
         {
-            var progress = new Progress<string>(SetRecoveryProgress);
+            var progress = RecoveryProgressForCurrentOperation();
             var snapshot = await _controller.PrepareAsync(
                 plan,
                 AutomaticRecoveryCheckBox.IsChecked == true,
                 progress);
             ApplySnapshot(snapshot);
+            if (snapshot.InspectionFailure is { } failure)
+            {
+                _recoveryActionsInvalidated = true;
+                RecoveryStateText.Text = "복구 후 확인 실패";
+                SetRecoveryResult("복구 작업 후 상태를 확인하지 못했습니다: " + ReadableFailure(failure.Message));
+                return;
+            }
             ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
                 ? "복구가 완료되었습니다. 카카오톡은 자동으로 실행하지 않습니다."
@@ -645,6 +712,8 @@ public partial class MainWindow : Window
     {
         RecoveryProgressText.Text = message;
         RecoveryProgressText.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
+        _recoveryFeedback = string.IsNullOrWhiteSpace(message) ? null : "설정 복구 · " + message;
+        UpdateRefreshSummary();
     }
 
     private void SetRecoveryResult(string message)
@@ -653,14 +722,18 @@ public partial class MainWindow : Window
         RecoveryResultText.ToolTip = message;
         _hasRecoveryResult = !string.IsNullOrWhiteSpace(message);
         if (_hasRecoveryResult) RecoveryPanel.Visibility = Visibility.Visible;
+        _recoveryFeedback = _hasRecoveryResult ? message : null;
+        UpdateRefreshSummary();
     }
 
     private void ClearStaleSnapshot(string detail)
     {
+        _actionFeedback = detail;
+        UpdateRefreshSummary();
         _inspectionGeneration++;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
-        StatusTitleText.Text = "작업 진행 중";
+        SetText(StatusTitleText, "작업 진행 중");
         StatusBadgeText.Text = "진행 중";
         StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
         StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
@@ -671,10 +744,13 @@ public partial class MainWindow : Window
 
     private void BeginRecoveryOperation(string detail)
     {
+        _actionFeedback = null;
+        _recoveryFeedback = detail;
+        UpdateRefreshSummary();
         _inspectionGeneration++;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
-        StatusTitleText.Text = "복구 진행 중";
+        SetText(StatusTitleText, "복구 진행 중");
         StatusBadgeText.Text = "진행 중";
         StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
         StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
@@ -774,6 +850,8 @@ public partial class MainWindow : Window
 
     private void ApplyMainInspectionFailureView(string detail)
     {
+        _mainInspectionFailure = detail;
+        UpdateInspectionDetails();
         var lastSnapshot = _lastObservedSnapshot;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
@@ -784,8 +862,8 @@ public partial class MainWindow : Window
         if (lastSnapshot is { } snapshot)
         {
             var checkedAt = snapshot.CheckedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-            StatusTitleText.Text = "마지막 확인 결과";
-            StatusDetailText.Text = "현재 상태를 확인하지 못했습니다. 아래 정보는 마지막 확인 결과이며 현재 상태를 보장하지 않습니다. 다시 확인하세요.";
+            SetText(StatusTitleText, "마지막 확인 결과");
+            StatusDetailText.Text = "현재 상태를 확인하지 못했습니다. 아래 정보는 마지막 확인 결과이며 현재 상태를 보장하지 않습니다. 다시 확인하세요.\n" + detail;
             PolicyDetailText.Text = $"마지막 확인 ({checkedAt}) · {detail}";
             PolicySummaryText.Text = "마지막 확인 당시의 격리 설정이며 현재 상태는 미확인입니다.";
             KakaoSummaryText.Text = "마지막 확인 · " + DependencySummary(snapshot.Kakao);
@@ -794,7 +872,6 @@ public partial class MainWindow : Window
                 ? $"마지막 확인 {snapshot.BoxProcessIds.Count}개 · PID {string.Join(", ", snapshot.BoxProcessIds)}"
                 : "마지막 확인 결과 · 현재 프로세스 상태 미확인";
             CheckedAtText.Text = "마지막 확인 " + checkedAt;
-            RefreshSummaryText.Text = $"마지막 확인 {checkedAt} · 현재 자동 확인 실패 · 다시 확인하세요";
             if (_checks.Count == 0 || !_checks[0].StartsWith("현재 상태를 확인하지 못했습니다", StringComparison.Ordinal))
             {
                 _checks.Insert(0, "현재 상태를 확인하지 못했습니다. 아래 정보는 마지막 확인 결과입니다.");
@@ -802,11 +879,10 @@ public partial class MainWindow : Window
         }
         else
         {
-            StatusTitleText.Text = "현재 상태를 확인하지 못했습니다";
-            StatusDetailText.Text = "현재 상태를 확인하지 못했습니다. 다시 확인하거나 진단 JSON을 저장하세요.";
+            SetText(StatusTitleText, "현재 상태를 확인하지 못했습니다");
+            StatusDetailText.Text = "현재 상태를 확인하지 못했습니다. 다시 확인하거나 진단 JSON을 저장하세요.\n" + detail;
             PolicyDetailText.Text = $"현재 상태 확인 실패 · {detail}";
             PolicySummaryText.Visibility = Visibility.Collapsed;
-            RefreshSummaryText.Text = "마지막 확인 없음 · 다시 확인하세요";
             KakaoSummaryText.Text = "확인할 수 없음";
             SandboxieSummaryText.Text = "확인할 수 없음";
             BoxNameText.Text = "확인할 수 없음";
@@ -822,6 +898,7 @@ public partial class MainWindow : Window
         {
             _checks.Add(errorLine);
         }
+        UpdateRefreshSummary();
         ApplyActionAvailability();
     }
 
@@ -839,6 +916,8 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(exception);
         InspectionDiagnostics.Record(diagnosticStage, exception, persist: !_isRenderMode);
+        if (diagnosticStage == "recovery-inspection") _recoveryInspectionFailure = ReadableException(exception);
+        UpdateInspectionDetails();
         _recoveryActionsInvalidated = true;
         if (!preserveFreshExecution)
         {
@@ -854,7 +933,7 @@ public partial class MainWindow : Window
 
         if (!preserveFreshExecution)
         {
-            StatusTitleText.Text = "복구 후 상태 확인 필요";
+            SetText(StatusTitleText, "복구 후 상태 확인 필요");
             StatusBadgeText.Text = "다시 확인 필요";
             StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
             StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
@@ -878,20 +957,23 @@ public partial class MainWindow : Window
         InspectionDiagnostics.Record("ui", exception, persist: !_isRenderMode);
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
-        StatusTitleText.Text = "상태 확인 실패";
+        SetText(StatusTitleText, "상태 확인 실패");
         StatusBadgeText.Text = "확인 실패";
         StatusDetailText.Text = ReadableException(exception);
+        _mainInspectionFailure = StatusDetailText.Text;
+        UpdateInspectionDetails();
         PolicyDetailText.Text = StatusDetailText.Text;
         PolicySummaryText.Visibility = Visibility.Collapsed;
         StatusDot.Fill = (Brush)FindResource("ErrorInkBrush");
         StatusBadgeText.Foreground = (Brush)FindResource("ErrorInkBrush");
-        RefreshSummaryText.Text = "자동 확인 실패 · 상태를 다시 확인하세요";
+        UpdateRefreshSummary();
         KakaoSummaryText.Text = "확인 실패";
         SandboxieSummaryText.Text = "확인 실패";
         BoxNameText.Text = "확인할 수 없음";
         StoragePathText.Text = "확인할 수 없음";
         ProcessIdsText.Text = "확인할 수 없음";
-        CheckedAtText.Text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        CheckedAtText.Text = _lastSuccessfulInspectionAt is { } last
+            ? "마지막 확인 " + last.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "마지막 확인 없음";
         KakaoAvailabilityText.Text = "확인 실패";
         KakaoInfoText.Text = "진단을 실행해 오류 내용을 저장할 수 있습니다.";
         SandboxieAvailabilityText.Text = "확인 실패";
@@ -969,6 +1051,7 @@ public partial class MainWindow : Window
         finally
         {
             _operationInFlight = false;
+            _actionFeedback = null;
             ApplyActionAvailability();
             await InspectAndApplyAsync();
         }
@@ -1024,6 +1107,7 @@ public partial class MainWindow : Window
         finally
         {
             _operationInFlight = false;
+            _actionFeedback = null;
             ApplyActionAvailability();
             await InspectAndApplyAsync();
         }
@@ -1062,7 +1146,7 @@ public partial class MainWindow : Window
         CancelActionButton.Visibility = _actionInFlight && !_operationInFlight && !_closed ? Visibility.Visible : Visibility.Collapsed;
         CancelActionButton.IsEnabled = _actionInFlight && !_operationInFlight && !_intentCancelled && !_closed;
         var busy = commandBusy || _inspectionInFlight || _restoreInspectionRequired;
-        InspectButton.IsEnabled = !busy;
+        InspectButton.IsEnabled = !commandBusy && !_manualRefreshInFlight;
         ExportSetupButton.IsEnabled = !busy;
         ExportDiagnosticsButton.IsEnabled = !busy;
         PrepareRecoveryButton.IsEnabled = !busy && !_recoveryActionsInvalidated && _recoveryPlan is { CanApply: true };
@@ -1088,15 +1172,12 @@ public partial class MainWindow : Window
     private void UpdateRefreshSummary()
     {
         if (_closed || _windowMinimized) return;
-        if (_actionFeedback is not null)
-        {
-            RefreshSummaryText.Text = _actionFeedback;
-            return;
-        }
-        var last = _lastObservedSnapshot is { } snapshot
-            ? $"마지막 확인 {snapshot.CheckedAt.ToLocalTime():HH:mm:ss}" : "마지막 확인 없음";
-        RefreshSummaryText.Text = _inspectionInFlight || _restoreInspectionRequired ? last + " · 확인 중…"
-            : _unsafeActionsInvalidated ? last + " · 확인 실패 · 다시 확인하세요" : last;
+        var summary = _actionFeedback ?? (_mainInspectionFailure is not null
+            ? (_lastObservedSnapshot is null ? "현재 상태 확인 실패 · 마지막 확인 없음. " : "현재 상태 확인 실패 · 마지막 확인 결과입니다. ") + _mainInspectionFailure
+            : _recoveryFeedback ?? (_evidenceInspectionFailure is not null
+                ? "중단 흔적 확인 실패 · " + _evidenceInspectionFailure
+                : _lastObservedSnapshot is null ? "환경 확인 중" : string.Empty));
+        SetText(RefreshSummaryText, summary);
     }
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)

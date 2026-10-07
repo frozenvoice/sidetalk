@@ -1,0 +1,7 @@
+{
+  "DurationSeconds": 24,
+  "Samples": 219,
+  "ScheduledInspectionCount": 8,
+  "Violations": [],
+  "Scope": "Production MainWindow DispatcherTimer with synthetic controller boundaries; no accounts or native settings"
+}

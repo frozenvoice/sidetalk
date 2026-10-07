@@ -74,7 +74,7 @@ internal static class InteractionChecks
         var refresh = window.RefreshNowAsync();
         await poll.Started.Task;
         Check(launch.IsEnabled && stop.IsEnabled, "Ordinary held inspection flickered command buttons");
-        Check(Text(window, "RefreshSummaryText").Contains("확인 중", StringComparison.Ordinal), "Held inspection has no freshness feedback");
+        Check(!Text(window, "RefreshSummaryText").Contains("확인 중", StringComparison.Ordinal), "Held automatic inspection exposed in-progress feedback");
         poll.Complete(snapshot);
         await refresh;
         descriptor.RemoveValueChanged(launch, launchChanged);
@@ -187,6 +187,8 @@ internal static class InteractionChecks
         Check(!Button(window, "LaunchButton").IsEnabled && !Button(window, "StopButton").IsEnabled, "Failed poll retained stale command authority");
         await window.RefreshNowAsync();
         Check(controller.LaunchCount == 0 && Button(window, "LaunchButton").IsEnabled, "Successful retry replayed discarded intent");
+        Check(!Text(window, "RefreshSummaryText").Contains("확인 실패", StringComparison.Ordinal),
+            "Successful revalidation retained stale queued-request failure feedback");
         var returnedFailure = controller.QueueInspection();
         refresh = window.RefreshNowAsync();
         request = window.RequestActionAsync(SidetalkCommandAction.Launch);

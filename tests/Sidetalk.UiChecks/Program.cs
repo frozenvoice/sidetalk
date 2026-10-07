@@ -32,8 +32,8 @@ internal static class Program
 
     private static void Run(string[] args)
     {
-        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only")))
-            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only]");
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only")))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only]");
 
         var app = new App();
         app.InitializeComponent();
@@ -54,7 +54,8 @@ internal static class Program
         if (args.Length == 2)
         {
             if (args[1] == "--interaction-only") InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
-            else QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+            else if (args[1] == "--quick-launch-only") QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+            else QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
             app.Shutdown();
             return;
         }
@@ -64,6 +65,7 @@ internal static class Program
         RunRefreshFailureFixtures(baseSnapshot);
         InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+        QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
         File.WriteAllText(invalidLogDirectory, "fixture");
         InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;

@@ -1,0 +1,69 @@
+{
+  "Probes": [
+    {
+      "Scale": 1,
+      "Compact": false,
+      "PixelWidth": 866,
+      "PixelHeight": 703,
+      "WindowWidth": 880,
+      "WindowHeight": 740
+    },
+    {
+      "Scale": 1,
+      "Compact": true,
+      "PixelWidth": 726,
+      "PixelHeight": 603,
+      "WindowWidth": 740,
+      "WindowHeight": 640
+    },
+    {
+      "Scale": 1.25,
+      "Compact": false,
+      "PixelWidth": 1082,
+      "PixelHeight": 879,
+      "WindowWidth": 880,
+      "WindowHeight": 740
+    },
+    {
+      "Scale": 1.25,
+      "Compact": true,
+      "PixelWidth": 907,
+      "PixelHeight": 754,
+      "WindowWidth": 740,
+      "WindowHeight": 640
+    },
+    {
+      "Scale": 1.5,
+      "Compact": false,
+      "PixelWidth": 1298,
+      "PixelHeight": 1054,
+      "WindowWidth": 880,
+      "WindowHeight": 740
+    },
+    {
+      "Scale": 1.5,
+      "Compact": true,
+      "PixelWidth": 1088,
+      "PixelHeight": 904,
+      "WindowWidth": 740,
+      "WindowHeight": 640
+    },
+    {
+      "Scale": 2,
+      "Compact": false,
+      "PixelWidth": 1731,
+      "PixelHeight": 1406,
+      "WindowWidth": 880,
+      "WindowHeight": 740
+    },
+    {
+      "Scale": 2,
+      "Compact": true,
+      "PixelWidth": 1451,
+      "PixelHeight": 1206,
+      "WindowWidth": 740,
+      "WindowHeight": 640
+    }
+  ],
+  "Limitations": "Actual scaled RenderTargetBitmap PNGs and WPF DIP layout probes; real monitor DPI and WM_DPICHANGED are untested."
+}

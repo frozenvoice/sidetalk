@@ -31,7 +31,9 @@ public partial class MainWindow
         var intent = ++_intentGeneration;
         _intentCancelled = false;
         _actionInFlight = true;
+        _actionFeedbackRequiresRevalidation = false;
         var dispatched = false;
+        var commandFailed = false;
         _actionFeedback = action == SidetalkCommandAction.Launch
             ? "실행 요청 접수 · 현재 상태 확인 중…" : "종료 요청 접수 · 현재 상태 확인 중…";
         UpdateRefreshSummary();
@@ -42,6 +44,7 @@ public partial class MainWindow
             if (!IsCurrentIntent(intent)) return;
             if (_unsafeActionsInvalidated || !Permits(_lastSnapshot, action))
             {
+                _actionFeedbackRequiresRevalidation = true;
                 _actionFeedback = _unsafeActionsInvalidated
                     ? "확인 실패 · 요청을 실행하지 않았습니다. 다시 확인하세요."
                     : "현재 확인 결과로 요청을 진행할 수 없습니다. 다시 확인하세요.";
@@ -67,6 +70,7 @@ public partial class MainWindow
             catch (Exception exception)
             {
                 if (IsCurrentInspection(generation)) ApplyMainInspectionError(exception);
+                _actionFeedbackRequiresRevalidation = true;
                 _actionFeedback = "확인 실패 · 요청을 실행하지 않았습니다.";
                 return;
             }
@@ -74,6 +78,7 @@ public partial class MainWindow
             if (snapshot.InspectionFailure is { } failure)
             {
                 ApplyMainInspectionFailure(failure);
+                _actionFeedbackRequiresRevalidation = true;
                 _actionFeedback = "확인 실패 · 요청을 실행하지 않았습니다.";
                 return;
             }
@@ -81,6 +86,7 @@ public partial class MainWindow
             if (!IsCurrentIntent(intent)) return;
             if (!Permits(snapshot, action))
             {
+                _actionFeedbackRequiresRevalidation = true;
                 _actionFeedback = "현재 확인 결과로 요청을 진행할 수 없습니다.";
                 return;
             }
@@ -97,7 +103,12 @@ public partial class MainWindow
         }
         catch (Exception exception)
         {
-            if (!_closed) ApplyError(exception);
+            commandFailed = true;
+            if (!_closed)
+            {
+                ApplyError(exception);
+                _actionFeedback = (action == SidetalkCommandAction.Launch ? "실행 요청 실패: " : "종료 요청 실패: ") + ReadableException(exception);
+            }
         }
         finally
         {
@@ -109,7 +120,16 @@ public partial class MainWindow
             {
                 UpdateRefreshSummary();
                 ApplyActionAvailability();
-                if (dispatched) await InspectAndApplyAsync(allowAutomaticRecovery: true);
+                if (dispatched)
+                {
+                    if (!commandFailed) _actionFeedback = "명령 후 현재 상태를 확인하고 있습니다…";
+                    await InspectAndApplyAsync(allowAutomaticRecovery: true);
+                    if (!commandFailed)
+                    {
+                        _actionFeedback = null;
+                        UpdateRefreshSummary();
+                    }
+                }
             }
         }
     }
@@ -118,6 +138,7 @@ public partial class MainWindow
     {
         if (!_actionInFlight || _operationInFlight || _intentCancelled) return;
         _intentCancelled = true;
+        _actionFeedbackRequiresRevalidation = false;
         _intentGeneration++;
         _actionFeedback = "요청을 취소했습니다.";
         UpdateRefreshSummary();
