@@ -21,6 +21,12 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 
 설치·업데이트 전에는 SIDETALK와 설치본의 `tools/IsolationProbe`를 정상 종료하세요. 실행 중이면 설치 프로그램이 아무것도 바꾸지 않고 멈추며, 어떤 프로세스도 종료하지 않습니다. `artifacts/publish/win-x64`는 설치 프로그램을 만드는 빌드 산출물이며 일상 실행 위치가 아닙니다.
 
+## 설치형과 포터블 동시 배포
+
+다음 배포부터 **`SIDETALK-Setup.exe`**(설치형)와 **`SIDETALK-<버전>-win-x64-portable.zip`**(설치 없이 압축 해제 후 실행)을 같은 버전으로 준비합니다. GitHub에서는 **릴리스 한 건에 다운로드 두 개**를 첨부합니다. Windows 11 x64에서 `pwsh -NoProfile -File scripts/prepare-distributions.ps1`을 실행하면 전체 검증과 self-contained publish를 재사용해 `artifacts/release/`에 두 파일과 `SHA256SUMS.txt`를 생성합니다. 이 과정은 설치·릴리스 게시를 실행하지 않습니다.
+
+포터블 ZIP은 원하는 로컬 폴더에 **전체 압축을 풀고** `Sidetalk.exe`를 실행합니다. `tools/IsolationProbe`와 DLL을 EXE 옆에 보존해야 하며, 카카오톡과 Sandboxie Plus는 별도로 설치되어 있어야 합니다. 포터블도 프로필·전용 box·보조 계정 데이터를 `%LOCALAPPDATA%\\SIDETALK`에 저장하므로 USB 전용 완전 무설정판은 아닙니다. 설치본과 포터블을 동시에 실행하지 말고, 경로를 옮겼다면 앱이 소유한 바로가기만 검증 후 다시 저장하세요. 포터블은 Windows 설치된 앱이나 시작 메뉴에 등록되지 않고 자동 설치 업데이트도 제공하지 않습니다.
+
 ## 빠른 실행과 보조 창 식별
 
 설정을 마친 뒤 **실행 · 식별** 탭에서 바탕화면/시작 메뉴의 **보조 카카오톡 실행**을 선택하고 **바로가기 선택 저장**을 누릅니다. 바로가기는 현재 `Sidetalk.exe --launch-secondary`를 호출합니다. 작은 진행·취소 창에서 검사와 기존 실행 확인을 거치며, 메인 창을 먼저 열 필요가 없습니다. **이 전용 프로필의 빠른 실행 허용 → 빠른 실행 동의 저장**은 확인창 생략을 위한 별도 선택이며 기본 OFF입니다. 프로필·설치·격리 설정 범위가 바뀌면 다시 확인합니다.
