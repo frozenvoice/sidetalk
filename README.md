@@ -2,7 +2,7 @@
 
 Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용 Sandboxie Plus 환경**으로 실행하는 한국어 데스크톱 앱입니다.
 
-> **0.2.0 사전 검증 빌드 — 사용자별 설치형 배포.** 0.2.0은 배포 방식(`SIDETALK-Setup.exe`)과 제품 버전 단일화가 바뀌었고, 격리·실행·복구 규칙은 0.1.6과 같습니다. 아래 계정 검증은 0.1.6 기준입니다. 2026-09-16 현재 PC에서 사용자가 보조 계정 로그인과 본계정 동시 송수신을 확인했습니다. 계정 없는 파일/HKCU 격리 시험은 통과했으며, 실제 계정 데이터 분리·알림·재실행 후 로그인과 대화 유지 등은 추가 검증이 필요합니다. [검증 결과](docs/VERIFICATION.md)와 [실환경 검증 절차](docs/ACCEPTANCE.md)를 먼저 읽으세요.
+> **0.2.0 사전 검증 빌드 — 설치형·포터블 배포.** 두 배포물은 같은 self-contained publish를 사용합니다. 아래 계정 검증은 0.1.6 기준입니다. 2026-09-16 현재 PC에서 사용자가 보조 계정 로그인과 본계정 동시 송수신을 확인했습니다. 계정 없는 파일/HKCU 격리 시험은 통과했으며, 실제 계정 데이터 분리·알림·재실행 후 로그인과 대화 유지 등은 추가 검증이 필요합니다. [검증 결과](docs/VERIFICATION.md)와 [실환경 검증 절차](docs/ACCEPTANCE.md)를 먼저 읽으세요.
 
 ## 실행
 
@@ -11,7 +11,7 @@ Windows 11에서 공식 카카오톡의 보조 인스턴스를 **SIDETALK 전용
 - Windows 11 x64
 - 공식 서명이 유효한 카카오톡 (2026-09-16 현재 PC: 26.8.0.5312)
 - Sandboxie Plus 1.18.4 x64 (설치본의 사용자 구성요소 5.73.4 / 서명된 드라이버 5.73.2 조합)
-- `SIDETALK-Setup.exe`는 self-contained 배포라 .NET 런타임을 따로 설치할 필요가 없습니다. (framework-dependent ZIP은 .NET 10 Desktop Runtime x64 필요)
+- 정식 설치형과 `SIDETALK-<버전>-win-x64-portable.zip`은 self-contained 배포라 .NET 런타임을 따로 설치할 필요가 없습니다. 개발용 framework-dependent ZIP은 .NET 10 Desktop Runtime x64가 필요합니다.
 
 .NET 10 이전의 저장 형식 호환성, 패키지 검사 재현 명령과 별도 실환경 확인 항목은 [.NET 10 이전 기록](docs/NET10-MIGRATION.md)에 있습니다.
 
@@ -20,6 +20,14 @@ ARM64, 다른 Sandboxie 버전, 포터블/사용자 지정 카카오톡 경로�
 이전 버전에서 업그레이드할 때에는 먼저 이전 SIDETALK가 요청한 명령이 끝났는지 확인하세요. 재시작 복구 기록은 0.1.3부터 생성하므로, 이전 버전이 이미 시작한 기록 없는 명령을 소급 복구하지는 못합니다.
 
 설치·업데이트 전에는 SIDETALK와 설치본의 `tools/IsolationProbe`를 정상 종료하세요. 실행 중이면 설치 프로그램이 아무것도 바꾸지 않고 멈추며, 어떤 프로세스도 종료하지 않습니다. `artifacts/publish/win-x64`는 설치 프로그램을 만드는 빌드 산출물이며 일상 실행 위치가 아닙니다.
+
+## 설치형과 포터블 동시 배포
+
+**`SIDETALK-Setup.exe`**(설치형)와 **`SIDETALK-<버전>-win-x64-portable.zip`**(압축 해제 후 실행)을 GitHub **릴리스 한 건에 함께** 첨부합니다. Windows 11 x64에서 `pwsh -NoProfile -File scripts/prepare-distributions.ps1`을 실행하면 기본 빌드·콘솔 안전성·시험 도구 검증을 포함한 self-contained publish를 한 번 수행하고 같은 폴더로 두 배포물을 만듭니다. `artifacts/release/`에 두 파일, 개별 `.sha256`, `SHA256SUMS.txt`, 소스 SHA·버전·전체 payload 해시를 기록한 `SIDETALK-distributions.json`을 생성합니다. 합성 UI·BuildChecks·InstallerChecks와 공개 전 전체 원격 검증은 [검증 절차](docs/VERIFICATION.md)에서 별도로 확인합니다. 준비 스크립트는 설치·릴리스 게시를 실행하지 않습니다.
+
+포터블 ZIP은 원하는 로컬 폴더에 **전체 압축을 풀고** 그 폴더의 `Sidetalk.exe`를 실행합니다. DLL·런타임·필수 리소스와 `tools/IsolationProbe`의 하위 파일을 그대로 유지하세요. 공식 카카오톡과 Sandboxie Plus 1.18.4는 두 배포물에 포함되지 않으며 사용자 PC에 별도로 설치되어 있어야 합니다. 포터블도 프로필·전용 box·보조 계정 데이터와 명령·복구 기록을 `%LOCALAPPDATA%\SIDETALK`에 보존하고 설치형과 같은 준비 검사·복구 승인·격리 정책을 적용합니다. 설치본과 포터블은 동시에 실행하지 마세요. 위치를 옮겼다면 새 폴더에서 실행해 사용자가 선택한 소유 바로가기만 **바로가기 선택 저장**으로 갱신합니다([상세 안내](docs/INSTALL.md)). 포터블은 설치된 앱·제거 프로그램에 등록되지 않고 자동 설치 업데이트도 제공하지 않습니다. 앱에서 명시적으로 선택한 보조 실행 바로가기·로그인 실행은 별도 기능입니다.
+
+준비가 실패하면 이전 배포 묶음이 남을 수 있습니다. 파일 존재만으로 새 빌드 성공을 판단하지 말고 종료 코드와 manifest의 소스 SHA·버전·해시를 확인하세요. 공개할 커밋의 깨끗한 소스와 전체 원격 검증 성공을 확인한 뒤에만 두 배포물을 함께 전달합니다.
 
 ## 빠른 실행과 보조 창 식별
 
@@ -115,6 +123,9 @@ pwsh -File scripts/build.ps1
 
 # 이미 publish된 결과로 SIDETALK-Setup.exe만 생성 (설치하지 않음)
 pwsh -File scripts/build-installer.ps1
+
+# 정식 설치형·포터블을 같은 self-contained publish로 한 번에 준비 (설치·게시 없음)
+pwsh -File scripts/prepare-distributions.ps1
 ```
 
 `verify.ps1`는 Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드만 수행합니다. 기존 배포 폴더·ZIP·사용자 설정을 변경하지 않으며, 실행 중인 배포본을 검사해 검증을 막지 않습니다. `bin/obj`와 테스트용 `artifacts/tests`에는 빌드·합성 검사 결과가 생깁니다. 실제 빌드 출력이 잠겼다면 dotnet이 출력한 파일 경로와 오류를 확인하세요. 스크립트가 프로세스를 종료하지는 않습니다. `-UiChecks` 결과는 매번 새 임시 폴더에 생성하고 위치를 출력합니다. 두 스크립트는 `bin/obj`를 공유하므로 동시에 실행하지 마세요.

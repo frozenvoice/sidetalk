@@ -1,4 +1,8 @@
-param([switch]$SelfContained)
+param(
+    [switch]$SelfContained,
+    # prepare-distributions holds the existing publish lock across both packagers.
+    [IO.FileStream]$BuildLock
+)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'build-common.ps1')
 $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -11,7 +15,8 @@ $previousOutput = Join-Path $staging 'previous-win-x64'
 $stagedZip = Join-Path $staging 'release.zip'
 $previousZip = Join-Path $staging 'previous.zip'
 $safeToCleanStaging = $true
-$buildLock = $null
+$heldBuildLock = $null
+$ownsBuildLock = $false
 
 function Assert-ArtifactPath([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
@@ -54,7 +59,16 @@ try {
     $lockPath = Join-Path $artifacts '.publish.lock'
     Assert-ArtifactPath $lockPath
     New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-    $buildLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    if ($null -ne $BuildLock) {
+        if (-not $BuildLock.CanRead -or -not $BuildLock.CanWrite -or -not $BuildLock.CanSeek -or
+            -not [string]::Equals([IO.Path]::GetFullPath($BuildLock.Name), $lockPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'BuildLock must be the live artifacts/.publish.lock stream held by the distribution caller.'
+        }
+        $heldBuildLock = $BuildLock
+    } else {
+        $heldBuildLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $ownsBuildLock = $true
+    }
     Assert-OutputNotRunning
 
     Complete-SidetalkStage
@@ -126,7 +140,7 @@ try {
     } catch {
         Write-Warning "Could not clean staging; files preserved at $staging. $_"
     } finally {
-        if ($null -ne $buildLock) { $buildLock.Dispose() }
+        if ($ownsBuildLock -and $null -ne $heldBuildLock) { $heldBuildLock.Dispose() }
         Pop-Location
     }
 }
