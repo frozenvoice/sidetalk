@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [switch]$KeepFixtureOnFailure
+    [switch]$KeepFixtureOnFailure,
+    # Focused mocks only; the default full BuildChecks gate is unchanged.
+    [switch]$DistributionChecksOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,7 +74,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Entry,
     [switch]$UiChecks,
 
-    [switch]$SelfContained
+    [switch]$SelfContained,
+    [string]$BuildLockMode,
+    [string]$ReleaseDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -129,6 +133,33 @@ function dotnet {
             Microsoft.PowerShell.Management\Copy-Item -LiteralPath $versionSource -Destination (Join-Path $publishOutput 'Sidetalk.IsolationProbe.dll') -Force
             Microsoft.PowerShell.Management\Copy-Item -LiteralPath $versionSource -Destination (Join-Path $publishOutput 'Sidetalk.IsolationProbe.exe') -Force
         }
+        if ($Entry -eq 'prepare-distributions.ps1') {
+            $prefix = if ($isApp) { 'Sidetalk' } else { 'Sidetalk.IsolationProbe' }
+            Set-Content -LiteralPath (Join-Path $publishOutput ($prefix + '.deps.json')) -Value '{}' -Encoding utf8
+            $frameworks = @(@{ name = 'Microsoft.NETCore.App'; version = '10.0.0' })
+            if ($isApp) { $frameworks += @{ name = 'Microsoft.WindowsDesktop.App'; version = '10.0.0' } }
+            @{ runtimeOptions = @{ includedFrameworks = $frameworks } } | ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath (Join-Path $publishOutput ($prefix + '.runtimeconfig.json')) -Encoding utf8
+            foreach ($name in @('coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll')) {
+                Set-Content -LiteralPath (Join-Path $publishOutput $name) -Value "synthetic $name" -Encoding utf8
+            }
+            if ($isApp) {
+                Microsoft.PowerShell.Management\Copy-Item -LiteralPath $versionSource -Destination (Join-Path $publishOutput 'Sidetalk.Core.dll')
+                foreach ($name in @('PresentationFramework.dll', 'wpfgfx_cor3.dll')) {
+                    Set-Content -LiteralPath (Join-Path $publishOutput $name) -Value "synthetic $name" -Encoding utf8
+                }
+            }
+            if ($failStage -eq 'distribution-missing-runtime') {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $publishOutput 'hostpolicy.dll')
+            }
+            if ($isApp -and $failStage -eq 'distribution-foreign') {
+                Set-Content -LiteralPath (Join-Path $publishOutput 'KakaoTalk.exe') -Value 'forbidden fixture' -Encoding utf8
+            }
+            if ($isApp -and $failStage -eq 'distribution-runtime-dependent') {
+                @{ runtimeOptions = @{ framework = @{ name = 'Microsoft.WindowsDesktop.App'; version = '10.0.0' } } } |
+                    ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $publishOutput ($prefix + '.runtimeconfig.json')) -Encoding utf8
+            }
+        }
     }
     $global:LASTEXITCODE = 0
 }
@@ -146,6 +177,13 @@ function Move-Item {
     [CmdletBinding()]
     param([string]$LiteralPath, [string]$Destination, [switch]$Force)
     Write-HarnessLog 'move' @{ Source = $LiteralPath; Destination = $Destination }
+    if ($failStage -in @('distribution-promotion', 'distribution-rollback') -and
+        $LiteralPath.EndsWith('\.distributions-stage\release') -and $Destination.EndsWith('\artifacts\release')) {
+        throw 'synthetic distribution promotion failure'
+    }
+    if ($failStage -eq 'distribution-rollback' -and $LiteralPath.EndsWith('\previous-release')) {
+        throw 'synthetic distribution rollback failure'
+    }
     if ($env:SIDETALK_BUILD_CHECK_FAIL -in @('promotion', 'rollback') -and
         ([IO.Path]::GetFileName($LiteralPath) -eq 'release.zip') -and
         ([IO.Path]::GetFileName($Destination) -like 'SIDETALK-*.zip')) {
@@ -175,7 +213,30 @@ function Compress-Archive {
     param([string[]]$Path, [string]$DestinationPath)
     if ($env:SIDETALK_BUILD_CHECK_FAIL -eq 'archive') { throw 'synthetic archive failure' }
     Microsoft.PowerShell.Archive\Compress-Archive -Path $Path -DestinationPath $DestinationPath
+    if ($failStage -in @('distribution-archive-missing', 'distribution-archive-tamper', 'distribution-archive-duplicate', 'distribution-archive-unsafe')) {
+        $archive = [IO.Compression.ZipFile]::Open($DestinationPath, [IO.Compression.ZipArchiveMode]::Update)
+        try {
+            $entry = @($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq 'Sidetalk.Core.dll' })[0]
+            if ($failStage -eq 'distribution-archive-missing') { $entry.Delete() }
+            elseif ($failStage -eq 'distribution-archive-tamper') {
+                $length = [int]$entry.Length
+                $entry.Delete()
+                $stream = $archive.CreateEntry('Sidetalk.Core.dll').Open()
+                try { $stream.Write([byte[]]::new($length), 0, $length) } finally { $stream.Dispose() }
+            } else {
+                $name = if ($failStage -eq 'distribution-archive-duplicate') { 'sidetalk.core.dll' } else { '../escape.dll' }
+                $archive.CreateEntry($name) | Out-Null
+            }
+        } finally { $archive.Dispose() }
+    }
     Write-HarnessLog 'archive' @{ Destination = $DestinationPath }
+}
+
+function git {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    if ($Arguments -contains 'rev-parse') { '1234567890123456789012345678901234567890' }
+    elseif ($failStage -eq 'distribution-dirty') { ' M fixture-source.cs' }
+    $global:LASTEXITCODE = 0
 }
 
 $entryPath = Join-Path $root ('scripts\' + $Entry)
@@ -184,12 +245,21 @@ if ($Entry -eq 'verify.ps1') {
     $invokeArgs = @{ UiChecks = $UiChecks }
 } elseif ($Entry -eq 'build.ps1') {
     $invokeArgs = @{ SelfContained = $SelfContained }
+} elseif ($Entry -eq 'build-installer.ps1' -and $ReleaseDir) {
+    $invokeArgs = @{ ReleaseDir = $ReleaseDir }
+}
+$borrowed = $null
+if ($BuildLockMode) {
+    $borrowedPath = if ($BuildLockMode -eq 'wrong') { Join-Path $root '.wrong-publish.lock' } else { Join-Path $root 'artifacts/.publish.lock' }
+    $borrowed = [IO.File]::Open($borrowedPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    if ($BuildLockMode -eq 'closed') { $borrowed.Dispose() }
+    $invokeArgs.BuildLock = $borrowed
 }
 # Capture the returned hash object without console-table width truncation.
-& $entryPath @invokeArgs | ForEach-Object {
+try { & $entryPath @invokeArgs | ForEach-Object {
     if ($_ -is [pscustomobject] -and $_.Algorithm -eq 'SHA256') { $_ | ConvertTo-Json -Compress }
     else { $_ }
-}
+} } finally { if ($null -ne $borrowed) { $borrowed.Dispose() } }
 exit $LASTEXITCODE
 '@
     Set-Content -LiteralPath (Join-Path $Root '.harness-child.ps1') -Value $runner -Encoding utf8
@@ -203,7 +273,7 @@ function New-Fixture {
     New-Item -ItemType Directory -Path (Join-Path $root 'docs') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'scripts') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'profile') -Force | Out-Null
-    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1', 'ensure-dotnet.ps1', 'install-local.ps1', 'build-installer.ps1', 'prepare-inno.ps1')) {
+    foreach ($name in @('build.ps1', 'build-common.ps1', 'verify.ps1', 'ensure-dotnet.ps1', 'install-local.ps1', 'build-installer.ps1', 'prepare-inno.ps1', 'prepare-distributions.ps1')) {
         Copy-Item -LiteralPath (Join-Path $repo ('scripts\' + $name)) -Destination (Join-Path $root ('scripts\' + $name))
     }
     Copy-Item -LiteralPath (Join-Path $repo 'build-local.cmd') -Destination (Join-Path $root 'build-local.cmd')
@@ -230,7 +300,7 @@ function New-Fixture {
     return $root
 }
 
-function Invoke-Fixture([string]$Root, [string]$Entry, [string]$Failure = '', [switch]$Running, [switch]$UiChecks, [switch]$SelfContained) {
+function Invoke-Fixture([string]$Root, [string]$Entry, [string]$Failure = '', [switch]$Running, [switch]$UiChecks, [switch]$SelfContained, [string]$BuildLockMode, [string]$ReleaseDir) {
     Remove-Item -LiteralPath (Join-Path $Root 'harness.log') -Force -ErrorAction SilentlyContinue
     $oldRoot = $env:SIDETALK_BUILD_CHECK_ROOT
     $oldFailure = $env:SIDETALK_BUILD_CHECK_FAIL
@@ -243,6 +313,8 @@ function Invoke-Fixture([string]$Root, [string]$Entry, [string]$Failure = '', [s
         $args = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', (Join-Path $Root '.harness-child.ps1'), '-Entry', $Entry)
         if ($UiChecks) { $args += '-UiChecks' }
         if ($SelfContained) { $args += '-SelfContained' }
+        if ($BuildLockMode) { $args += @('-BuildLockMode', $BuildLockMode) }
+        if ($ReleaseDir) { $args += @('-ReleaseDir', $ReleaseDir) }
         $output = @(& $pwsh @args 2>&1 | ForEach-Object { [string]$_ })
         $code = $LASTEXITCODE
         $log = @()
@@ -300,6 +372,191 @@ function Assert-PublishArguments($Log, [bool]$SelfContained) {
         Assert-True (($args -contains '-r') -and ($args[[Array]::IndexOf($args, '-r') + 1] -eq 'win-x64')) 'publish RID must be win-x64'
         Assert-True (($args -contains '--self-contained') -and ($args[[Array]::IndexOf($args, '--self-contained') + 1] -eq $expected)) "publish self-contained must be $expected"
     }
+}
+
+function New-DistributionFixture {
+    $fixture = New-Fixture
+    $image = Join-Path $fixtureRoot '.distribution-version.dll'
+    if (-not (Test-Path -LiteralPath $image)) {
+        $source = Join-Path $fixtureRoot '.distribution-version.cs'
+        Set-Content -LiteralPath $source -Encoding utf8 -Value @'
+using System.Reflection;
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
+[assembly: AssemblyInformationalVersion("0.2.0")]
+public static class DistributionFixture { public static string Version { get { return "0.2.0"; } } }
+'@
+        $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+        $output = & $csc /nologo /target:library ("/out:$image") $source 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Could not build fixture version metadata: $output" }
+    }
+    Copy-Item -LiteralPath $image -Destination (Join-Path $fixture '.fixture-version.dll') -Force
+    Set-Content -LiteralPath (Join-Path $fixture 'Directory.Build.props') -Encoding utf8 -Value @'
+<Project><PropertyGroup><Nullable>enable</Nullable></PropertyGroup><PropertyGroup><SidetalkVersion>0.2.0</SidetalkVersion></PropertyGroup></Project>
+'@
+    $release = Join-Path $fixture 'artifacts/release'
+    New-Item -ItemType Directory -Path $release | Out-Null
+    foreach ($name in @('SIDETALK-Setup.exe', 'SIDETALK-Setup.exe.sha256', 'SIDETALK-0.2.0-win-x64-portable.zip',
+            'SIDETALK-0.2.0-win-x64-portable.zip.sha256', 'SHA256SUMS.txt', 'SIDETALK-distributions.json', 'old.marker')) {
+        Set-Content -LiteralPath (Join-Path $release $name) -Value ("previous complete release: " + $name) -Encoding utf8
+    }
+    New-Item -ItemType Directory -Path (Join-Path $release 'logs') | Out-Null
+    Set-Content -LiteralPath (Join-Path $release 'logs/unrelated.log') -Value 'another task evidence' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $fixture 'scripts/build-installer.ps1') -Encoding utf8 -Value @'
+param([string]$SourceDir, [string]$ReleaseDir, [IO.FileStream]$BuildLock)
+$ErrorActionPreference = 'Stop'
+if ($null -eq $BuildLock -or -not $BuildLock.CanRead -or -not $BuildLock.CanWrite) { throw 'missing live shared lock' }
+$lockPath = Join-Path $env:SIDETALK_BUILD_CHECK_ROOT 'artifacts/.publish.lock'
+if ($BuildLock.Name -ne [IO.Path]::GetFullPath($lockPath)) { throw 'wrong shared lock path' }
+$blocked = $false
+try {
+    $probe = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $probe.Dispose()
+} catch [IO.IOException] { $blocked = $true }
+if (-not $blocked) { throw 'publish lock was released by child builder' }
+if ($ReleaseDir -ne (Join-Path $env:SIDETALK_BUILD_CHECK_ROOT 'artifacts/.distributions-stage/release')) { throw 'installer used final release before pair verification' }
+Write-HarnessLog 'installer' @{ Source = $SourceDir; Release = $ReleaseDir; SharedLockHeld = $blocked }
+if ($env:SIDETALK_BUILD_CHECK_FAIL -eq 'distribution-installer') { exit 51 }
+$setup = Join-Path $ReleaseDir 'SIDETALK-Setup.exe'
+Copy-Item -LiteralPath (Join-Path $SourceDir 'Sidetalk.exe') -Destination $setup
+$hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($env:SIDETALK_BUILD_CHECK_FAIL -eq 'distribution-installer-hash') { $hash = '0' * 64 }
+[IO.File]::WriteAllText(($setup + '.sha256'), "$hash  SIDETALK-Setup.exe" + [Environment]::NewLine)
+Set-Content -LiteralPath ($setup + '.unsigned.txt') -Value 'synthetic unsigned installer'
+if ($env:SIDETALK_BUILD_CHECK_FAIL -eq 'distribution-publish-changed') {
+    Set-Content -LiteralPath (Join-Path $SourceDir 'README.md') -Value 'changed during installer compile'
+}
+exit 0
+'@
+    return $fixture
+}
+
+function Assert-DistributionClean([string]$Fixture) {
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Fixture 'artifacts/.distributions-stage'))) 'distribution staging left behind'
+    $probe = [IO.File]::Open((Join-Path $Fixture 'artifacts/.publish.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $probe.Dispose()
+}
+
+function Test-DualDistributionSuccess {
+    $fixture = New-DistributionFixture
+    $profileBefore = Get-FileSnapshot (Join-Path $fixture 'profile')
+    foreach ($failure in @('', 'distribution-dirty')) {
+        $run = Invoke-Fixture $fixture 'prepare-distributions.ps1' -Failure $failure
+        Assert-Equal 0 $run.ExitCode "dual preparation failed: $($run.Output)"
+        Assert-VerificationCalls $run.Log
+        Assert-PublishArguments $run.Log $true
+        $installer = @($run.Log | Where-Object Kind -eq 'installer')
+        Assert-Equal 1 $installer.Count 'installer compilation count'
+        Assert-True $installer[0].SharedLockHeld 'one continuous publish lock was not held'
+        Assert-DistributionClean $fixture
+        $release = Join-Path $fixture 'artifacts/release'
+        $manifest = Get-Content -LiteralPath (Join-Path $release 'SIDETALK-distributions.json') -Raw | ConvertFrom-Json
+        Assert-Equal 1 $manifest.schemaVersion 'manifest schema'
+        Assert-Equal '0.2.0' $manifest.version 'manifest version'
+        Assert-Equal '1234567890123456789012345678901234567890' $manifest.sourceCommit 'source commit'
+        Assert-Equal ($failure -eq 'distribution-dirty') $manifest.sourceDirty 'source dirty flag'
+        Assert-True $manifest.selfContained 'self-contained provenance'
+        $publish = Join-Path $fixture 'artifacts/publish/win-x64'
+        Assert-Equal @(Get-ChildItem -LiteralPath $publish -File -Force -Recurse).Count $manifest.payload.Count 'manifest did not include entire publish'
+        Assert-Equal (Get-FileHash -LiteralPath (Join-Path $publish 'Sidetalk.exe')).Hash.ToLowerInvariant() $manifest.appExecutableSha256 'manifest executable hash'
+        Assert-Equal 2 $manifest.artifacts.Count 'manifest distribution count'
+        foreach ($asset in $manifest.artifacts) {
+            $file = Join-Path $release $asset.name
+            Assert-Equal (Get-Item -LiteralPath $file).Length $asset.length 'asset manifest length'
+            Assert-Equal (Get-FileHash -LiteralPath $file).Hash.ToLowerInvariant() $asset.sha256 'asset manifest hash'
+            Assert-Equal "$($asset.sha256)  $($asset.name)" (Get-Content -LiteralPath ($file + '.sha256') -Raw).Trim() 'asset checksum'
+        }
+        Assert-Equal 'previous complete release: old.marker' (Get-Content -LiteralPath (Join-Path $release 'old.marker')) 'unrelated release evidence was removed'
+        Assert-Equal 'another task evidence' (Get-Content -LiteralPath (Join-Path $release 'logs/unrelated.log')) 'unrelated nested release log was changed'
+        $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $release 'SIDETALK-0.2.0-win-x64-portable.zip'))
+        try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+            foreach ($required in @('Sidetalk.Core.dll', 'PresentationFramework.dll', 'tools/IsolationProbe/Sidetalk.IsolationProbe.exe',
+                    'tools/IsolationProbe/coreclr.dll', 'docs/fixture.md')) {
+                Assert-True ($names -contains $required) "portable omitted $required"
+            }
+        } finally { $archive.Dispose() }
+        Assert-SnapshotEqual $profileBefore (Get-FileSnapshot (Join-Path $fixture 'profile')) 'dual preparation changed profile'
+    }
+}
+
+function Test-DualDistributionFailures {
+    foreach ($failure in @('app-build', 'publish-probe', 'distribution-installer', 'distribution-installer-hash',
+            'distribution-missing-runtime', 'distribution-runtime-dependent', 'distribution-foreign', 'distribution-publish-changed',
+            'distribution-archive-missing', 'distribution-archive-tamper', 'distribution-archive-duplicate',
+            'distribution-archive-unsafe', 'distribution-promotion')) {
+        $fixture = New-DistributionFixture
+        $before = Get-FileSnapshot (Join-Path $fixture 'artifacts/release')
+        $profileBefore = Get-FileSnapshot (Join-Path $fixture 'profile')
+        $run = Invoke-Fixture $fixture 'prepare-distributions.ps1' -Failure $failure
+        Assert-Equal 1 $run.ExitCode "$failure preparation did not fail: $($run.Output)"
+        $expectedReason = switch ($failure) {
+            'app-build' { 'Self-contained build failed with exit code 10' }
+            'publish-probe' { 'Self-contained build failed with exit code 22' }
+            'distribution-installer' { 'Installer packaging failed with exit code 51' }
+            'distribution-installer-hash' { 'Installer checksum file does not match' }
+            'distribution-missing-runtime' { 'missing required payload file' }
+            'distribution-runtime-dependent' { 'not self-contained' }
+            'distribution-foreign' { 'third-party executable' }
+            'distribution-publish-changed' { 'Publish changed while preparing' }
+            'distribution-archive-missing' { 'Archive is missing publish files' }
+            'distribution-archive-tamper' { 'Archive content mismatch' }
+            'distribution-archive-duplicate' { 'Archive has duplicate file paths' }
+            'distribution-archive-unsafe' { 'Archive has an unsafe path' }
+            'distribution-promotion' { 'synthetic distribution promotion failure' }
+        }
+        Assert-Contains $run.Output $expectedReason "$failure did not reach the intended failure"
+        Assert-Contains $run.Output 'No new release pair was reported ready' 'failed preparation omitted explicit stale asset warning'
+        Assert-SnapshotEqual $before (Get-FileSnapshot (Join-Path $fixture 'artifacts/release')) "$failure changed prior complete release"
+        Assert-SnapshotEqual $profileBefore (Get-FileSnapshot (Join-Path $fixture 'profile')) "$failure changed profile"
+        Assert-DistributionClean $fixture
+        if ($failure -in @('app-build', 'publish-probe', 'distribution-missing-runtime', 'distribution-runtime-dependent',
+                'distribution-foreign', 'distribution-archive-missing', 'distribution-archive-tamper',
+                'distribution-archive-duplicate', 'distribution-archive-unsafe')) {
+            Assert-Equal 0 @($run.Log | Where-Object Kind -eq 'installer').Count "$failure compiled an installer after failed payload validation"
+        }
+    }
+}
+
+function Test-DualDistributionPreflightAndRollback {
+    foreach ($mode in @('wrong', 'closed')) {
+        $borrowFixture = New-Fixture
+        $run = Invoke-Fixture $borrowFixture 'build.ps1' -BuildLockMode $mode
+        Assert-Equal 20 $run.ExitCode "$mode shared build lock succeeded"
+        Assert-Contains $run.Output 'BuildLock must be the live artifacts/.publish.lock' "$mode shared lock was rejected for an unrelated reason"
+        Assert-Equal 0 @($run.Log | Where-Object Kind -eq 'dotnet').Count "$mode shared lock ran verification"
+    }
+    $destinationFixture = New-Fixture
+    $run = Invoke-Fixture $destinationFixture 'build-installer.ps1' -ReleaseDir (Join-Path $destinationFixture 'outside-release')
+    Assert-Equal 50 $run.ExitCode 'installer output outside artifacts succeeded'
+    Assert-Contains $run.Output 'outside the artifacts directory' 'installer output escape was rejected for an unrelated reason'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $destinationFixture 'outside-release'))) 'rejected installer output directory was created'
+
+    $fixture = New-DistributionFixture
+    $before = Get-FileSnapshot (Join-Path $fixture 'artifacts/release')
+    $held = [IO.File]::Open((Join-Path $fixture 'artifacts/.publish.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try { $run = Invoke-Fixture $fixture 'prepare-distributions.ps1' }
+    finally { $held.Dispose() }
+    Assert-Equal 1 $run.ExitCode 'contended aggregate lock succeeded'
+    Assert-Equal 0 $run.Log.Count 'build ran without aggregate lock'
+    Assert-SnapshotEqual $before (Get-FileSnapshot (Join-Path $fixture 'artifacts/release')) 'contended lock changed release'
+    Assert-DistributionClean $fixture
+
+    $stage = Join-Path $fixture 'artifacts/.distributions-stage'
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    Set-Content -LiteralPath (Join-Path $stage 'recovery.marker') -Value 'preserve interrupted work'
+    $run = Invoke-Fixture $fixture 'prepare-distributions.ps1'
+    Assert-Equal 1 $run.ExitCode 'unresolved staging was overwritten'
+    Assert-Equal 'preserve interrupted work' (Get-Content -LiteralPath (Join-Path $stage 'recovery.marker')) 'unresolved staging was removed'
+    Remove-FixtureTree $stage
+
+    $run = Invoke-Fixture $fixture 'prepare-distributions.ps1' -Failure distribution-rollback
+    Assert-Equal 1 $run.ExitCode 'failed rollback succeeded'
+    Assert-Contains $run.Output 'Preserved files:' 'failed rollback omitted recovery location'
+    Assert-Contains $run.Output 'synthetic distribution promotion failure' 'original promotion failure was lost'
+    Assert-Contains $run.Output 'synthetic distribution rollback failure' 'rollback failure was lost'
+    Assert-True (Test-Path -LiteralPath (Join-Path $stage 'previous-release/old.marker')) 'failed rollback lost old pair'
+    Assert-True (Test-Path -LiteralPath (Join-Path $stage 'release/SIDETALK-distributions.json')) 'failed rollback lost new pair'
 }
 
 function Test-VerifyLeavesDeployment {
@@ -1151,6 +1408,7 @@ function Test-ManualWorkflowGate {
 
 try {
     New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
+    if (-not $DistributionChecksOnly) {
     Invoke-Case 'verify leaves deployment and profile untouched' { Test-VerifyLeavesDeployment }
     Invoke-Case 'verify failure and optional UI codes' { Test-VerifyFailureCodes }
     Invoke-Case 'packaging succeeds for both runtime flavors' { Test-PackagingSuccessAndArguments }
@@ -1170,6 +1428,10 @@ try {
     Invoke-Case 'SDK bootstrap lock cleanup on null and held locks' { Test-SdkBootstrapLockPaths }
     Invoke-Case 'scripts avoid ambiguous null-conditional variables' { Test-ScriptsAvoidAmbiguousNullConditional }
     Invoke-Case 'manual workflow requires every full verification stage' { Test-ManualWorkflowGate }
+    }
+    Invoke-Case 'dual distributions share one verified publish and record complete provenance' { Test-DualDistributionSuccess }
+    Invoke-Case 'dual distribution failures preserve the complete previous release' { Test-DualDistributionFailures }
+    Invoke-Case 'dual distribution aggregate lock, interrupted staging and rollback protection' { Test-DualDistributionPreflightAndRollback }
     if ($failures.Count) {
         throw ($failures -join [Environment]::NewLine)
     }

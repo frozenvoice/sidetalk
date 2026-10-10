@@ -1,6 +1,6 @@
 # 설치 · 업데이트 · 제거
 
-SIDETALK는 Windows 사용자별 설치 프로그램 **`SIDETALK-Setup.exe`** 로 설치합니다. 관리자 권한이 필요 없고, Git 저장소나 `artifacts` 폴더를 열 필요도 없습니다.
+SIDETALK는 Windows 11 x64용 **`SIDETALK-Setup.exe`**(사용자별 설치형)와 **`SIDETALK-<버전>-win-x64-portable.zip`**(포터블)을 같은 릴리스에서 제공합니다. 두 파일은 같은 버전·self-contained publish를 사용하며 별도 .NET Desktop Runtime 설치가 필요 없습니다. 공식 카카오톡과 Sandboxie Plus 1.18.4는 사용자 PC에 먼저 설치되어 있어야 하며 두 배포물에 포함되지 않습니다. 설치형은 관리자 권한이 필요 없고, Git 저장소나 `artifacts` 폴더를 열 필요도 없습니다.
 
 ## 설치하고 실행하기
 
@@ -21,9 +21,13 @@ SIDETALK는 Windows 사용자별 설치 프로그램 **`SIDETALK-Setup.exe`** �
 
 ## 포터블 실행(설치 없이)
 
-`SIDETALK-<버전>-win-x64-portable.zip`을 원하는 폴더에 완전히 압축 해제한 뒤 `Sidetalk.exe`를 엽니다. `tools/IsolationProbe` 등 패키지 파일을 함께 유지해야 하며 공식 카카오톡·Sandboxie Plus 1.18.4는 별도로 설치되어 있어야 합니다. 설치된 앱 등록, 시작 메뉴 등록, 제거 프로그램, 자동 업데이트는 없습니다. 새 버전은 압축을 풀어 직접 교체합니다.
+`SIDETALK-<버전>-win-x64-portable.zip`을 원하는 로컬 폴더에 **전체 압축 해제**한 뒤 그 폴더의 `Sidetalk.exe`를 엽니다. EXE 하나만 꺼내 실행하지 마세요. EXE·DLL·런타임·필수 리소스와 `tools/IsolationProbe` 전체를 원래 상대 경로대로 유지해야 합니다. SIDETALK 자체 설치 과정은 없습니다. 설치된 앱 등록·설치형 SIDETALK 시작 메뉴 항목·제거 프로그램·자동 설치 업데이트를 만들지 않습니다. 사용자가 앱에서 선택한 **보조 카카오톡 실행** 바로가기와 로그인 실행은 별도로 사용할 수 있습니다.
 
-프로필·전용 Sandboxie box·보조 계정 데이터는 설치형과 동일한 `%LOCALAPPDATA%\\SIDETALK`를 사용합니다. **포터블로 실행해도 사용자 설정이 프로그램 폴더에만 머무는 완전 독립형이 아닙니다.** 설치형과 포터블을 동시에 실행하지 마세요. 파일 위치가 바뀌면 앱의 **바로가기 선택 저장**에서 소유가 확인된 바로가기만 갱신하세요. ZIP은 [배포 준비 스크립트](../scripts/prepare-distributions.ps1)로 설치형과 같은 self-contained 빌드에서 만듭니다.
+프로필·전용 Sandboxie box·보조 계정 데이터와 명령·복구 기록은 설치형과 동일한 `%LOCALAPPDATA%\SIDETALK`를 사용합니다. **포터블로 실행해도 사용자 설정이 프로그램 폴더에만 머무는 완전 독립형이 아닙니다.** 공식 보조 카카오톡 실행·준비 상태 검사·복구 승인·소유 및 격리 검사도 설치형과 같은 경로를 사용합니다. 실행 위치가 바뀌어도 기존 프로필이나 box를 새로 만들거나 초기화하지 않습니다.
+
+**설치형과 포터블은 동시에 실행하지 마세요.** 같은 사용자·세션의 두 번째 실행은 기존 SIDETALK로 요청을 전달합니다. 바로가기 저장도 먼저 열린 앱의 EXE 경로를 사용하므로 먼저 열린 앱을 정상 종료한 뒤 원하는 배포본을 실행합니다. 빠른 실행·로그인 실행도 선택한 실행 경로를 확인합니다. 명령·복구는 공통 CommandJournal 잠금을 사용하며 미완료 기록이 있으면 새 동작을 차단합니다. 설치형의 시작 메뉴 **SIDETALK** 항목은 설치 위치를 계속 가리킵니다. 포터블을 실행하려면 압축을 푼 폴더의 EXE를 선택하세요.
+
+포터블 업데이트는 SIDETALK와 해당 폴더의 IsolationProbe를 정상 종료한 뒤 새 ZIP 전체를 압축 해제해 진행합니다. 이전 명령이 미완료라면 기존 차단·재확인 절차를 따릅니다. 새 폴더나 이동한 폴더에서 실행하고 앱의 **바로가기 선택 저장**에서 사용자가 명시적으로 선택한 소유 바로가기만 갱신하세요. 사용자 수정·같은 이름의 외부 링크·손상 또는 미완료 소유 기록은 보존하며 자동 갱신하지 않습니다. 이전 폴더를 정리해도 `%LOCALAPPDATA%\SIDETALK`는 지우지 않습니다. ZIP은 [배포 준비 스크립트](../scripts/prepare-distributions.ps1)로 설치형과 같은 self-contained publish에서 만듭니다.
 
 ## 업데이트
 
@@ -46,6 +50,8 @@ SIDETALK는 Windows 사용자별 설치 프로그램 **`SIDETALK-Setup.exe`** �
 ## 서명과 SmartScreen
 
 현재 개발 빌드의 `SIDETALK-Setup.exe`는 코드 서명되지 않았으며, 함께 생성되는 `SIDETALK-Setup.exe.unsigned.txt`가 이를 표시합니다. Windows SmartScreen이 실행 전에 경고할 수 있습니다. 받은 파일은 `SIDETALK-Setup.exe.sha256`의 값과 비교하세요. 실제 인증서가 준비되면 `scripts/build-installer.ps1 -SignToolPath <signtool.exe> -CertificateThumbprint <SHA-1> [-TimestampUrl <URL>]`로 서명하고, 빌드가 서명자를 검증합니다. 서명되지 않은 빌드는 서명된 것처럼 표시하지 않습니다.
+
+포터블 ZIP은 같은 이름의 `.sha256`와 비교할 수 있습니다. 릴리스의 `SHA256SUMS.txt`에는 설치형과 포터블 파일 해시가 있으며, `SIDETALK-distributions.json`에는 소스 커밋·버전·payload 파일 해시가 기록됩니다. 두 EXE의 일치 여부는 ZIP 내부/압축 해제한 `Sidetalk.exe`와 설치 원본·설치 후 EXE의 SHA-256으로 확인합니다. Setup 파일 자체의 해시는 앱 EXE와 다릅니다. 공개 전 검증·동일 소스 확인은 [검증 운영 정책](VERIFICATION.md)을 따릅니다.
 
 ## 소스에서 설치하기(개발자)
 

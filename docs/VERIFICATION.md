@@ -26,16 +26,16 @@ hosted runner는 Windows Server 2022에서 고정된 SDK·Inno Setup 환경의 �
 
 ## 수동 릴리즈 사전 검증
 
-현재 게시 workflow나 GitHub Release 자동화는 없다. `build.ps1`의 publish는 로컬 산출물 준비이며 `build-local.cmd`는 사용자 로컬 설치 경로다. 새 게시 시스템을 만들지 않고, 설치기 전달/릴리즈 공개 담당자가 다음 조건을 공개 **전에** 확인한다.
+현재 게시 workflow나 GitHub Release 자동화는 없다. `prepare-distributions.ps1`은 설치형과 포터블을 같은 self-contained publish에서 준비하는 로컬 경로이며 `build-local.cmd`는 사용자 로컬 설치 경로다. 준비 스크립트는 설치·앱 실행·GitHub 업로드·태그 생성을 하지 않는다. 새 게시 시스템을 만들지 않고, 설치기 전달/릴리즈 공개 담당자가 다음 조건을 공개 **전에** 확인한다.
 
 1. 공개 대상의 전체 커밋 SHA를 고정하고 깨끗한 checkout을 준비한다. `git rev-parse HEAD`와 `git status --porcelain` 결과를 기록한다. 검증 후 소스·빌드 입력을 바꾸거나 대상 ref가 이동하면 새 SHA를 기준으로 다시 판단한다.
 2. 그 SHA를 가리키는 ref에서 `Windows verification`을 수동 실행한다. 완료된 실행의 URL·run ID·attempt·`head_sha`·event를 기록하고 `head_sha`가 공개 대상 전체 SHA와 같고 event가 `workflow_dispatch`인지 확인한다. workflow 전체와 `verify` job이 성공하고 checkout, SDK 준비, `Verify current source and synthetic WPF fixtures`, `Verify build failure propagation and packaging guards`, `Verify installer compile and isolated install regression`가 모두 `success`인지 확인한다. 필수 단계의 실패·취소·skipped·누락, 과거 성공 실행이나 다른 SHA는 게시 조건을 충족하지 않는다. 로그와 이미지도 실행의 같은 attempt에서 확인한다. 공개 후 `release: published` 등의 이벤트를 사전 검증으로 사용하지 않는다.
-3. 같은 SHA의 깨끗한 checkout에서 `pwsh -File scripts/build.ps1 -SelfContained`를 실행하고 성공한 `artifacts/publish/win-x64`를 설치 원본으로 고정한다. 이 명령은 기본 빌드·안전성 테스트·시험 도구 검증을 다시 수행하고 두 RID publish·문서·ZIP을 준비한다. 전체 원격 성공으로 로컬 패키징의 검증을 생략하지 않는다. 필요할 때만 기존 배포 산출물의 사용자가 정상 종료한 후 진행하며 사용자 프로필·계정·Sandboxie 설정을 변경하지 않는다.
-4. payload 전체의 상대 경로·길이·SHA-256 목록을 보존한 뒤 `pwsh -File scripts/build-installer.ps1 -SourceDir artifacts/publish/win-x64`로 사용자용 Setup을 한 번 컴파일한다. 성공 후 payload 목록을 다시 비교해 입력 파일의 추가·누락·변경이 없는지 확인한다. 기존 builder의 고정 컴파일러·제품 버전/리소스·서명 상태 검사가 성공해야 한다. InstallerChecks의 임시 fixture Setup은 사용자용 Setup과 바이트가 다르므로 그 검사만으로 생산 설치기의 동일성을 주장하지 않는다.
-5. 위에서 생성한 Setup·ZIP·부속 `.sha256`/`.unsigned.txt`만 공개 준비 위치로 복사한다. Setup의 `Get-FileHash -Algorithm SHA256`이 `.sha256` 파일과 같고 준비 위치의 파일과도 같은지 확인한다. ZIP은 압축 해제한 전체 상대 경로·파일 SHA-256 목록이 고정 payload와 같은지 확인하고 ZIP 자체 해시를 기록한다. 공개할 모든 파일의 SHA-256을 저장해 원본 산출물과 공개 준비 파일을 비교한다. 재빌드·재압축·서명 등으로 파일이 바뀌면 이전 해시를 재사용하지 않고 다시 확인한다.
-6. 공개 대상 SHA, 전체 원격 실행/필수 단계 결과, payload 목록, Setup·ZIP·부속 파일 해시와 서명 상태를 함께 검토한 뒤 공개한다. 업로드한 파일의 해시도 보존한 목록과 같아야 한다. 이 수동 확인이 누락되면 공개를 진행하지 않는다. 현재 이를 강제하는 게시 자동화가 있다는 의미는 아니다.
+3. 같은 SHA의 깨끗한 checkout에서 `pwsh -File scripts/prepare-distributions.ps1`을 실행하고 종료 코드 0을 확인한다. 이 명령은 `build.ps1 -SelfContained`의 기본 앱·안전성 테스트·시험 도구 검증과 앱/IsolationProbe의 `win-x64` publish를 한 번씩 수행하고, 고정된 같은 `artifacts/publish/win-x64`로 Setup과 포터블 ZIP을 만든다. 합성 UI·BuildChecks·InstallerChecks는 이 명령에 포함되지 않으며 2번의 전체 원격 검사와 별도 Windows 11 검증을 따른다. 전체 원격 성공으로 로컬 패키징 검증을 생략하지 않는다. 기존 배포 산출물이 사용 중이면 사용자가 정상 종료한 후 진행하며 사용자 프로필·계정·Sandboxie 설정을 변경하지 않는다.
+4. 성공한 `artifacts/release/SIDETALK-distributions.json`의 `sourceCommit`이 공개 대상 SHA와 같고 `sourceDirty=false`, `version`이 `Directory.Build.props`와 같고 `runtimeIdentifier=win-x64`, `selfContained=true`인지 확인한다. manifest의 전체 payload 상대 경로·길이·SHA-256과 배포물 해시를 보존한다. 스크립트는 ZIP 전체 파일 집합과 publish를 비교하고 앱·IsolationProbe 버전 및 self-contained 런타임을 검사하며, Setup 컴파일 전후 publish가 바뀌면 실패한다. 실패 시 이전 배포 묶음이 남을 수 있으므로 과거 파일·manifest를 이번 성공으로 취급하지 않는다. InstallerChecks의 합성 fixture Setup은 사용자용 Setup과 바이트가 다르므로 그 검사만으로 생산 설치기의 동일성이나 실제 계정 보존을 주장하지 않는다.
+5. 같은 묶음의 `SIDETALK-Setup.exe`, `SIDETALK-<version>-win-x64-portable.zip`, 개별 `.sha256`, `SHA256SUMS.txt`, `SIDETALK-distributions.json`과 해당 서명 상태 파일만 공개 준비 위치로 복사한다. Setup과 ZIP의 SHA-256이 manifest·개별 `.sha256`·`SHA256SUMS.txt` 및 공개 준비 파일과 일치해야 한다. ZIP은 전체를 압축 해제하여 모든 상대 경로·길이·파일 해시가 manifest payload와 같고 `Sidetalk.exe`, DLL·런타임·필수 리소스, `tools/IsolationProbe`가 포함됐는지 확인한다. 설치 원본·압축 해제본·격리 환경에 설치한 앱의 EXE SHA-256과 버전을 비교한다. Setup 자체 해시와 앱 EXE 해시를 혼동하지 않는다. 재빌드·재압축·서명으로 파일이 바뀌면 해시와 manifest를 다시 확정한다.
+6. 아래 Windows 11 검증의 실제 수행/미수행 범위, 공개 대상 SHA, 전체 원격 실행/필수 단계 결과, payload 목록, 배포 파일 해시와 서명 상태를 함께 검토한다. 공개할 때 **GitHub Release 한 건**에 설치형과 포터블 및 위 부속 파일을 함께 업로드하고 업로드한 파일의 해시도 보존한 목록과 비교한다. 버전은 `SidetalkVersion`을 따르며 실행할 앱을 고르는 다운로드 두 개로 안내한다. 이 수동 확인이 누락되면 공개하지 않는다. 로컬 준비나 PR 병합은 태그/공개 Release 생성을 승인하거나 대신하지 않는다.
 
-payload 해시 목록은 다음처럼 설치기 컴파일 전후 별도 파일에 보관할 수 있다. 출력 경로는 payload 밖이며 해시는 사용자 데이터가 아닌 배포 입력만 대상으로 한다.
+독립적인 payload 해시 목록이 필요하면 다음처럼 보관할 수 있다. 출력 경로는 payload 밖이며 해시는 사용자 데이터가 아닌 배포 입력만 대상으로 한다. 정식 동시 준비 스크립트는 같은 전체 목록을 manifest에 기록하므로 이 예제를 위해 Setup을 중복 컴파일하지 않는다.
 
 ```powershell
 $payloadRoot = (Resolve-Path artifacts/publish/win-x64).Path
@@ -50,6 +50,19 @@ Get-Content -LiteralPath artifacts/release/SIDETALK-Setup.exe.sha256
 ```
 
 `Compare-Object`에 차이가 없고 설치기 해시도 일치해야 한다. 파일 개수나 제품 버전만 같다는 이유로 파일 동일성을 판단하지 않는다. required check 설정이 이 수동 정책과 충돌하면 필요한 검사 항목만 조정하고 다른 보호를 유지한다. 권한/플랜 제한으로 적용할 수 없으면 정확한 검사명과 미적용 설정을 보고하며 보호 전체 해제·가짜 성공 check·우회 병합은 하지 않는다.
+
+## Windows 11 설치형·포터블 검증 범위
+
+다음 항목은 수행 절차이며 통과 기록이 아니다. 이번 검증의 실행 결과·SHA·한계는 별도 작업 기록에 남긴다. 빌드/합성 검사와 실제 Sandboxie·계정 검증을 구분한다.
+
+- Windows 11 x64에서 `verify.ps1 -UiChecks`, BuildChecks, InstallerChecks를 순서대로 실행하고 각 종료 코드와 결과를 기록한다. InstallerChecks의 고정 Inno 컴파일 및 격리 AppId 설치·업데이트·제거는 합성 fixture의 실제 설치기 동작을 검사한다. 실제 사용자 설치본·시작 메뉴·계정 데이터를 시험 fixture로 바꾸지 않는다.
+- `prepare-distributions.ps1`을 실행해 같은 publish의 두 배포물을 만든다. ZIP 전체 payload·버전·실행 파일 해시·manifest 소스 상태와 서명 표시를 확인하고 실패 시 이전 파일을 현재 성공으로 착각하지 않는지 BuildChecks로 확인한다.
+- 생산 payload 설치·실행·업데이트·제거는 승인된 격리 Windows 11 환경에서 별도로 수행한다. 설치 경로·현재 사용자 앱 등록·설치형 바로가기·사용 중 중단·이전 버전 거부·데이터 보존을 확인하고 합성 fixture 결과와 분리해 기록한다. 테스트용 설치 회귀만 실행했다면 생산 payload 회귀를 미수행으로 표시한다.
+- 포터블 ZIP을 고정된 시험 폴더에 전체 압축 해제하고 실제 EXE를 실행한다. GUI 시작·자체 설치/별도 .NET 설치 불필요·DLL 및 IsolationProbe 로드와 실행 위치를 확인한다. 읽기 전용 `--diagnose`/`--render`만 실행했다면 일반 GUI 실행으로 보고하지 않는다. Codex/MSIX 문맥에서 데이터 경로 보호로 차단된 진단을 일반 사용자 실행의 실패/성공으로 바꾸지 않는다.
+- 설치형/포터블의 같은 사용자·세션 중복 실행이 먼저 열린 앱으로 전달되는지, 배포본을 전환하기 전 정상 종료가 필요한지 확인한다. 이동한 폴더에서 명시적으로 선택한 소유 바로가기만 갱신되는지, 수정/외부 링크와 미완료 기록이 보존되는지 격리 fixture로 확인한다. 실제 사용자 바로가기를 시험 목적으로 바꾸지 않는다.
+- 검증 전후 `%LOCALAPPDATA%\SIDETALK`의 프로필·box·명령/복구 기록과 Sandboxie 설정을 읽기 전용으로 비교한다. 검증이 실제 계정 파일을 읽거나 인증/송수신을 수행하지 않았다면 관찰한 보존 범위만 기록한다. 실행 중인 앱이 독립적으로 데이터를 썼다면 원인 구분 없이 변경 없음으로 주장하지 않는다. 카카오톡 로그인·보조 계정 인증·송수신은 별도 사용자 승인하에 [ACCEPTANCE.md](ACCEPTANCE.md)를 따르며 합성 격리나 프로세스 존재로 대체하지 않는다.
+
+시험 압축 해제·스테이징·화면 출력은 기본 위치 또는 고정 폴더 하나를 재사용하고 종료 후 이번 작업의 임시 출력만 정리한다. 사용자 프로필·box·기록과 `artifacts/vm-lab`은 정리 대상으로 삼지 않는다. 근거는 로그·요약·최소 파일로 남긴다.
 
 # 잔여 프로세스 정리와 제한 복구 — 2026-10-07
 

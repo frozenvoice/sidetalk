@@ -6,7 +6,10 @@ param(
     # Optional real code signing. Unsigned builds never claim a signature.
     [string]$SignToolPath,
     [string]$CertificateThumbprint,
-    [string]$TimestampUrl = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
+    # Append options to preserve the existing positional parameter contract.
+    [string]$ReleaseDir,
+    [IO.FileStream]$BuildLock
 )
 
 # Compiles artifacts\release\SIDETALK-Setup.exe from an existing publish folder. This
@@ -19,7 +22,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $timer = [Diagnostics.Stopwatch]::StartNew()
 $repo = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $artifacts = Join-Path $repo 'artifacts'
-$release = Join-Path $artifacts 'release'
+$release = if ($ReleaseDir) { [IO.Path]::GetFullPath($ReleaseDir) } else { Join-Path $artifacts 'release' }
 $setupName = 'SIDETALK-Setup.exe'
 $pinnedCompilerHash = '0A8757031B33777E4C9CBFFEE40F11A5062B36D25CBE144C1DB73B6102B80AD7'
 # Third-party programs SIDETALK controls but never redistributes.
@@ -28,7 +31,8 @@ $requiredFiles = @('Sidetalk.exe', 'Sidetalk.dll', 'Sidetalk.Core.dll', 'Sidetal
     'README.md', 'tools\IsolationProbe\Sidetalk.IsolationProbe.exe', 'tools\IsolationProbe\Sidetalk.IsolationProbe.dll')
 $staging = Join-Path $artifacts ('.installer-' + [Guid]::NewGuid().ToString('N'))
 $backup = Join-Path $staging 'previous'
-$buildLock = $null
+$heldBuildLock = $null
+$ownsBuildLock = $false
 $safeToCleanStaging = $true
 
 function Assert-ArtifactPath([string]$Path) {
@@ -66,6 +70,7 @@ function Get-ProductVersion([string]$Path) {
 Push-Location -LiteralPath $repo
 try {
     Start-SidetalkStage 'installer/preflight' 50
+    Assert-ArtifactPath $release
     $source = [IO.Path]::GetFullPath($(if ($SourceDir) { $SourceDir } else { Join-Path $artifacts 'publish\win-x64' }))
     if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Installer source was not found: $source. Run scripts\build.ps1 -SelfContained first." }
     Assert-UnlinkedTree $source 'Installer source'
@@ -77,7 +82,9 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $source 'docs') -PathType Container)) { throw "Installer source is missing docs: $source" }
 
     [xml]$props = Get-Content -LiteralPath (Join-Path $repo 'Directory.Build.props') -Raw
-    $expectedVersion = [string]($props.Project.PropertyGroup | ForEach-Object { $_.SidetalkVersion } | Where-Object { $_ } | Select-Object -First 1)
+    $versionNode = $props.SelectSingleNode('/Project/PropertyGroup/SidetalkVersion')
+    if ($null -eq $versionNode) { throw 'Directory.Build.props is missing SidetalkVersion.' }
+    $expectedVersion = $versionNode.InnerText
     $version = Get-ProductVersion (Join-Path $source 'Sidetalk.dll')
     if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Invalid SIDETALK product version in Sidetalk.dll: '$version'" }
     if ($version -ne $expectedVersion) { throw "Installer source is version $version but Directory.Build.props is $expectedVersion. Publish the current source first." }
@@ -109,7 +116,16 @@ try {
     $lockPath = Join-Path $artifacts '.publish.lock'
     Assert-ArtifactPath $lockPath
     # The same lock as build.ps1: the publish source cannot be replaced mid-compile.
-    $buildLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    if ($null -ne $BuildLock) {
+        if (-not $BuildLock.CanRead -or -not $BuildLock.CanWrite -or -not $BuildLock.CanSeek -or
+            -not [string]::Equals([IO.Path]::GetFullPath($BuildLock.Name), $lockPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'BuildLock must be the live artifacts/.publish.lock stream held by the distribution caller.'
+        }
+        $heldBuildLock = $BuildLock
+    } else {
+        $heldBuildLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $ownsBuildLock = $true
+    }
     Complete-SidetalkStage
 
     Start-SidetalkStage 'installer/compile' 51
@@ -202,7 +218,7 @@ try {
     } catch {
         Write-Warning "Could not clean installer staging; files preserved at $staging. $_"
     } finally {
-        if ($null -ne $buildLock) { $buildLock.Dispose() }
+        if ($ownsBuildLock -and $null -ne $heldBuildLock) { $heldBuildLock.Dispose() }
         Pop-Location
     }
 }
