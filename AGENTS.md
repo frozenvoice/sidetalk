@@ -35,7 +35,7 @@ build-local.cmd            # -NoInstall: Setup 생성까지, -NoLaunch, -NoPause
 - 패키징은 같은 검증을 한 번 포함하므로 그 직전에 검증 명령을 중복 실행하지 않는다. `-SelfContained`를 생략하면 .NET Desktop Runtime이 필요한 배포본을 만든다. 배포본 교체 전에는 해당 SIDETALK와 배포된 IsolationProbe를 정상 종료해야 한다.
 - 스크립트 변경 시 `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`로 임시 fixture의 실패 전파·패키징 보호·롤백 회귀를 확인한다. 실제 publish나 앱 실행을 하지 않는 모의 검사다.
 - 설치 프로그램(`installer/SIDETALK.iss`, `scripts/build-installer.ps1`, `scripts/install-local.ps1`, `scripts/prepare-inno.ps1`) 변경 시 `verify.ps1` 뒤에 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`로 고정 Inno Setup 컴파일과 격리 설치/업데이트/제거 회귀를 확인한다. 테스트 전용 `SIDETALKInstallerTest-*` AppId·설치/시작 메뉴/바탕 화면 위치만 쓰며 실제 설치·바로가기·`%LOCALAPPDATA%\SIDETALK`는 읽기만 한다.
-- 최종 사용자 실행 위치는 `%LOCALAPPDATA%\Programs\SIDETALK`(설치본, 고정 AppId `AF6EF9DE-E012-4945-BBD1-39ED6572282D`)이다. `artifacts/publish/win-x64`는 설치 원본이며 사용자 실행 위치로 문서화하지 않는다. 설치 프로그램은 `{app}` 밖을 지우지 않고(`[UninstallDelete]` 금지), 프로세스를 종료하지 않으며(`CloseApplications=no`), 설치 위치의 SIDETALK 파일이 사용 중이면 복사 전에 멈춘다.
+- 최종 사용자 실행 위치는 `%LOCALAPPDATA%\Programs\SIDETALK`(설치본, 고정 AppId `AF6EF9DE-E012-4945-BBD1-39ED6572282D`)이다. `artifacts/publish/win-x64`는 설치 원본이며 사용자 실행 위치로 문서화하지 않는다. 정식 포터블 ZIP은 `artifacts/release/SIDETALK-<version>-win-x64-portable.zip`로 별도 생성하며, 압축을 푼 전체 폴더에서 실행한다. 설치형과 동일한 `%LOCALAPPDATA%\\SIDETALK` 프로필과 별도 소유·격리 검사를 사용하므로 서로 동시에 실행하지 않는다. 설치 프로그램은 `{app}` 밖을 지우지 않고(`[UninstallDelete]` 금지), 프로세스를 종료하지 않으며(`CloseApplications=no`), 설치 위치의 SIDETALK 파일이 사용 중이면 복사 전에 멈춘다.
 - 제품 버전은 `Directory.Build.props`의 `SidetalkVersion` 하나다. 앱·Core·시험 도구·진단·Setup 버전이 모두 이를 따른다. 영속 schema 버전과 혼동하지 않는다.
 - `artifacts/`, `bin/`, `obj/`는 생성 결과다. 배포본에는 공식 카카오톡이나 Sandboxie를 포함하지 않는다.
 
