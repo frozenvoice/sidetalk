@@ -48,6 +48,16 @@ internal static class QuickLaunchUiChecks
         StartupIsIndependentAndDefaultOff();
         Console.WriteLine("RUN quick UI: ExistingGuiOwnsRequest");
         await ExistingGuiOwnsRequest(snapshot, healthy);
+        Console.WriteLine("RUN quick UI: ScheduledPollKeepsSettingsStable");
+        await ScheduledPollKeepsSettingsStable(snapshot, healthy);
+        Console.WriteLine("RUN quick UI: SettingsReloadWaitsForPoll");
+        await SettingsReloadWaitsForPoll(snapshot, healthy);
+        Console.WriteLine("RUN quick UI: ConsentSaveWaitsForPoll");
+        await ConsentSaveWaitsForPoll(snapshot, healthy);
+        Console.WriteLine("RUN quick UI: ClosedQueuedSettingsCannotStart");
+        await ClosedQueuedSettingsCannotStart(snapshot, healthy);
+        Console.WriteLine("RUN quick UI: ClosedQueuedConsentCannotWrite");
+        await ClosedQueuedConsentCannotWrite(snapshot, healthy);
         Console.WriteLine("RUN quick UI: SettingsReadDrainsBeforeExternalRequest");
         await SettingsReadDrainsBeforeExternalRequest(snapshot, healthy);
         Console.WriteLine("RUN quick UI: ClosedSettingsReadCannotApply");
@@ -323,6 +333,191 @@ internal static class QuickLaunchUiChecks
         cases++;
     }
 
+    private static async Task ScheduledPollKeepsSettingsStable(AppSnapshot snapshot, SetupRecoveryPlan plan)
+    {
+        using var controller = new Fake(snapshot, plan);
+        var window = new MainWindow(controller, _ => Task.FromResult(true));
+        window.ApplySnapshot(snapshot);
+        await window.ReloadConvenienceAsync();
+        var controls = new UIElement[]
+        {
+            (Button)window.FindName("SaveQuickConsentButton"),
+            (Button)window.FindName("ReloadQuickSettingsButton"),
+            (CheckBox)window.FindName("QuickConsentCheckBox")
+        };
+        var transitions = 0;
+        DependencyPropertyChangedEventHandler changed = (_, _) => transitions++;
+        foreach (var control in controls)
+        {
+            Check(control.IsEnabled, "Loaded convenience settings were unavailable before polling");
+            control.IsEnabledChanged += changed;
+        }
+        try
+        {
+            for (var cycle = 0; cycle < 3; cycle++)
+            {
+                var poll = new InteractionChecks.Barrier<AppSnapshot>();
+                controller.MainInspection = poll.WaitAsync;
+                var scheduled = window.RunScheduledInspectionAsync();
+                await poll.Started.Task;
+                Check(controls.All(control => control.IsEnabled), "Scheduled inspection disabled convenience settings");
+                Check(transitions == 0, "Held scheduled inspection changed convenience availability");
+                poll.Complete(snapshot with { CheckedAt = snapshot.CheckedAt.AddSeconds(cycle + 1) });
+                await scheduled;
+                Check(controls.All(control => control.IsEnabled) && transitions == 0,
+                    "Completed scheduled inspection flickered convenience settings");
+            }
+        }
+        finally
+        {
+            foreach (var control in controls) control.IsEnabledChanged -= changed;
+            window.Close();
+        }
+        cases++;
+    }
+
+    private static async Task SettingsReloadWaitsForPoll(AppSnapshot snapshot, SetupRecoveryPlan plan)
+    {
+        using var controller = new Fake(snapshot, plan);
+        var window = new MainWindow(controller, _ => Task.FromResult(true));
+        window.ApplySnapshot(snapshot);
+        await window.ReloadConvenienceAsync();
+        var poll = new InteractionChecks.Barrier<AppSnapshot>();
+        controller.MainInspection = poll.WaitAsync;
+        var scheduled = window.RunScheduledInspectionAsync();
+        await poll.Started.Task;
+        var settings = new InteractionChecks.Barrier<QuickLaunchStatus>();
+        controller.Inspection = settings.WaitAsync;
+        var reloadButton = (Button)window.FindName("ReloadQuickSettingsButton");
+        Check(reloadButton.IsEnabled, "Polling prevented the explicit settings reload click");
+        reloadButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var reload = window.ReloadConvenienceAsync();
+        Check(!reloadButton.IsEnabled && !((Button)window.FindName("SaveQuickConsentButton")).IsEnabled,
+            "Queued settings reload did not reserve convenience controls");
+        Check(!reload.IsCompleted && !settings.Started.Task.IsCompleted && controller.QuickInspectionCalls == 1,
+            "Settings reload overlapped the held scheduled poll");
+        await window.RequestActionAsync(SidetalkCommandAction.Launch);
+        await window.RunScheduledInspectionAsync();
+        Check(controller.NormalLaunchCalls == 0 && controller.MainInspectionCalls == 1,
+            "Queued settings reload admitted another action or poll");
+        controller.MainInspection = null;
+        poll.Complete(snapshot);
+        await settings.Started.Task;
+        Check(!reloadButton.IsEnabled && controller.QuickInspectionCalls == 2,
+            "Explicit settings inspection released its controls early or ran more than once");
+        settings.Complete(controller.Status);
+        await reload;
+        await scheduled;
+        Check(reloadButton.IsEnabled && ((Button)window.FindName("SaveQuickConsentButton")).IsEnabled,
+            "Completed settings reload did not restore convenience controls");
+        window.Close();
+        cases++;
+    }
+
+    private static async Task ConsentSaveWaitsForPoll(AppSnapshot snapshot, SetupRecoveryPlan plan)
+    {
+        using var controller = new Fake(snapshot, plan);
+        var window = new MainWindow(controller, _ => Task.FromResult(true));
+        window.ApplySnapshot(snapshot);
+        await window.ReloadConvenienceAsync();
+        var poll = new InteractionChecks.Barrier<AppSnapshot>();
+        controller.MainInspection = poll.WaitAsync;
+        var scheduled = window.RunScheduledInspectionAsync();
+        await poll.Started.Task;
+        var write = new InteractionChecks.Barrier<QuickLaunchStatus>();
+        controller.ConsentWrite = (approval, enabled) =>
+        {
+            Check(approval == controller.Status.Approval && enabled, "Queued save changed the user's selected consent scope");
+            return write.WaitAsync();
+        };
+        ((CheckBox)window.FindName("QuickConsentCheckBox")).IsChecked = true;
+        var save = (Button)window.FindName("SaveQuickConsentButton");
+        var reload = (Button)window.FindName("ReloadQuickSettingsButton");
+        Check(save.IsEnabled, "Polling prevented the consent save click");
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!save.IsEnabled && !reload.IsEnabled, "Queued consent save did not immediately reserve settings");
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        reload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await window.RequestActionAsync(SidetalkCommandAction.Launch);
+        var externalCalled = false;
+        var external = await window.RunExternalQuickLaunchAsync(() => { externalCalled = true; return Task.CompletedTask; });
+        await window.RunScheduledInspectionAsync();
+        Check(!write.Started.Task.IsCompleted && controller.ConsentWriteCalls == 0 && controller.QuickInspectionCalls == 1,
+            "Consent write or duplicate settings read bypassed the held poll");
+        Check(!external && !externalCalled && controller.NormalLaunchCalls == 0 && controller.MainInspectionCalls == 1,
+            "Queued consent save admitted competing work");
+        controller.MainInspection = null;
+        poll.Complete(snapshot);
+        await write.Started.Task;
+        Check(controller.ConsentWriteCalls == 1 && !save.IsEnabled && !reload.IsEnabled,
+            "Consent save replayed or released controls while its write was pending");
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(controller.ConsentWriteCalls == 1, "Duplicate click dispatched a second consent write");
+        var finalPoll = new InteractionChecks.Barrier<AppSnapshot>();
+        controller.MainInspection = finalPoll.WaitAsync;
+        write.Complete(controller.Status with { ConsentMatches = true });
+        await finalPoll.Started.Task;
+        var completion = window.RunScheduledInspectionAsync();
+        finalPoll.Complete(snapshot);
+        await completion;
+        await scheduled;
+        Check(controller.ConsentWriteCalls == 1 && save.IsEnabled && reload.IsEnabled &&
+            ((CheckBox)window.FindName("QuickConsentCheckBox")).IsChecked == true,
+            "Completed consent save lost the selected state or failed to restore availability");
+        window.Close();
+        cases++;
+    }
+
+    private static async Task ClosedQueuedSettingsCannotStart(AppSnapshot snapshot, SetupRecoveryPlan plan)
+    {
+        using var controller = new Fake(snapshot, plan);
+        var window = new MainWindow(controller, _ => Task.FromResult(true));
+        window.ApplySnapshot(snapshot);
+        var poll = new InteractionChecks.Barrier<AppSnapshot>();
+        controller.MainInspection = poll.WaitAsync;
+        var scheduled = window.RunScheduledInspectionAsync();
+        await poll.Started.Task;
+        var reload = window.ReloadConvenienceAsync();
+        Check(!reload.IsCompleted && controller.QuickInspectionCalls == 0, "Queued settings reload did not wait for polling");
+        window.Close();
+        poll.Complete(snapshot);
+        await reload;
+        await scheduled;
+        Check(controller.QuickInspectionCalls == 0 && controller.ConsentWriteCalls == 0,
+            "Closed window started a queued convenience operation");
+        cases++;
+    }
+
+    private static async Task ClosedQueuedConsentCannotWrite(AppSnapshot snapshot, SetupRecoveryPlan plan)
+    {
+        using var controller = new Fake(snapshot, plan);
+        var window = new MainWindow(controller, _ => Task.FromResult(true));
+        window.ApplySnapshot(snapshot);
+        await window.ReloadConvenienceAsync();
+        var poll = new InteractionChecks.Barrier<AppSnapshot>();
+        controller.MainInspection = poll.WaitAsync;
+        var scheduled = window.RunScheduledInspectionAsync();
+        await poll.Started.Task;
+        ((CheckBox)window.FindName("QuickConsentCheckBox")).IsChecked = true;
+        var save = (Button)window.FindName("SaveQuickConsentButton");
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!save.IsEnabled && controller.ConsentWriteCalls == 0,
+            "Consent save did not remain pending behind the held poll");
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        window.Close();
+        Check(closed, "Pending consent save prevented the window from closing");
+        poll.Complete(snapshot);
+        await scheduled;
+        // Drain the queued save continuation as well as the inspection awaited
+        // above; the actual click handler is async void.
+        await Dispatcher.Yield(DispatcherPriority.Background);
+        Check(controller.ConsentWriteCalls == 0 && controller.MainInspectionCalls == 1 &&
+            controller.QuickInspectionCalls == 1,
+            "Closed pending consent save wrote settings or started another inspection");
+        cases++;
+    }
+
     private static async Task SettingsReadDrainsBeforeExternalRequest(AppSnapshot snapshot, SetupRecoveryPlan plan)
     {
         using var controller = new Fake(snapshot, plan);
@@ -487,18 +682,29 @@ internal static class QuickLaunchUiChecks
         internal Func<Task<QuickLaunchStatus>>? Inspection { get; set; }
         internal Func<CancellationToken, Task<QuickLaunchResult>>? Launch { get; set; }
         internal Func<Task<AppSnapshot>>? MainInspection { get; set; }
+        internal Func<QuickLaunchApproval, bool, Task<QuickLaunchStatus>>? ConsentWrite { get; set; }
         internal int QuickCalls { get; private set; }
+        internal int QuickInspectionCalls { get; private set; }
+        internal int ConsentWriteCalls { get; private set; }
         internal int NormalLaunchCalls { get; private set; }
         internal int MainInspectionCalls { get; private set; }
         internal QuickLaunchApproval? LastApproval { get; private set; }
-        public Task<QuickLaunchStatus> InspectQuickLaunchAsync() => Inspection?.Invoke() ?? Task.FromResult(Status);
+        public Task<QuickLaunchStatus> InspectQuickLaunchAsync()
+        {
+            QuickInspectionCalls++;
+            return Inspection?.Invoke() ?? Task.FromResult(Status);
+        }
         public Task<QuickLaunchResult> LaunchSecondaryAsync(QuickLaunchApproval? confirmedScope, CancellationToken cancellationToken = default)
         {
             QuickCalls++;
             LastApproval = confirmedScope;
             return Launch?.Invoke(cancellationToken) ?? Task.FromResult(Result);
         }
-        public Task<QuickLaunchStatus> SetQuickLaunchConsentAsync(QuickLaunchApproval approval, bool enabled) => throw new InvalidOperationException("Unexpected consent write");
+        public Task<QuickLaunchStatus> SetQuickLaunchConsentAsync(QuickLaunchApproval approval, bool enabled)
+        {
+            ConsentWriteCalls++;
+            return ConsentWrite?.Invoke(approval, enabled) ?? throw new InvalidOperationException("Unexpected consent write");
+        }
         public Task<SecondaryAppearanceState> InspectSecondaryAppearanceAsync() => Task.FromResult(new SecondaryAppearanceState("#5B6821", "ttl", "", false, null, "synthetic", null));
         public Task<SecondaryAppearanceState> ApplySecondaryAppearanceAsync(SecondaryAppearancePlan plan) => throw new InvalidOperationException("Unexpected appearance write");
         public Task<AppSnapshot> InspectAsync() { MainInspectionCalls++; return MainInspection?.Invoke() ?? Task.FromResult(Status.Snapshot); }

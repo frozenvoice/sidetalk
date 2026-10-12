@@ -11,6 +11,7 @@ public partial class MainWindow
     private SecondaryAppearanceState? _appearanceSettings;
     private UserLaunchIntegration? _launchIntegration;
     private bool _settingsLoading;
+    private bool _settingsChangePending;
     private Task _settingsTask = Task.CompletedTask;
 
     internal void ShowEntryFeedback(string reason)
@@ -52,7 +53,7 @@ public partial class MainWindow
     private Task LoadQuickSettingsAsync()
     {
         if (_settingsLoading) return _settingsTask;
-        if (_closed || _isRenderMode || _operationInFlight || _actionInFlight || _inspectionInFlight ||
+        if (_closed || _isRenderMode || _windowMinimized || _restoreInspectionRequired || _operationInFlight || _actionInFlight ||
             _controller is not IQuickLaunchController quick || _controller is not ISecondaryAppearanceController appearance)
             return Task.CompletedTask;
         _settingsLoading = true;
@@ -66,6 +67,9 @@ public partial class MainWindow
         var generation = _inspectionGeneration;
         try
         {
+            await _inspectionTask;
+            if (!IsCurrentInspection(generation) || _windowMinimized || _restoreInspectionRequired ||
+                _operationInFlight || _actionInFlight) return;
             var status = await quick.InspectQuickLaunchAsync();
             if (!IsCurrentInspection(generation)) return;
             var identification = await appearance.InspectSecondaryAppearanceAsync();
@@ -145,11 +149,18 @@ public partial class MainWindow
 
     private async Task ChangeQuickSettingsAsync(Func<Task> change)
     {
-        if (_closed || _isRenderMode || _operationInFlight || _actionInFlight || _inspectionInFlight || _settingsLoading) return;
+        if (_closed || _isRenderMode || _windowMinimized || _restoreInspectionRequired ||
+            _operationInFlight || _actionInFlight || _settingsLoading) return;
+        // Reserve serialization now, but a queued save is still cancellable by
+        // closing until the active inspection drains and the write starts.
+        _settingsChangePending = true;
         _operationInFlight = true;
         ApplyActionAvailability();
         try
         {
+            await _inspectionTask;
+            if (_closed || _windowMinimized || _restoreInspectionRequired) return;
+            _settingsChangePending = false;
             await change();
         }
         catch (Exception exception)
@@ -158,6 +169,7 @@ public partial class MainWindow
         }
         finally
         {
+            _settingsChangePending = false;
             _operationInFlight = false;
             ApplyActionAvailability();
             await InspectAndApplyAsync();

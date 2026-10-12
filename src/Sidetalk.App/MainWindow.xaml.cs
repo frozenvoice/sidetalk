@@ -97,7 +97,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
-        if (_operationInFlight)
+        if (_operationInFlight && !_settingsChangePending)
         {
             e.Cancel = true;
             MessageBox.Show(
@@ -1260,7 +1260,9 @@ public partial class MainWindow : Window
         OpenRecoveryHistoryButton.IsEnabled = !busy;
         OpenEvidenceHistoryButton.IsEnabled = !busy && _evidenceInspection is { Items.Count: > 0 };
         PreserveEvidenceButton.IsEnabled = !busy && _evidenceInspection is { CanPreserve: true };
-        ApplyQuickSettingsAvailability(busy);
+        // Routine reads keep convenience controls visually stable. Their handlers
+        // reserve the request and drain the current inspection before doing work.
+        ApplyQuickSettingsAvailability(commandBusy || _restoreInspectionRequired);
         if (_restoreInspectionRequired && !_closed && !_isRenderMode && !_windowMinimized &&
             !_inspectionInFlight && !_operationInFlight && !_actionInFlight && !_restoreRefreshQueued)
         {
