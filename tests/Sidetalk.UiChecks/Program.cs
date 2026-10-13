@@ -32,8 +32,8 @@ internal static class Program
 
     private static void Run(string[] args)
     {
-        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only")))
-            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only]");
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only" or "--approval-only" or "--approval-preview")))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only|--approval-only|--approval-preview]");
 
         var app = new App();
         app.InitializeComponent();
@@ -55,7 +55,13 @@ internal static class Program
         {
             if (args[1] == "--interaction-only") InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
             else if (args[1] == "--quick-launch-only") QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
-            else QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+            else if (args[1] == "--quiet-only") QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+            else if (args[1] == "--approval-preview")
+            {
+                RecoveryApprovalUiChecks.RunPreview(app, baseSnapshot, CreateApprovalPlan(), output);
+                return;
+            }
+            else RecoveryApprovalUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
             app.Shutdown();
             return;
         }
@@ -63,6 +69,7 @@ internal static class Program
         RenderRecoveryFixtures(app, output, baseSnapshot);
         AdminRightsUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         ResidualRecoveryUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+        RecoveryApprovalUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         AssertInterruptedChoiceReset(baseSnapshot);
         RunRefreshFailureFixtures(baseSnapshot);
         InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);

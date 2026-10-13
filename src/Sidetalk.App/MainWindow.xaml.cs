@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     private SetupRecoveryEvidenceInspection? _evidenceInspection;
     private bool _recoveryActionsInvalidated;
     private bool _hasRecoveryResult;
+    private enum RecoveryOperationPresentation { Settings, ResidualCleanup, EvidencePreservation, ConsentRevocation }
+    private RecoveryOperationPresentation _recoveryOperationPresentation;
     private bool _inspectionInFlight;
     private bool _actionInFlight;
     private bool _operationInFlight;
@@ -311,7 +313,7 @@ public partial class MainWindow : Window
             }
             ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
-                ? "자동 복구를 마쳤습니다. 카카오톡은 자동으로 실행하지 않습니다."
+                ? VerifiedRecoveryMessage(snapshot, "자동 복구")
                 : ReadableFailure(snapshot.RecoveryResultDetail));
             _automaticRecoveryAttempted = false;
             _automaticRecoveryFailureScopeFingerprint = null;
@@ -445,6 +447,17 @@ public partial class MainWindow : Window
             ? "현재 설정을 확인했습니다."
             : plan.Summary;
         ApplyAdminRightsRecoveryPresentation(plan);
+        RecoveryChangesSummaryText.Text = SummarizeRecoveryChanges(plan);
+        var managementTargets = plan.ManagementProcesses.Count != 0 ||
+            plan.Evidence.Any(text => text.StartsWith("관리 UI 종료 대상:", StringComparison.Ordinal));
+        RecoveryLossWarningText.Text = managementTargets
+            ? "주의: 확인된 Sandboxie 관리 창이 승인 후 닫힙니다. 저장하지 않은 관리 설정은 사라질 수 있으니 먼저 저장하세요."
+            : IsAdminRightsRepair(plan)
+                ? "현재 확인된 관리 창 종료 대상은 없습니다. 종료 대상이 포함된 계획을 승인하면 저장하지 않은 관리 설정은 사라질 수 있으니 먼저 저장하세요."
+                : "현재 확인된 관리 창 종료 대상은 없습니다. 자동 복구를 선택하면 재발 시 확인된 관리 창이 닫힐 수 있으며, 저장하지 않은 관리 설정은 사라질 수 있습니다.";
+        RecoveryNextStepText.Text = plan.State is SetupRecoveryState.Blocked or SetupRecoveryState.Interrupted or SetupRecoveryState.Failed
+            ? "다음: 차단 이유와 복구·보존 내역을 확인하고 ‘상태 새로 확인’을 누르세요. 미완료 작업을 완료로 처리하지 않습니다."
+            : "복구 후: ‘실행 준비’가 확인되면 보조 카카오톡을 직접 실행하고 공식 창에서 로그인하세요.";
 
         var recoveryChanges = new List<string>();
         foreach (var change in plan.Changes.Where(change => !change.IsNoOp && change.Kind != SetupRecoveryChangeKind.AddOwnedBoxSetting))
@@ -567,7 +580,7 @@ public partial class MainWindow : Window
             ApplyActionAvailability();
             return;
         }
-        BeginRecoveryOperation("중단 흔적의 원본을 보존하고 현재 상태를 다시 확인하고 있습니다.");
+        BeginRecoveryOperation("중단 흔적의 원본을 보존하고 현재 상태를 다시 확인하고 있습니다.", RecoveryOperationPresentation.EvidencePreservation);
         _lastSnapshot = null;
         _evidenceInspection = null;
         ApplyActionAvailability();
@@ -641,7 +654,7 @@ public partial class MainWindow : Window
             }
             ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
-                ? "복구가 완료되었습니다. 카카오톡은 자동으로 실행하지 않습니다."
+                ? VerifiedRecoveryMessage(snapshot, "복구")
                 : ReadableFailure(snapshot.RecoveryResultDetail));
         }
         catch (Exception exception)
@@ -690,7 +703,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        BeginRecoveryOperation("잔여 프로세스 정리와 관리자 권한 제한 복구를 준비하고 있습니다.");
+        BeginRecoveryOperation("잔여 프로세스 정리와 관리자 권한 제한 복구를 준비하고 있습니다.", RecoveryOperationPresentation.ResidualCleanup);
         SetRecoveryProgress("잔여 프로세스 종료 전 안전 조건을 다시 확인 중…");
         ApplyActionAvailability();
         try
@@ -708,7 +721,7 @@ public partial class MainWindow : Window
 
             ApplyRecoveryPlan(await _controller.InspectSetupRecoveryAsync());
             SetRecoveryResult(string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
-                ? "잔여 프로세스를 정리하고 관리자 권한 제한 복구를 확인했습니다. 카카오톡은 자동으로 실행하지 않습니다."
+                ? VerifiedRecoveryMessage(snapshot, "잔여 프로세스 정리와 관리자 권한 제한 복구")
                 : ReadableFailure(snapshot.RecoveryResultDetail));
         }
         catch (Exception exception)
@@ -739,7 +752,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        BeginRecoveryOperation("자동 복구 설정을 해제하고 있습니다.");
+        BeginRecoveryOperation("자동 복구 설정을 해제하고 있습니다.", RecoveryOperationPresentation.ConsentRevocation);
         _operationInFlight = true;
         SetRecoveryProgress("자동 복구 동의 해제 중…");
         ApplyActionAvailability();
@@ -806,7 +819,29 @@ public partial class MainWindow : Window
     {
         RecoveryProgressText.Text = message;
         RecoveryProgressText.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
-        _recoveryFeedback = string.IsNullOrWhiteSpace(message) ? null : "설정 복구 · " + message;
+        if (!string.IsNullOrWhiteSpace(message))
+            RecoveryStateText.Text = _recoveryOperationPresentation switch
+            {
+                RecoveryOperationPresentation.ConsentRevocation => "자동 복구 해제 중",
+                RecoveryOperationPresentation.EvidencePreservation => "원본 보존·재확인 중",
+                RecoveryOperationPresentation.ResidualCleanup => "잔여 정리·복구 중",
+                _ when message.StartsWith("복구 준비", StringComparison.Ordinal) || message.StartsWith("설정 백업", StringComparison.Ordinal) => "복구 준비 중",
+                _ when message == "재검사" => "복구 후 확인 중",
+                _ => "복구 실행 중"
+            };
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            SetText(StatusTitleText, RecoveryStateText.Text);
+            StatusDetailText.Text = message;
+        }
+        var operationLabel = _recoveryOperationPresentation switch
+        {
+            RecoveryOperationPresentation.ConsentRevocation => "자동 복구 해제",
+            RecoveryOperationPresentation.EvidencePreservation => "원본 보존",
+            RecoveryOperationPresentation.ResidualCleanup => "잔여 정리·복구",
+            _ => "설정 복구"
+        };
+        _recoveryFeedback = string.IsNullOrWhiteSpace(message) ? null : operationLabel + " · " + message;
         UpdateRefreshSummary();
     }
 
@@ -819,6 +854,11 @@ public partial class MainWindow : Window
         _recoveryFeedback = _hasRecoveryResult ? message : null;
         UpdateRefreshSummary();
     }
+
+    private string VerifiedRecoveryMessage(AppSnapshot snapshot, string operation) =>
+        _recoveryPlan is { State: SetupRecoveryState.Healthy or SetupRecoveryState.Applied } && snapshot.CurrentConfigurationVerified
+            ? $"{operation} 후 현재 설정을 확인했습니다. 실행 준비 상태를 확인하고 보조 카카오톡을 직접 실행하세요."
+            : $"{operation} 작업 이후에도 확인할 항목이 남아 있습니다. 차단 이유와 복구 내역을 확인하고 상태를 다시 확인하세요.";
 
     private void ClearStaleSnapshot(string detail)
     {
@@ -836,15 +876,25 @@ public partial class MainWindow : Window
         PolicySummaryText.Visibility = Visibility.Collapsed;
     }
 
-    private void BeginRecoveryOperation(string detail)
+    private void BeginRecoveryOperation(string detail, RecoveryOperationPresentation operation = RecoveryOperationPresentation.Settings)
     {
+        _recoveryOperationPresentation = operation;
+        SetRecoveryResult(string.Empty);
+        RecoveryPanel.Visibility = Visibility.Visible;
+        RecoveryStateText.Text = operation switch
+        {
+            RecoveryOperationPresentation.ConsentRevocation => "자동 복구 해제 중",
+            RecoveryOperationPresentation.EvidencePreservation => "원본 보존 준비 중",
+            RecoveryOperationPresentation.ResidualCleanup => "잔여 정리·복구 준비 중",
+            _ => "복구 준비 중"
+        };
         _actionFeedback = null;
         _recoveryFeedback = detail;
         UpdateRefreshSummary();
         _inspectionGeneration++;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
-        SetText(StatusTitleText, "복구 진행 중");
+        SetText(StatusTitleText, RecoveryStateText.Text);
         StatusBadgeText.Text = "진행 중";
         StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
         StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
@@ -880,11 +930,11 @@ public partial class MainWindow : Window
     private static string FormatRecoveryChange(SetupRecoveryChange change)
     {
         if (change.Kind == SetupRecoveryChangeKind.RepairOwnedBoxSetting && change.Key.Equals("DropAdminRights", StringComparison.OrdinalIgnoreCase))
-            return $"전용 box {SafeRecoveryText(change.Section)}의 DropAdminRights: {FormatAdminRightsValues(change.CurrentValues)} → y · 관리자 권한 제한 복구";
+            return $"관리자 권한 제한 복구 · 전용 box {SafeRecoveryText(change.Section)}의 DropAdminRights: {FormatAdminRightsValues(change.CurrentValues)} → y";
         if (change.Kind == SetupRecoveryChangeKind.RemoveGlobalTemplate)
-            return "GlobalSettings의 Template 제거: " + string.Join(", ", change.CurrentValues.Except(change.DesiredValues, StringComparer.OrdinalIgnoreCase));
+            return "격리 정책과 충돌하는 검토된 전역 호환성 선택 제거 · GlobalSettings.Template: " + string.Join(", ", change.CurrentValues.Except(change.DesiredValues, StringComparer.OrdinalIgnoreCase));
         if (change.Kind == SetupRecoveryChangeKind.SetUserSetting && change.Key == "SbieCtrl_AutoRunSoftCompat")
-            return $"현재 사용자({change.Section})의 SbieCtrl_AutoRunSoftCompat=n · 자동 호환성 팝업 재발 방지";
+            return $"현재 사용자의 SbieCtrl 자동 호환성 팝업 재발 방지 · {change.Section}.SbieCtrl_AutoRunSoftCompat=n";
         var description = SafeRecoveryText(change.Description);
         if (string.IsNullOrWhiteSpace(description))
         {
@@ -892,6 +942,23 @@ public partial class MainWindow : Window
         }
 
         return $"• {description} ({RecoveryChangeLabel(change.Kind)})";
+    }
+
+    private static string SummarizeRecoveryChanges(SetupRecoveryPlan plan)
+    {
+        var changes = plan.Changes.Where(change => !change.IsNoOp).ToArray();
+        var purposes = new List<string>();
+        if (changes.Any(change => change.Kind == SetupRecoveryChangeKind.RemoveGlobalTemplate))
+            purposes.Add("격리 정책과 충돌하는 검토된 전역 호환성 선택을 제거합니다. 템플릿 파일은 삭제하지 않습니다.");
+        if (changes.Any(change => change.Kind == SetupRecoveryChangeKind.SetUserSetting && change.Key == "SbieCtrl_AutoRunSoftCompat"))
+            purposes.Add("현재 사용자의 자동 호환성 팝업 재발을 방지합니다.");
+        if (IsAdminRightsRepair(plan))
+            purposes.Add("전용 환경의 관리자 권한 제한을 복구합니다. 별도의 새 승인이 필요합니다.");
+        if (changes.Any(change => change.Kind == SetupRecoveryChangeKind.AddOwnedBoxSetting))
+            purposes.Add("표시된 전용 저장 공간에 SIDETALK 격리 환경을 준비합니다.");
+        if (purposes.Count == 0)
+            purposes.Add(changes.Length == 0 ? "확인된 변경 항목이 없습니다." : "검토된 설정만 변경합니다. 정확한 항목과 영향 범위를 아래에서 펼쳐 확인하세요.");
+        return string.Join("\n", purposes);
     }
 
     private static string RecoveryChangeLabel(SetupRecoveryChangeKind kind) => kind switch
@@ -906,8 +973,8 @@ public partial class MainWindow : Window
 
     private static string RecoveryStateLabel(SetupRecoveryState state) => state switch
     {
-        SetupRecoveryState.Healthy => "정상",
-        SetupRecoveryState.FirstSetup => "최초 준비",
+        SetupRecoveryState.Healthy => "현재 설정 정상",
+        SetupRecoveryState.FirstSetup => "최초 준비 · 승인 필요",
         SetupRecoveryState.ApprovalRequired => "승인 필요",
         SetupRecoveryState.AutomaticallyApplicable => "자동 복구 가능",
         SetupRecoveryState.Blocked => "복구 차단",
@@ -1021,19 +1088,31 @@ public partial class MainWindow : Window
             _unsafeActionsInvalidated = true;
         }
         RecoveryPanel.Visibility = Visibility.Visible;
-        RecoveryStateText.Text = "복구 확인 실패";
+        RecoveryStateText.Text = diagnosticStage != "recovery-operation" ? "복구 상태 확인 실패" : _recoveryOperationPresentation switch
+        {
+            RecoveryOperationPresentation.ConsentRevocation => "자동 복구 해제 실패",
+            RecoveryOperationPresentation.EvidencePreservation => "원본 보존 실패 · 재확인 필요",
+            _ => "복구 실패 · 재확인 필요"
+        };
         RecoverySummaryText.Text = preserveFreshExecution
             ? $"{stage}에 실패해 설정 복구를 차단했습니다. 실행·종료는 이번에 새로 확인한 격리 정책과 명령 상태에 따릅니다."
-            : $"{stage}에 실패했습니다. 현재 실행 권한을 해제했습니다. 상태 새로 확인으로 다시 확인하세요.";
+            : diagnosticStage == "recovery-operation" && _recoveryOperationPresentation is RecoveryOperationPresentation.Settings or RecoveryOperationPresentation.ResidualCleanup
+                ? $"{stage}를 완료하지 못했습니다. 일부 설정이 이미 적용됐을 수 있습니다. 변경 전 상태로 복원됐다고 확인되지 않았으므로 복구 내역과 백업을 확인하고 ‘상태 새로 확인’을 누르세요."
+                : $"{stage}에 실패했습니다. 현재 실행 권한을 해제했습니다. 상태 새로 확인으로 다시 확인하세요.";
         SetRecoveryResult($"{stage} 실패: {ReadableException(exception)}");
 
         if (!preserveFreshExecution)
         {
-            SetText(StatusTitleText, "복구 후 상태 확인 필요");
+            SetText(StatusTitleText, RecoveryStateText.Text);
             StatusBadgeText.Text = "다시 확인 필요";
             StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
             StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
-            StatusDetailText.Text = "복구 작업 결과와 현재 실행 상태를 새로 확인해야 합니다. 상태 새로 확인을 누르세요.";
+            StatusDetailText.Text = diagnosticStage == "recovery-operation" ? _recoveryOperationPresentation switch
+            {
+                RecoveryOperationPresentation.ConsentRevocation => "자동 복구 동의 해제 결과를 확인하지 못했습니다. 저장된 동의 상태와 내역을 다시 확인하세요.",
+                RecoveryOperationPresentation.EvidencePreservation => "원본 보존 결과와 미완료 기록을 다시 확인해야 합니다. 보존 내역과 상태 새로 확인을 이용하세요.",
+                _ => "복구 작업 결과와 현재 실행 상태를 새로 확인해야 합니다. 상태 새로 확인을 누르세요."
+            } : "복구 상태 조회 결과를 확인하지 못했습니다. 상태 새로 확인을 누르세요.";
         }
         else
         {
