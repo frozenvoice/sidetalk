@@ -30,6 +30,7 @@ public partial class MainWindow
             : _normalRecoveryScopeText);
         AutomaticRecoveryCheckBox.Visibility = repair ? Visibility.Collapsed : Visibility.Visible;
         PrepareRecoveryButton.Content = repair ? "관리자 권한 제한 복구" : "복구하고 실행 준비";
+        System.Windows.Automation.AutomationProperties.SetName(PrepareRecoveryButton, (string)PrepareRecoveryButton.Content);
         if (repair)
         {
             _suppressRecoveryChoiceChange = true;
