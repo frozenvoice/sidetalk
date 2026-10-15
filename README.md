@@ -132,7 +132,7 @@ pwsh -File scripts/prepare-distributions.ps1
 
 일반 push/PR에는 원격 빌드·UI·설치 검증을 실행하지 않습니다. 일반 작업은 변경에 필요한 로컬 검증으로 완료할 수 있으며 CI 시작·watch·대기·자동 rerun을 요구하지 않습니다. UI 변경에는 `verify.ps1 -UiChecks`, 빌드 스크립트 변경에는 `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`, 설치/업데이트 변경에는 기본 검증 뒤 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`를 선택합니다. 일반 코드 수정마다 전체 UI·설치기 생성·설치 회귀를 실행하지 않습니다.
 
-전체 원격 검증은 명시적 요청 또는 릴리즈 공개 전에 **Windows verification**의 `workflow_dispatch`로 수행합니다. `verify.ps1 -UiChecks`, 빌드 스크립트 모의 회귀, 고정 Inno Setup 컴파일과 격리 설치/업데이트/제거 회귀(`tests/Sidetalk.InstallerChecks`)를 모두 순차 실행합니다. 필수 검사의 실패·취소·미실행은 전체 성공이 아닙니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. hosted Windows Server 합성 검증과 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
+전체 원격 검증은 릴리즈 공개 전에도 사용자가 해당 Actions 실행을 명시적으로 요청한 경우에만 **Windows verification**의 `workflow_dispatch`로 수행합니다. 릴리즈 준비·게시 요청만으로 dispatch·watch·rerun을 승인받은 것으로 해석하지 않으며, 승인이나 정확한 SHA의 성공 근거가 없으면 공개 게이트 미충족으로 보고합니다. `verify.ps1 -UiChecks`, 빌드 스크립트 모의 회귀, 고정 Inno Setup 컴파일과 격리 설치/업데이트/제거 회귀(`tests/Sidetalk.InstallerChecks`)를 모두 순차 실행합니다. 필수 검사의 실패·취소·미실행은 전체 성공이 아닙니다. 로그와 합성 WPF 이미지만 보관하며 사용자 프로필·계정·설정 백업은 업로드하지 않습니다. hosted Windows Server 합성 검증과 별도 Windows 11 + Sandboxie Plus 1.18.4의 [실제 복구 시험](docs/WINDOWS-RECOVERY-TEST.md)은 구분합니다.
 
 현재 GitHub 릴리즈 게시 자동화는 없습니다. 공개 전 정확한 대상 SHA의 전체 검증 성공을 확인하고 같은 SHA의 깨끗한 checkout에서 payload·설치기를 준비해 공개 파일의 SHA-256 동일성을 확인하는 [수동 사전 검증 절차](docs/VERIFICATION.md#수동-릴리즈-사전-검증)를 따릅니다. 패키징이나 `build-local.cmd` 성공만으로 공개 승인을 대신하지 않습니다.
 
