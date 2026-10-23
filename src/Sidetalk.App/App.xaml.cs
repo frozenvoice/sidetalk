@@ -8,6 +8,14 @@ namespace Sidetalk.App;
 
 public partial class App : Application
 {
+    private readonly ThemePalette palette;
+
+    public App()
+    {
+        InitializeComponent();
+        palette = new ThemePalette(this);
+    }
+
     private ISidetalkController? _controller;
     private InstanceRequestBroker? _broker;
     private QuickLaunchWindow? _quickWindow;
@@ -336,6 +344,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        palette.Dispose();
         _controller?.Dispose();
         _broker?.Dispose();
         _broker = null;
