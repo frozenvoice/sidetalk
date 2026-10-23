@@ -1,5 +1,12 @@
 # 검증 운영 정책 — 2026-10-06
 
+## Windows 고대비 팔레트 — 2026-10-23
+
+- 공통 semantic brush와 동적 리소스 참조를 적용했다. 고대비에서는 OS의 Window/WindowText, Highlight/HighlightText, GrayText, ControlText를 사용하며 메인·빠른 실행 창, 상태 안내, 기본/비활성 버튼, 체크박스, 툴팁, 스크롤바가 열린 상태에서 갱신된다. 상태 글자와 선택 표시는 강조 배경색과 분리해 본문색으로 표시한다. 고대비 해제 시 기존 일반 색을 복원한다. native caption은 고대비에서 OS 기본값으로 돌리며 Windows 설정은 쓰지 않는다.
+- Windows 11 / .NET SDK 10.0.401 / WPF 144 DPI. `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks`에서 Release 앱 빌드(경고·오류 0), 안전성 콘솔 324/324, IsolationProbe 빌드는 통과했다. 새 UI fixture의 읽기 전용 버튼 가정과 분리 스크롤바의 스타일 로드를 수정한 뒤, 최종 소스의 `dotnet run --project tests/Sidetalk.UiChecks/Sidetalk.UiChecks.csproj -c Release -- .tmp/ui-checks`가 종료 코드 0으로 통과했다. 이미 통과한 Core 검사는 반복하지 않았다.
+- 최종 UI 검사는 주입한 밝은/어두운 OS 팔레트 두 개에서 기존 메인/빠른 실행 창의 색, primary 색 쌍, disabled 상태, 코드에서 설정한 상태색, checkbox/tooltip/scrollbar, background-thread→Dispatcher 전환, 일반색 복원, dispose 후 대기 이벤트 무시를 확인했다. 일반 모드와 두 합성 고대비 캡처를 직접 확인했다. 기존 관리자 권한·잔여 복구 각 6, 승인 UI, interaction 16, quick-launch 25, quiet-inspection 15와 24초 production timer 관찰도 통과했다. 합성 controller 쓰기는 0이다.
+- 실제 Windows 고대비 설정 변경·native 색 변경 알림·DWM caption·스크린리더는 실행하지 않았다. 주입한 팔레트의 WPF 결과를 실제 OS 고대비 성공으로 보고하지 않는다. 설치·패키징·원격 CI와 실계정 검증은 수행하지 않았다. 생성 UI 출력은 확인 후 정리했다.
+
 2026-10-13 복구 승인 UI: `verify.ps1 -UiChecks` 통과(166.38초), Release 경고·오류 0개, 콘솔 324/324, 관리자 권한·잔여 복구 각각 6, interaction 16, quick-launch 25, quiet-inspection 15 및 새 승인 합성 회귀 통과. 이후 홈/복구 상태 일치·자동 동의 해제와 확대 캡처에 대한 좁은 `--approval-only` 검사도 통과했다. 실제 OS High Contrast와 native 키 입력은 Computer Use 앱 접근 승인 시간초과 등으로 미검증이며 PASS가 아니다. 본문 StaticResource 및 native caption 고대비 분기는 검토했지만 실제 본문 문제를 확정하지 않아 변경하지 않았다. 자세한 계약·캡처·한계는 [복구 승인 화면](RECOVERY-APPROVAL-UI.md)을 참고한다. 빌드/설치 스크립트 변경이 없어 BuildChecks·InstallerChecks 및 원격 CI는 실행하지 않았다.
 
 일반 push/PR에는 원격 검증을 실행하지 않는다. 일반 개발 작업은 변경 범위에 필요한 로컬 검사와 결과 보고로 완료할 수 있다. 원격 CI dispatch·watch·완료 대기·자동 rerun은 일반 완료 조건이 아니다. 아래의 과거 실행·CI 미확인 기록은 당시 검증 범위를 나타내며 현재 작업의 원격 실행 의무를 만들지 않는다.

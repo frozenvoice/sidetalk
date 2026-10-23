@@ -367,17 +367,17 @@ public partial class MainWindow : Window
             ? (snapshot.CurrentConfigurationVerified ? "현재 격리 설정 확인됨 · 시작 당시 적용 규칙은 확인 불가" : "현재 격리 설정과 시작 당시 적용 규칙을 확인할 수 없습니다.")
             : string.Empty;
         PolicySummaryText.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-        PolicySummaryText.Foreground = (Brush)FindResource("WarningInkBrush");
+        PolicySummaryText.SetResourceReference(TextBlock.ForegroundProperty, "WarningInkBrush");
         ApplyAdminRightsPresentation(snapshot);
         StatusBadgeText.Text = ReadinessBadge(snapshot.State);
         var statusBrush = snapshot.State switch
         {
-            Readiness.Ready or Readiness.Running or Readiness.RunningUnverified => "AccentBrush",
+            Readiness.Ready or Readiness.Running or Readiness.RunningUnverified => "AccentTextBrush",
             Readiness.Blocked or Readiness.Unknown => "ErrorInkBrush",
             _ => "WarningInkBrush"
         };
-        StatusDot.Fill = (Brush)FindResource(statusBrush);
-        StatusBadgeText.Foreground = (Brush)FindResource(statusBrush);
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, statusBrush);
+        StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, statusBrush);
         InitialSetupPanel.Visibility = snapshot.State is Readiness.SetupRequired or Readiness.MissingDependency
             ? Visibility.Visible : Visibility.Collapsed;
         UpdateRefreshSummary();
@@ -869,8 +869,8 @@ public partial class MainWindow : Window
         _unsafeActionsInvalidated = true;
         SetText(StatusTitleText, "작업 진행 중");
         StatusBadgeText.Text = "진행 중";
-        StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
-        StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "WarningInkBrush");
+        StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "WarningInkBrush");
         StatusDetailText.Text = detail;
         PolicyDetailText.Text = detail;
         PolicySummaryText.Visibility = Visibility.Collapsed;
@@ -896,8 +896,8 @@ public partial class MainWindow : Window
         _unsafeActionsInvalidated = true;
         SetText(StatusTitleText, RecoveryStateText.Text);
         StatusBadgeText.Text = "진행 중";
-        StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
-        StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "WarningInkBrush");
+        StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "WarningInkBrush");
         StatusDetailText.Text = detail;
     }
 
@@ -1018,8 +1018,8 @@ public partial class MainWindow : Window
         var lastSnapshot = _lastObservedSnapshot;
         _lastSnapshot = null;
         _unsafeActionsInvalidated = true;
-        StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
-        StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "WarningInkBrush");
+        StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "WarningInkBrush");
         StatusBadgeText.Text = "현재 확인 실패";
 
         if (lastSnapshot is { } snapshot)
@@ -1105,8 +1105,8 @@ public partial class MainWindow : Window
         {
             SetText(StatusTitleText, RecoveryStateText.Text);
             StatusBadgeText.Text = "다시 확인 필요";
-            StatusDot.Fill = (Brush)FindResource("WarningInkBrush");
-            StatusBadgeText.Foreground = (Brush)FindResource("WarningInkBrush");
+            StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "WarningInkBrush");
+            StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "WarningInkBrush");
             StatusDetailText.Text = diagnosticStage == "recovery-operation" ? _recoveryOperationPresentation switch
             {
                 RecoveryOperationPresentation.ConsentRevocation => "자동 복구 동의 해제 결과를 확인하지 못했습니다. 저장된 동의 상태와 내역을 다시 확인하세요.",
@@ -1139,8 +1139,8 @@ public partial class MainWindow : Window
         UpdateInspectionDetails();
         PolicyDetailText.Text = StatusDetailText.Text;
         PolicySummaryText.Visibility = Visibility.Collapsed;
-        StatusDot.Fill = (Brush)FindResource("ErrorInkBrush");
-        StatusBadgeText.Foreground = (Brush)FindResource("ErrorInkBrush");
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "ErrorInkBrush");
+        StatusBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorInkBrush");
         UpdateRefreshSummary();
         KakaoSummaryText.Text = "확인 실패";
         SandboxieSummaryText.Text = "확인 실패";

@@ -65,6 +65,7 @@ internal static class Program
             app.Shutdown();
             return;
         }
+        HighContrastChecks.Run(app, baseSnapshot, CreateHealthyPlan(), output);
         RenderBasicFixtures(app, output, baseSnapshot);
         RenderRecoveryFixtures(app, output, baseSnapshot);
         AdminRightsUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);

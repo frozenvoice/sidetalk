@@ -21,16 +21,19 @@ internal sealed class QuickLaunchWindow : Window
         Height = 265;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = (Brush)Application.Current.FindResource("CanvasBrush");
-        Foreground = (Brush)Application.Current.FindResource("InkBrush");
+        SetResourceReference(BackgroundProperty, "CanvasBrush");
+        SetResourceReference(ForegroundProperty, "InkBrush");
         FontFamily = new FontFamily("Segoe UI, Malgun Gothic");
         var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(new TextBlock { Text = "보조 계정", FontSize = 23, FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.FindResource("AccentBrush") });
+        var heading = new TextBlock { Text = "보조 계정", FontSize = 23, FontWeight = FontWeights.SemiBold };
+        heading.SetResourceReference(TextBlock.ForegroundProperty, "AccentTextBrush");
+        panel.Children.Add(heading);
         progress = new TextBlock { Text = "전용 환경 확인 중…", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 14, 0, 12) };
         panel.Children.Add(progress);
-        panel.Children.Add(new TextBlock { Text = "로그인·송수신은 카카오톡에서 직접 확인하세요.",
-            TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.FindResource("SecondaryBrush") });
+        var guidance = new TextBlock { Text = "로그인·송수신은 카카오톡에서 직접 확인하세요.",
+            TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        guidance.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryBrush");
+        panel.Children.Add(guidance);
         cancel = new Button { Content = "요청 취소", Style = (Style)Application.Current.FindResource("ActionButton"),
             HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
         cancel.Click += (_, _) => RequestCancellation();
