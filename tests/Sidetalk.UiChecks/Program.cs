@@ -32,8 +32,8 @@ internal static class Program
 
     private static void Run(string[] args)
     {
-        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only" or "--approval-only" or "--approval-preview" or "--sandboxie-only")))
-            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only|--approval-only|--approval-preview|--sandboxie-only]");
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only" or "--approval-only" or "--approval-preview" or "--sandboxie-only" or "--resize-probe" or "--resize-interactive" or "--resize-rendering-only")))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only|--approval-only|--approval-preview|--sandboxie-only|--resize-probe|--resize-interactive|--resize-rendering-only]");
 
         var app = new App();
         app.InitializeComponent();
@@ -57,6 +57,9 @@ internal static class Program
             else if (args[1] == "--quick-launch-only") QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
             else if (args[1] == "--quiet-only") QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
             else if (args[1] == "--sandboxie-only") SandboxieSetupUiChecks.Run(app, baseSnapshot, CreateHealthyPlan(), output);
+            else if (args[1] == "--resize-rendering-only") ResizeRenderingChecks.Run(baseSnapshot, CreateHealthyPlan());
+            else if (args[1] is "--resize-probe" or "--resize-interactive")
+                ResizeProbe.Run(app, baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output, interactive: args[1] == "--resize-interactive");
             else if (args[1] == "--approval-preview")
             {
                 RecoveryApprovalUiChecks.RunPreview(app, baseSnapshot, CreateApprovalPlan(), output);
@@ -78,6 +81,7 @@ internal static class Program
         QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         SandboxieSetupUiChecks.Run(app, baseSnapshot, CreateHealthyPlan(), output);
+        ResizeRenderingChecks.Run(baseSnapshot, CreateHealthyPlan());
         var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
         File.WriteAllText(invalidLogDirectory, "fixture");
         InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;

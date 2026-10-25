@@ -49,6 +49,10 @@ public partial class MainWindow : Window
     private bool _restoreRefreshQueued;
     private bool _intentCancelled;
     private string? _actionFeedback;
+    private InteractiveResizeRendering? _resizeRendering;
+
+    internal bool IsSoftwareRenderingForResize => _resizeRendering?.IsSoftwareDuringResize == true;
+    internal void DetachResizeRenderingForDiagnostics() => _resizeRendering?.Detach();
 
     public MainWindow(ISidetalkController controller, bool isRenderMode = false)
         : this(controller, isRenderMode, null)
@@ -77,7 +81,11 @@ public partial class MainWindow : Window
         InitializeSandboxieSetup();
         AppVersionText.Text = "v" + SidetalkBuild.Version;
         UpdateInspectionDetails();
-        SourceInitialized += (_, _) => WindowAppearance.Apply(this);
+        SourceInitialized += (_, _) =>
+        {
+            WindowAppearance.Apply(this);
+            _resizeRendering = InteractiveResizeRendering.Attach(this);
+        };
         ChecksList.ItemsSource = _checks;
         RecoveryChangesList.ItemsSource = _recoveryChanges;
         RecoveryAffectedList.ItemsSource = _recoveryAffected;
