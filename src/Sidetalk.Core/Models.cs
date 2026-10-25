@@ -2,7 +2,12 @@ namespace Sidetalk.Core;
 
 public enum Readiness { MissingDependency, SetupRequired, Blocked, Ready, Running, RunningUnverified, Unknown }
 public enum ProcessPolicyStatus { NotObserved, NoProcesses, EffectiveRulesUnverified }
-public sealed record DependencyInfo(string Name, string? Path, string Version, string Detail, bool Available);
+/// <summary>Why a dependency is or is not usable. Unknown means the detector did not classify it.</summary>
+public enum DependencyCondition { Unknown, Verified, NotInstalled, PathUnresolved, SignatureInvalid, UnsupportedVersion, ServiceUnavailable }
+public sealed record DependencyInfo(string Name, string? Path, string Version, string Detail, bool Available)
+{
+    public DependencyCondition Condition { get; init; }
+}
 public sealed record AppSnapshot(
     Readiness State, string Title, string Detail, string BoxName, string StoragePath,
     DependencyInfo Kakao, DependencyInfo Sandboxie, IReadOnlyList<int> BoxProcessIds,

@@ -14,7 +14,6 @@ namespace Sidetalk.App;
 
 public partial class MainWindow : Window
 {
-    private const string SandboxieDownloadUrl = "https://sandboxie-plus.com/downloads/";
     private const string KakaoOfficialUrl = "https://www.kakaocorp.com/page/service/service/KakaoTalk";
     private readonly ISidetalkController _controller;
     private readonly DispatcherTimer _inspectionTimer;
@@ -61,12 +60,21 @@ public partial class MainWindow : Window
     {
     }
 
-    private MainWindow(ISidetalkController controller, bool isRenderMode, Func<SidetalkCommandAction, Task<bool>>? confirmAction)
+    internal MainWindow(ISidetalkController controller, SandboxieInstaller sandboxieInstaller, Func<SandboxieInstallerRelease, bool> confirmSandboxieInstall)
+        : this(controller, false, null, sandboxieInstaller, confirmSandboxieInstall)
+    {
+    }
+
+    private MainWindow(ISidetalkController controller, bool isRenderMode, Func<SidetalkCommandAction, Task<bool>>? confirmAction,
+        SandboxieInstaller? sandboxieInstaller = null, Func<SandboxieInstallerRelease, bool>? confirmSandboxieInstall = null)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _isRenderMode = isRenderMode;
         _confirmAction = confirmAction ?? ConfirmActionAsync;
+        _sandboxieInstaller = sandboxieInstaller ?? SandboxieInstaller.CreateDefault();
+        _confirmSandboxieInstall = confirmSandboxieInstall ?? ConfirmSandboxieInstall;
         InitializeComponent();
+        InitializeSandboxieSetup();
         AppVersionText.Text = "v" + SidetalkBuild.Version;
         UpdateInspectionDetails();
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
@@ -114,11 +122,13 @@ public partial class MainWindow : Window
             // Pending UI intent is cancellable; a command already dispatched to
             // Core is a journalled operation and still defers closing above.
             CancelPendingAction();
+            CancelSandboxieSetupForClose();
         }
     }
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         _closed = true;
+        CancelSandboxieSetupForClose();
         CancelManualRefreshPresentation();
         _inspectionGeneration++;
         _intentGeneration++;
@@ -383,6 +393,7 @@ public partial class MainWindow : Window
         UpdateRefreshSummary();
         KakaoSummaryText.Text = DependencySummary(snapshot.Kakao);
         SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
+        UpdateSandboxieSetupCard();
 
         BoxNameText.Text = DisplayValue(snapshot.BoxName);
         StoragePathText.Text = DisplayValue(snapshot.StoragePath);
@@ -1288,26 +1299,23 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SandboxieDownloadButton_Click(object sender, RoutedEventArgs e)
-    {
-        OpenOfficialPage(SandboxieDownloadUrl, "Sandboxie Plus 다운로드 페이지");
-    }
-
     private void KakaoOfficialButton_Click(object sender, RoutedEventArgs e)
     {
         OpenOfficialPage(KakaoOfficialUrl, "카카오톡 공식 안내 페이지");
     }
 
-    private void OpenOfficialPage(string url, string description)
+    private bool OpenOfficialPage(string url, string description)
     {
-        if (_isRenderMode) return;
+        if (_isRenderMode) return true;
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            return true;
         }
         catch (Exception exception)
         {
             SetSetupResult($"{description}을 열지 못했습니다: {ReadableException(exception)}");
+            return false;
         }
     }
 
@@ -1342,6 +1350,7 @@ public partial class MainWindow : Window
         // Routine reads keep convenience controls visually stable. Their handlers
         // reserve the request and drain the current inspection before doing work.
         ApplyQuickSettingsAvailability(commandBusy || _restoreInspectionRequired);
+        ApplySandboxieSetupAvailability();
         if (_restoreInspectionRequired && !_closed && !_isRenderMode && !_windowMinimized &&
             !_inspectionInFlight && !_operationInFlight && !_actionInFlight && !_restoreRefreshQueued)
         {
@@ -1368,7 +1377,7 @@ public partial class MainWindow : Window
 
     private static void ApplyDependency(TextBlock availability, TextBlock info, DependencyInfo dependency)
     {
-        availability.Text = dependency.Available
+        availability.Text = dependency.Available && dependency.Condition is not (DependencyCondition.UnsupportedVersion or DependencyCondition.ServiceUnavailable)
             ? $"{dependency.Name} · 확인됨"
             : $"{dependency.Name} · {(string.IsNullOrWhiteSpace(dependency.Path) ? "없음" : "확인 필요")}";
         info.Text = BuildDependencyInfo(dependency);
@@ -1387,9 +1396,16 @@ public partial class MainWindow : Window
             : feedback;
     }
 
-    private static string DependencySummary(DependencyInfo dependency) => dependency.Available
-        ? string.IsNullOrWhiteSpace(dependency.Version) ? "확인됨" : $"{dependency.Version} · 확인됨"
-        : string.IsNullOrWhiteSpace(dependency.Path) ? "설치 필요" : "확인 필요";
+    private static string DependencySummary(DependencyInfo dependency) => dependency.Condition switch
+    {
+        DependencyCondition.UnsupportedVersion => $"{dependency.Version} · 지원 버전 아님",
+        DependencyCondition.ServiceUnavailable => $"{dependency.Version} · 서비스 확인 필요",
+        DependencyCondition.SignatureInvalid => "서명 확인 실패",
+        DependencyCondition.PathUnresolved => "설치 위치 확인 필요",
+        _ => dependency.Available
+            ? string.IsNullOrWhiteSpace(dependency.Version) ? "확인됨" : $"{dependency.Version} · 확인됨"
+            : string.IsNullOrWhiteSpace(dependency.Path) ? "설치 필요" : "확인 필요"
+    };
 
     private static string BuildDependencyInfo(DependencyInfo dependency)
     {

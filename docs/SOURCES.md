@@ -22,7 +22,7 @@
 
 ## 현재 PC에서 확인한 공식 설치본
 
-- 공식 [v1.18.4 릴리스](https://github.com/sandboxie-plus/Sandboxie/releases/tag/v1.18.4)의 x64 설치 파일은 공식 출처와 서명을 확인하고 다운로드한 파일의 SHA-256을 기록한 뒤 설치했다. 설치 파일 SHA-256은 `CFCEDA1B1A63ABCD2B3E5FBFDC4895F15DB56316F5A9F2F06AEA230E209B120E`이다.
+- 공식 [v1.18.4 릴리스](https://github.com/sandboxie-plus/Sandboxie/releases/tag/v1.18.4)의 x64 설치 파일은 공식 출처와 서명을 확인하고 다운로드한 파일의 SHA-256을 기록한 뒤 설치했다. 설치 파일 SHA-256은 `CFCEDA1B1A63ABCD2B3E5FBFDC4895F15DB56316F5A9F2F06AEA230E209B120E`이다. 2026-10-25에 같은 릴리스의 GitHub 자산 digest, 릴리스의 `sha256-checksums.txt`, 내려받은 파일 해시가 모두 이 값(24,853,640바이트)과 일치하고 Authenticode 서명자가 `NOVASYNC LABS PTE. LTD.`(유효, GlobalSign EV, 제품 버전 1.18.4)임을 다시 확인했다. 앱의 Sandboxie 설치 기능은 이 값을 `SandboxieSupport.cs`에 고정해 사용한다.
 - 설치된 사용자 모드 구성요소는 `Start.exe`, `SbieDll.dll`, `SbieSvc.exe` 모두 파일 버전 `5.73.4`이며, 공식 서명을 확인했다.
 - 설치된 `SbieDrv.sys`는 파일 버전 `5.73.2`이며 Microsoft Windows Hardware Compatibility Publisher 서명을 확인했다. 드라이버 SHA-256은 `B2BFAC3C9FD4C378400EE4821A34773CCBAF71BB1E836C7A03ACC9A9AB3CFE96`이다. 이 버전은 설치 후 실제 파일과 Sandboxie API에서 확인한 값이며, 소스의 사용자 모드 버전 `5.73.4`로 추정해 대체하지 않는다.
 - [v1.18.4 공통 버전 헤더](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/common/my_version.h)는 소스 빌드 기준 `VERSION_REV=4`를 정의하고, [드라이버 resource.rc](https://github.com/sandboxie-plus/Sandboxie/blob/487d56309fafe90e2771d4c9004333fe01b77094/Sandboxie/core/drv/resource.rc)는 그 값을 드라이버 파일 버전에 사용한다.

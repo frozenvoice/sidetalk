@@ -111,7 +111,7 @@ internal sealed partial class SetupRecovery
             blockers.Add("전용 환경의 Windows 사용자 범위가 현재 사용자와 다릅니다.");
         if (!observation.HostContextVerified) blockers.Add("일반 사용자 실행 컨텍스트를 확인하지 못했습니다.");
         if (!observation.Install.Verified) blockers.Add("검토된 Sandboxie 설치 경로·서명·버전을 확인하지 못했습니다.");
-        if (!observation.OfficialTemplateBaselineVerified) blockers.Add("공식 Sandboxie 1.18.4 템플릿 기준을 확인하지 못했습니다.");
+        if (!observation.OfficialTemplateBaselineVerified) blockers.Add($"공식 Sandboxie {SandboxieSupport.PlusVersion} 템플릿 기준을 확인하지 못했습니다.");
         if (firstSetup ? !firstSetupPolicySafe : !observation.PolicySafe &&
             (profile is null || !AdminRightsRecovery.CapturePermitsRepair(observation, profile)))
             blockers.Add("전용 환경에 검토되지 않은 설정이 있어 복구를 차단했습니다.");

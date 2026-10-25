@@ -8,16 +8,15 @@ namespace Sidetalk.Core;
 
 public static class RuntimeVerifier
 {
-    public const string PlusVersion = "1.18.4";
-    public const string CoreVersion = "5.73.4";
-    // The signed official 1.18.4 x64 installer ships this attestation-signed driver.
-    // User-mode components remain 5.73.4; do not accept arbitrary mixed versions.
-    public const string DriverVersion = "5.73.2";
-    private const string DriverSha256 = "B2BFAC3C9FD4C378400EE4821A34773CCBAF71BB1E836C7A03ACC9A9AB3CFE96";
+    public const string PlusVersion = SandboxieSupport.PlusVersion;
+    public const string CoreVersion = SandboxieSupport.CoreVersion;
+    public const string DriverVersion = SandboxieSupport.DriverVersion;
+    private const string DriverSha256 = SandboxieSupport.DriverSha256;
     public const uint ServiceRunningState = 4;
     private const uint ServiceWin32OwnProcess = 0x00000010;
     private const uint ErrorAccessDenied = 5;
     private const uint ErrorInsufficientBuffer = 122;
+    private const uint ErrorServiceDoesNotExist = 1060;
 
     public static bool MatchesComponentVersion(string actual, bool driver) =>
         MatchesVersion(actual, driver ? DriverVersion : CoreVersion);
@@ -38,7 +37,7 @@ public static class RuntimeVerifier
         {
             using var file = File.OpenRead(path);
             if (!Convert.ToHexString(SHA256.HashData(file)).Equals(DriverSha256, StringComparison.Ordinal))
-                throw new InvalidDataException("드라이버가 검토된 공식 1.18.4 x64 설치 파일의 구성요소와 다릅니다.");
+                throw new InvalidDataException($"드라이버가 검토된 공식 {PlusVersion} x64 설치 파일의 구성요소와 다릅니다.");
         }
     }
 
@@ -145,6 +144,27 @@ public static class RuntimeVerifier
         finally { CloseServiceHandle(manager); }
     }
 
+    /// <summary>Read-only SCM status for installation guidance. It never starts, stops or reconfigures a service.</summary>
+    public static SandboxieServiceState QueryServiceState(string serviceName = "SbieSvc")
+    {
+        var manager = OpenSCManager(null, null, 1);
+        if (manager == IntPtr.Zero) return SandboxieServiceState.Unreadable;
+        try
+        {
+            var service = OpenService(manager, serviceName, 0x0004);
+            if (service == IntPtr.Zero)
+                return (uint)Marshal.GetLastWin32Error() == ErrorServiceDoesNotExist ? SandboxieServiceState.Missing : SandboxieServiceState.Unreadable;
+            try
+            {
+                if (!QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<ServiceStatus>(), out _))
+                    return SandboxieServiceState.Unreadable;
+                return status.CurrentState == ServiceRunningState ? SandboxieServiceState.Running : SandboxieServiceState.NotRunning;
+            }
+            finally { CloseServiceHandle(service); }
+        }
+        finally { CloseServiceHandle(manager); }
+    }
+
     private static ServiceVerification AccessDeniedVerification(uint processId) => new(
         checked((int)processId),
         false,
@@ -218,6 +238,7 @@ public static class RuntimeVerifier
         finally { Marshal.FreeHGlobal(buffer); }
     }
 
+    public enum SandboxieServiceState { Running, NotRunning, Missing, Unreadable }
     public sealed record ServiceVerification(int ProcessId, bool LiveImagePathVerified, string IdentityBasis, string? LiveImagePathIssue);
     public sealed record ServiceConfigurationValidation(bool Valid, string? Issue);
     public sealed record ServiceStatusValidation(bool Valid, string? Issue);

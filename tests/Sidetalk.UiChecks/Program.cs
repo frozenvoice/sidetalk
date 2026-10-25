@@ -32,8 +32,8 @@ internal static class Program
 
     private static void Run(string[] args)
     {
-        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only" or "--approval-only" or "--approval-preview")))
-            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only|--approval-only|--approval-preview]");
+        if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--interaction-only" or "--quick-launch-only" or "--quiet-only" or "--approval-only" or "--approval-preview" or "--sandboxie-only")))
+            throw new ArgumentException("Usage: UiPreview <output-directory> [--interaction-only|--quick-launch-only|--quiet-only|--approval-only|--approval-preview|--sandboxie-only]");
 
         var app = new App();
         app.InitializeComponent();
@@ -56,6 +56,7 @@ internal static class Program
             if (args[1] == "--interaction-only") InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
             else if (args[1] == "--quick-launch-only") QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
             else if (args[1] == "--quiet-only") QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+            else if (args[1] == "--sandboxie-only") SandboxieSetupUiChecks.Run(app, baseSnapshot, CreateHealthyPlan(), output);
             else if (args[1] == "--approval-preview")
             {
                 RecoveryApprovalUiChecks.RunPreview(app, baseSnapshot, CreateApprovalPlan(), output);
@@ -76,6 +77,7 @@ internal static class Program
         InteractionChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         QuickLaunchUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         QuietInspectionChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
+        SandboxieSetupUiChecks.Run(app, baseSnapshot, CreateHealthyPlan(), output);
         var invalidLogDirectory = Path.Combine(output, "log-path-is-a-file.fixture");
         File.WriteAllText(invalidLogDirectory, "fixture");
         InspectionDiagnostics.OutputDirectoryOverride = invalidLogDirectory;

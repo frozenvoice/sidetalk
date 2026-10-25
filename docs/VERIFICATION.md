@@ -1,5 +1,14 @@
 # 검증 운영 정책 — 2026-10-06
 
+## Sandboxie Plus 설치 안내·설치 지원 — 2026-10-25
+
+- 변경: `SandboxieSupport`가 지원 버전 1.18.4·구성요소 5.73.4·드라이버 5.73.2/해시와 공식 설치 파일(GitHub `v1.18.4`의 `Sandboxie-Plus-x64-v1.18.4.exe`, 24,853,640바이트, SHA-256 `CFCEDA1B…120E`, 서명자 `NOVASYNC LABS PTE. LTD.`)을 한 곳에서 정의하고 `RuntimeVerifier`·화면 문구·다운로드가 이를 읽는다. 감지는 미설치·설치 흔적만 있음·서명 실패·지원하지 않는 버전·서비스 미등록/중지를 구분한다. 서비스 불가는 새로 실행을 차단(기존보다 엄격)하며 다른 검사는 완화하지 않았다. `SandboxieInstaller`는 흔적 없는 PC에서만 동의 후 공식 주소를 받고, GitHub 공식 호스트로의 HTTPS 이동(최대 5회)·10분/무응답 60초·고정 크기를 강제한다. 쓰기를 막은 핸들로 SHA-256·Authenticode·제품 버전을 확인한 뒤 실행 직전 설치 상태를 다시 확인하고, SIDETALK를 상승시키지 않고 공식 설치 프로그램을 연다. 종료 코드는 안내로만 쓰고 성공은 재검사로만 판정한다. 메인 탭 맨 위 카드에 상태별 안내·단계·진행률·취소·재시도·정확한 버전의 릴리스 페이지를 두고, 진단 탭의 일반 다운로드 링크를 같은 릴리스 페이지로 바꿨다.
+- 고정값 근거: 2026-10-25 GitHub 자산 digest, 릴리스 `sha256-checksums.txt`, 실제 다운로드 해시가 모두 일치했고, 서명은 유효한 GlobalSign EV 서명, 제품 버전은 1.18.4였다. 설치 프로그램은 Inno Setup 로더(asInvoker)라 UAC는 설치 프로그램이 직접 요청한다. 같은 SHA-256은 기존 [SOURCES.md](SOURCES.md) 기록과도 같다.
+- Windows 11 10.0.26300 / .NET SDK 10.0.401 / 96 DPI. `pwsh -NoProfile -File scripts/verify.ps1 -UiChecks` 통과(62.33초, Release 경고·오류 0, 콘솔 338/338, 기존 WPF 회귀와 IsolationProbe 빌드 포함). 새 콘솔 14건: 버전·다운로드 대상 일치, 비공식/다른 버전/ARM64/쿼리 주소 거부, 감지 분류, 미설치에서만 설치 제안, 정상 다운로드의 읽기 전용 보관, 잘못된 해시·실제 Authenticode 서명 실패·크기(헤더/초과/잘림)·리디렉션(외부·HTTP·유사 호스트·위치 없음·반복)·네트워크/HTTP 503/연결 끊김/무응답/전체 시간 초과·취소 시 실행 없이 임시 폴더 삭제, UAC 거부(1223)·취소(2, 5)·재시작(8)·시작 실패·알 수 없는 코드의 비성공 처리, 다운로드 전·실행 직전 기존 설치 보호, 컨트롤러의 조건별 안내와 서비스 불가 차단.
+- 합성 WPF 24건(`--sandboxie-only`로 단독 실행 가능): 다섯 조건과 정상 설치의 카드·버튼·구성 요소 요약, 기본/최소 창, 확대 1.0·1.25·1.5·2.0 레이아웃과 같은 배율 DPI 캡처에서 카드 요소 이탈·버튼 잘림 없음, 주입한 고대비 팔레트에서 본문·기본 버튼·진행 막대 트랙/채움 구분, 키보드 탭 정지·접근성 이름·LiveSetting. Core의 실제 설치 흐름에 메모리 HTTP·기록용 검증기·가짜 실행기를 붙인 13개 시나리오(성공 후 재검사와 다음 단계, 동의 거부, 새 확인에서 설치 흔적 발견, 해시·서명 실패, 오프라인, UAC 거부, 취소, 시작 실패, 종료 0이지만 미설치, 재시작 필요, 다운로드 중 설치 등장, 다운로드 취소)에서 실행·종료·복구 쓰기 0회였다.
+- 실제 네트워크 확인: 이 Core 코드로 공식 주소에서 받아(리디렉션 포함 약 2초) 크기·SHA-256·서명·제품 버전 검증을 통과했고 설치 프로그램은 실행하지 않았으며 임시 폴더를 삭제했다. 현재 PC의 실제 감지는 읽기 전용으로 `NotInstalled`(SbieSvc 미등록)였다.
+- 미검증: 실제 Sandboxie 설치·UAC 승인/거부·공식 마법사 진행·설치 후 서비스/드라이버 상태·재부팅 경로(사용자 PC 변경 금지에 따라 수행하지 않음), 실제 모니터 DPI 전환·OS 고대비·스크린리더 음성, 설치 흔적 레지스트리 감지의 실제 잔여 설치 사례. 설치/빌드 스크립트 변경이 없어 BuildChecks·InstallerChecks는 실행하지 않았고 원격 CI도 실행하지 않았다. 근거 캡처·지표·로그는 `artifacts/verification/sandboxie-install`에 둔다.
+
 ## 다크 설치 창(SetupTheme) — 2026-10-25
 
 - 변경: WebPier `installer/SetupTheme.iss`(PR #77, `7ad1f11`)를 SIDETALK 표현 계층으로 옮기고, WebPier 작업 트리의 미커밋 준비 화면 수정(성공한 PrepareToInstall도 실패 제목으로 보이던 문제)을 함께 반영했다. 바탕 화면 태스크는 확인 화면 체크박스가 Inno `WizardSelectTasks`에 바로 기록하고 태스크 페이지는 건너뛴다. 실패 패널은 SIDETALK의 긴 거부 사유에 맞춰 키웠고 넘치면 스크롤한다. `SIDETALK.iss`는 `WizardStyle` 이동, `PrepareFailure` 전달, 문구용 `SetupThemeMode`/`SetupThemeFailure`만 추가했다. AppId·설치 위치·SetupMutex·`CloseApplications=no`·`RestartApplications=no`·`[InstallDelete]` 범위·PrepareToInstall/제거 검사·`[Run]`/`/SIDETALKNOLAUNCH`·종료 코드는 그대로다. 이미지는 `scripts/generate-setup-art.ps1`(Go 생성기의 .NET 포팅)로 만들며, 공유 이미지 8종은 WebPier 원본과 픽셀 차이 0이다.
@@ -22,7 +31,7 @@
 | 목적 / 변경 범위 | 명령과 완료 기준 |
 |---|---|
 | 일반 코드 개발 | `pwsh -File scripts/verify.ps1`: Release 앱 빌드·자체 콘솔 안전성 테스트·IsolationProbe 빌드 성공 |
-| UI 변경 | `pwsh -File scripts/verify.ps1 -UiChecks`: 기본 검증과 관련 합성 WPF 검사·이미지 확인 |
+| UI 변경 | `pwsh -File scripts/verify.ps1 -UiChecks`: 기본 검증과 관련 합성 WPF 검사·이미지 확인 (Sandboxie 설치 안내만: `dotnet run --project tests/Sidetalk.UiChecks -c Release -- <출력> --sandboxie-only`) |
 | 빌드/검증 스크립트 변경 | `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`: 임시 fixture의 실패 전파·패키징 guard·롤백 회귀 |
 | 설치/업데이트 변경 | 기본 검증 후 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`: 고정 컴파일러와 테스트 전용 AppId/경로의 설치·업데이트·제거 회귀 |
 | 설치 화면 변경 | 위에 더해 대화형 데스크톱에서 `pwsh -File tests/Sidetalk.InstallerChecks/SetupUi.ps1`: 같은 격리 fixture로 확인·진행·완료·실패·키보드·`/NOSTYLE`·확대 배율 배치와 캡처 확인 |
