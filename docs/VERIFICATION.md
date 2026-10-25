@@ -1,5 +1,13 @@
 # 검증 운영 정책 — 2026-10-06
 
+## 다크 설치 창(SetupTheme) — 2026-10-25
+
+- 변경: WebPier `installer/SetupTheme.iss`(PR #77, `7ad1f11`)를 SIDETALK 표현 계층으로 옮기고, WebPier 작업 트리의 미커밋 준비 화면 수정(성공한 PrepareToInstall도 실패 제목으로 보이던 문제)을 함께 반영했다. 바탕 화면 태스크는 확인 화면 체크박스가 Inno `WizardSelectTasks`에 바로 기록하고 태스크 페이지는 건너뛴다. 실패 패널은 SIDETALK의 긴 거부 사유에 맞춰 키웠고 넘치면 스크롤한다. `SIDETALK.iss`는 `WizardStyle` 이동, `PrepareFailure` 전달, 문구용 `SetupThemeMode`/`SetupThemeFailure`만 추가했다. AppId·설치 위치·SetupMutex·`CloseApplications=no`·`RestartApplications=no`·`[InstallDelete]` 범위·PrepareToInstall/제거 검사·`[Run]`/`/SIDETALKNOLAUNCH`·종료 코드는 그대로다. 이미지는 `scripts/generate-setup-art.ps1`(Go 생성기의 .NET 포팅)로 만들며, 공유 이미지 8종은 WebPier 원본과 픽셀 차이 0이다.
+- Windows 11 10.0.26300, 모니터 96 DPI, 고정 Inno Setup 6.7.3. `verify.ps1` 통과(30.81초, 경고·오류 0, 콘솔 324/324). `tests/Sidetalk.BuildChecks/Program.ps1` 통과(86.22초, 임시 저장소 55개). `tests/Sidetalk.InstallerChecks/Program.ps1` 8/8 그룹 통과(196.92초). 새 정적 검사는 `RestartApplications=no`, 테마 include, 테마의 Inno 이벤트 허용 목록, 프로세스·파일·레지스트리 호출 부재, 아트 최신성(`-Check`)을 포함한다.
+- `tests/Sidetalk.InstallerChecks/SetupUi.ps1`(대화형 데스크톱, `SIDETALKInstallerTest-*` fixture, 실행되지 않는 placeholder payload) 17개 확인 통과(96.87초). 시작 직후 미설치·600×340 프레임리스·드래그/버튼 hit-test·최소화/복원·닫기→취소 확인→종료 코드 2, 바탕 화면 선택(기본 꺼짐) 신규 설치와 실제 진행률(엔진 진행 중 부분 채움 432px), 실행 체크 해제 시 미실행, 업데이트 문구와 이전 바탕 화면 선택 유지, 실행 중(Sidetalk.exe 잠금)·하위 버전 거부 화면의 원문 사유와 로그 경로·닫기→7·파일/등록 불변, 키보드(Tab·Space·Enter·Esc, 메시지 큐에 게시한 키), `/SILENT /SIDETALKNOLAUNCH` 무질문 종료 0, `/NOSTYLE` 고대비 대체 배치, 제거와 사용자 데이터 대역 불변, 실제 설치·바로가기·`%LOCALAPPDATA%\SIDETALK`와 KakaoTalk/Sandboxie 프로세스·SbieSvc 상태 불변을 확인했다. 배치 검사(클라이언트 영역 이탈·겹침·글꼴 실측 텍스트 넘침)는 Inno 배율 1.0·1.133·1.333·1.4·1.533·1.667·2.067·2.133(DialogFontSize 기본·10–18)의 확인·완료·실패 화면에서 통과했다. Inno 배율은 글꼴 단위로 양자화되어 정확한 125%는 만들 수 없고 113%·133%로 감쌌다.
+- `prepare-distributions.ps1` 통과: 소스 `976544927273afafe97a20a4e29a90cac61914a3`, dirty=false, 0.2.0, self-contained win-x64, payload 651개. `SIDETALK-Setup.exe` 74,934,778바이트 SHA-256 `70d21b31dc52d926f3c2f6e45637981b10aa8345a8aa853ae28cfc3c23460289`(unsigned), 포터블 ZIP SHA-256 `7cb1a87a7b9ed94dcf8650f2e73408b8c69bf4d62e091900ecc41295caf3dedf`, manifest·`SHA256SUMS.txt`·개별 해시 일치. 생산 Setup은 확인 화면만 열고 취소(종료 코드 2)했으며 실제 등록(0.2.0)과 설치된 `Sidetalk.exe` 해시가 바뀌지 않았다.
+- 미검증: 실제 OS 고대비 테마·실제 모니터 DPI 125/150/200% 전환(글꼴 배율과 `/NOSTYLE`로 대체), 물리 키보드 `SendInput`, 스크린리더, 생산 AppId의 실제 설치/업데이트, 원격 CI. VCL 스타일 체크박스 표시는 글꼴 배율로 커지지 않으며 실제 DPI에서의 크기는 확인하지 않았다. 캡처·보고서는 `artifacts/verification/setup-ui`, 로그는 `artifacts/verification/setup-theme`에 둔다.
+
 ## Windows 고대비 팔레트 — 2026-10-23
 
 - 공통 semantic brush와 동적 리소스 참조를 적용했다. 고대비에서는 OS의 Window/WindowText, Highlight/HighlightText, GrayText, ControlText를 사용하며 메인·빠른 실행 창, 상태 안내, 기본/비활성 버튼, 체크박스, 툴팁, 스크롤바가 열린 상태에서 갱신된다. 상태 글자와 선택 표시는 강조 배경색과 분리해 본문색으로 표시한다. 고대비 해제 시 기존 일반 색을 복원한다. native caption은 고대비에서 OS 기본값으로 돌리며 Windows 설정은 쓰지 않는다.
@@ -17,6 +25,7 @@
 | UI 변경 | `pwsh -File scripts/verify.ps1 -UiChecks`: 기본 검증과 관련 합성 WPF 검사·이미지 확인 |
 | 빌드/검증 스크립트 변경 | `pwsh -File tests/Sidetalk.BuildChecks/Program.ps1`: 임시 fixture의 실패 전파·패키징 guard·롤백 회귀 |
 | 설치/업데이트 변경 | 기본 검증 후 `pwsh -File tests/Sidetalk.InstallerChecks/Program.ps1`: 고정 컴파일러와 테스트 전용 AppId/경로의 설치·업데이트·제거 회귀 |
+| 설치 화면 변경 | 위에 더해 대화형 데스크톱에서 `pwsh -File tests/Sidetalk.InstallerChecks/SetupUi.ps1`: 같은 격리 fixture로 확인·진행·완료·실패·키보드·`/NOSTYLE`·확대 배율 배치와 캡처 확인 |
 | 명시적 전체 원격 검증 / 릴리즈 공개 전 | `Windows verification`의 `workflow_dispatch`: 아래 세 검사와 필수 단계가 모두 실행되어 성공 |
 
 `verify.ps1`는 공통 `Invoke-SidetalkVerification`을 사용하며 기본값에서 UI·설치기 생성·설치 회귀를 실행하지 않는다. `-UiChecks`는 명시적 선택이다. 기본 검증과 배포용 `build.ps1`의 검증 의미를 축소하지 않는다. 패키징은 기본 검증을 포함하므로 직전에 같은 기본 검증을 반복할 필요는 없다. `build-local.cmd`는 SDK/컴파일러 준비·패키징·설치기 생성·대화형 설치/업데이트 경로이며 단순 개발 검사를 위한 명령이 아니다. `-NoInstall` 및 기존 설치·데이터 보존 계약은 [로컬 실행 안내](LOCAL-RUN.md)를 따른다.

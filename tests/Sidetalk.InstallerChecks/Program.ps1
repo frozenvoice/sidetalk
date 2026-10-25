@@ -175,10 +175,11 @@ function Assert-DataSentinel([string]$What) {
 
 function New-BuilderRepo([string]$Name) {
     $root = Join-Path $fixtureRoot "builder $Name"
-    foreach ($dir in @('scripts', 'installer', 'src\Sidetalk.App\Assets', 'artifacts\release')) { New-Item -ItemType Directory -Path (Join-Path $root $dir) -Force | Out-Null }
-    foreach ($file in @('scripts\build-installer.ps1', 'scripts\build-common.ps1', 'scripts\prepare-inno.ps1', 'installer\SIDETALK.iss', 'src\Sidetalk.App\Assets\Sidetalk.ico', 'Directory.Build.props')) {
+    foreach ($dir in @('scripts', 'installer', 'assets\installer', 'src\Sidetalk.App\Assets', 'artifacts\release')) { New-Item -ItemType Directory -Path (Join-Path $root $dir) -Force | Out-Null }
+    foreach ($file in @('scripts\build-installer.ps1', 'scripts\build-common.ps1', 'scripts\prepare-inno.ps1', 'installer\SIDETALK.iss', 'installer\SetupTheme.iss', 'src\Sidetalk.App\Assets\Sidetalk.ico', 'Directory.Build.props')) {
         Copy-Item -LiteralPath (Join-Path $repo $file) -Destination (Join-Path $root $file)
     }
+    Copy-Item -Path (Join-Path $repo 'assets\installer\setup-*.png') -Destination (Join-Path $root 'assets\installer')
     New-Payload (Join-Path $root 'artifacts\publish\win-x64') 'builder'
     Remove-Item -LiteralPath (Join-Path $root 'artifacts\publish\win-x64\fixture-cleanup.exe')
     Copy-Item -Path (Join-Path $repo 'docs\*') -Destination (Join-Path $root 'artifacts\publish\win-x64\docs') -Recurse
@@ -253,6 +254,19 @@ try {
         Assert-True ($iss -notmatch '(?m)^\s*\[UninstallDelete\]') 'installer deletes user data on uninstall'
         Assert-True ($iss -match '(?m)^PrivilegesRequired=lowest\s*$') 'installer is not per-user'
         Assert-True ($iss -match '(?m)^CloseApplications=no\s*$') 'installer may close applications'
+        Assert-True ($iss -match '(?m)^RestartApplications=no\s*$') 'installer may restart applications'
+        Assert-True ($iss -match '(?m)^#include "SetupTheme\.iss"\s*$') 'installer does not use the shared setup theme'
+        # The presentation layer only draws: no process, file or uninstall policy of its own.
+        $theme = Get-Content -LiteralPath (Join-Path $repo 'installer\SetupTheme.iss') -Raw
+        foreach ($forbidden in @('(?m)^\s*\[(UninstallDelete|InstallDelete|Run|UninstallRun|Icons|Tasks|Dirs|Registry)\]', '(?m)^\s*(CloseApplications|RestartApplications|PrivilegesRequired|AppId|DefaultDirName|SetupMutex)\s*=',
+                '(?i)\b(Exec|ExecAsOriginalUser|ShellExec|TerminateProcess|OpenProcess|DeleteFile|DelTree|RemoveDir|RenameFile|FileCopy|RegWriteStringValue|RegWriteDWordValue|RegDeleteValue|RegDeleteKeyIncludingSubkeys)\s*\(',
+                '(?i)taskkill', '(?im)^\s*(function|procedure)\s+(PrepareToInstall|InitializeSetup|InitializeUninstall|CurStepChanged|CurUninstallStepChanged|NextButtonClick)\b')) {
+            Assert-True ($theme -notmatch $forbidden) "SetupTheme.iss reaches beyond presentation ($forbidden)"
+        }
+        $events = @([regex]::Matches($theme, "<event\('([A-Za-z]+)'\)>") | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+        Assert-Equal 'CancelButtonClick|CurInstallProgressChanged|CurPageChanged|DeinitializeSetup|InitializeWizard|ShouldSkipPage' ($events -join '|') 'SetupTheme.iss Inno events'
+        $art = @(& (Get-Command pwsh).Source -NoLogo -NoProfile -File (Join-Path $repo 'scripts\generate-setup-art.ps1') -Check 2>&1 | ForEach-Object { [string]$_ })
+        Assert-Equal 0 $LASTEXITCODE "installer art is not what scripts\generate-setup-art.ps1 renders:`n$($art -join "`n")"
         Assert-True ($iss -match '#define AppUserModelID "' + [regex]::Escape($script:appUserModelId) + '"') 'installer and app AppUserModelID differ'
         Assert-True ($iss -match '#define ProductionAppId "' + $productionAppId + '"') 'production AppId changed'
     }
