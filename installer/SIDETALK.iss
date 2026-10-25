@@ -103,7 +103,7 @@ UninstallDisplayIcon={app}\Sidetalk.exe
 UninstallDisplayName={#AppName}
 Compression=lzma2/max
 SolidCompression=yes
-WizardStyle=modern
+; WizardStyle and the window art come from SetupTheme.iss, included at the end.
 SetupLogging=yes
 SetupMutex={#SetupMutexName}
 ; Never ask Restart Manager to close anything: only SIDETALK's own files are
@@ -157,6 +157,9 @@ const
   DELETE_ACCESS = $00010000;
   CLEANUP_PRESERVED_EDITED = 3;
   InstallerVersion = '{#AppVersion}';
+
+var
+  PrepareFailure: String;
 
 function GetFileAttributesW(Name: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
@@ -302,6 +305,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   { Same-version reinstall is allowed (local developer builds); downgrade is not. }
   Result := InstallPreconditionError();
+  PrepareFailure := Result;
   if Result <> '' then
     Log('SIDETALK install blocked: ' + Result);
 end;
@@ -349,3 +353,35 @@ begin
   else if ResultCode <> 0 then
     SuppressibleMsgBox('SIDETALK가 만든 "보조 카카오톡 실행" 바로가기 상태를 확인하지 못해 그대로 두었습니다. 필요하면 직접 삭제하세요. SIDETALK 사용자 데이터는 삭제하지 않습니다.', mbInformation, MB_OK, IDOK);
 end;
+
+{ Presentation hooks for SetupTheme.iss. They only choose wording; the gates
+  above still decide whether anything is installed. }
+function SetupThemeMode(): Integer;
+var
+  InstalledVersion: String;
+begin
+  Result := 0;
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + Chr(123) + '{#AppId}' + Chr(125) + '_is1',
+    'DisplayVersion', InstalledVersion) then begin
+    { A refused downgrade or unreadable version keeps the plain install wording;
+      PrepareToInstall reports why it stops. }
+    case CompareVersions(InstallerVersion, InstalledVersion) of
+      0: Result := 2;
+      1: Result := 1;
+    end;
+  end;
+end;
+
+function SetupThemeFailure(): String;
+begin
+  Result := PrepareFailure;
+end;
+
+#define public SetupThemeAppName AppName
+#define public SetupThemeAppObject "SIDETALK를"
+#define public SetupThemeVersion AppVersion
+#define public SetupThemeNote "카카오톡과 Sandboxie는 종료하지 않습니다."
+#define public SetupThemeTask "desktopicon"
+#define public SetupThemeTaskCaption "바탕 화면에 SIDETALK 바로가기 만들기"
+#define public SetupThemeArt "..\assets\installer"
+#include "SetupTheme.iss"
