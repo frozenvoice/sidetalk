@@ -83,7 +83,7 @@ public static class IsolationPolicy
         if (!SandboxieConfigurationReader.Same(config.ExplicitBox, config.EffectiveBox))
             issues.Add("전용 환경에 검토되지 않은 템플릿 규칙이 추가되었습니다.");
         if (!SandboxieConfigurationReader.Same(BuiltinTemplates.ExpectedGlobals(config.ExplicitGlobals), config.EffectiveGlobals))
-            issues.Add("전역 템플릿 확장이 공식 1.18.4 기본 규칙과 다릅니다.");
+            issues.Add($"전역 템플릿 확장이 공식 {SandboxieSupport.PlusVersion} 기본 규칙과 다릅니다.");
         return new(explicitResult.Owned, issues.Count == 0, issues);
     }
     private static bool Equal(IReadOnlyDictionary<string, string[]> config, string key, string[] expected) =>

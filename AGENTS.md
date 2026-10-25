@@ -64,6 +64,7 @@ build-local.cmd            # -NoInstall: Setup 생성까지, -NoLaunch, -NoPause
 - 공식 카카오톡을 Sandboxie의 읽기 전용 API와 `Start.exe`의 명시적 전용 box 명령으로 제어한다. 카카오톡 패치·자체 주입/후킹·인증 우회·이미지 이름으로 프로세스 종료를 추가하지 않는다.
 - 실행과 종료 모두 소유 표식·저장 경로·설치 서명/버전·설정과 상속 규칙 검증을 통과해야 한다. 불확실하거나 설정이 변경된 경우 차단을 유지한다. 전역 변경은 SetupRecovery의 고정된 공식 기준·영향 범위·최초 승인 또는 동일 범위 자동 복구 동의가 모두 확인된 여섯 Template 선택 제거에만 허용한다. 검사기를 통과시키려고 범위를 늘리거나 다른 box를 변경하지 않는다.
 - `%LOCALAPPDATA%/SIDETALK`의 프로필·전용 저장소·명령 기록을 보존한다. 손상된 프로필, 중단된 임시 파일, 미완료 기록을 자동 삭제·덮어쓰기·초기화하지 않는다. 명령 의도는 프로세스 생성 전에 기록한다. 시간 초과를 완료로 취급하지 않으며, PID·생성 시각·실행 경로로 신원을 확인하고 명령 종료와 전용 box 재조회를 모두 확인한 뒤 새 명령을 허용한다.
+- Sandboxie 지원 버전·구성요소/드라이버 기준과 설치 파일의 주소·크기·SHA-256·서명자는 `src/Sidetalk.Core/SandboxieSupport.cs` 한 곳에서 관리한다. 앱의 Sandboxie 설치 기능은 Sandboxie 설치 흔적이 전혀 없을 때만, 사용자 동의 후 공식 GitHub 릴리스의 해당 버전 x64 설치 파일을 받아 크기·SHA-256·서명·제품 버전을 확인한 뒤 SIDETALK를 상승시키지 않고 공식 설치 마법사를 연다. 기존 설치의 재설치·업/다운그레이드, 서비스·드라이버 시작/재시작, 검증 생략·최신 버전 허용을 추가하지 않는다. 설치 성공은 설치 후 재검사로만 판단하며 실제 PC의 Sandboxie 설치·제거·업데이트 검증은 명시적 승인 없이 하지 않는다.
 - `src/Sidetalk.Core/SandboxieDefaults.json`과 `tests/Sidetalk.Tests/Fixtures/sandboxie-1.18.4.ini`는 `scripts/update-sandboxie-baseline.ps1`로 함께 재생성한다. `docs/third-party-sandboxie.md`의 원문 SHA-256·출처와 값 순서를 보존하고, 기준 변경 시 `src/Sidetalk.Core/BuiltinTemplateHashes.json`도 함께 대조한다. 검사 통과만을 위해 기준을 완화하지 않는다.
 - 실환경 검증은 `docs/ACCEPTANCE.md`와 `docs/ISOLATION-PROBE.md`를 따른다. 콘솔 테스트 성공이나 box 프로세스 존재만으로 로그인·송수신·두 계정 호환성 성공을 선언하지 않는다. 검증 범위와 남은 항목은 `docs/VERIFICATION.md`에 근거한다.
 

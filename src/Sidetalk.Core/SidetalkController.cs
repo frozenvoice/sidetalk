@@ -69,9 +69,17 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
             catch (Exception ex) { inspectionFailure = InspectionFailure.Capture("실행 환경 조회", ex); return Blocked("지원 실행 환경을 확인해주세요", "일반 사용자 실행 환경을 확인하지 못했습니다. 시작 메뉴의 SIDETALK로 열고 다시 확인해 주세요."); }
             if (!kakao.Available || !sandboxie.Available)
-                return Snapshot(Readiness.MissingDependency, "실행 준비가 필요해요", !sandboxie.Available ? "Sandboxie Plus를 확인한 뒤 전용 환경을 설정하세요." : "공식 카카오톡의 설치 경로와 서명을 확인하세요.");
+                return Snapshot(Readiness.MissingDependency, "실행 준비가 필요해요", !sandboxie.Available ? sandboxie.Condition switch
+                {
+                    DependencyCondition.NotInstalled => $"Sandboxie Plus가 설치되어 있지 않습니다. 아래 안내에서 지원 버전 {SandboxieSupport.PlusVersion}을 설치하세요.",
+                    DependencyCondition.SignatureInvalid => "설치된 Sandboxie Plus의 공식 서명을 확인하지 못해 실행을 막았습니다. 기존 설치는 바꾸지 않습니다.",
+                    DependencyCondition.PathUnresolved => "Sandboxie 설치 흔적은 있지만 설치 위치를 확인하지 못했습니다. 기존 설치를 덮어쓰지 않습니다.",
+                    _ => "Sandboxie Plus를 확인한 뒤 전용 환경을 설정하세요."
+                } : "공식 카카오톡의 설치 경로와 서명을 확인하세요.");
             if (!RuntimeVerifier.MatchesVersion(sandboxie.Version, RuntimeVerifier.PlusVersion))
-                return Blocked("Sandboxie 버전 검토가 필요해요", "이 빌드는 Sandboxie Plus 1.18.4의 API·설정을 기준으로 작성되었습니다.");
+                return Blocked("Sandboxie 버전 검토가 필요해요", $"이 빌드는 Sandboxie Plus {SandboxieSupport.PlusVersion}의 API·설정을 기준으로 작성되었습니다. 설치된 버전을 자동으로 바꾸지 않습니다.");
+            if (sandboxie.Condition == DependencyCondition.ServiceUnavailable)
+                return Blocked("Sandboxie 서비스를 확인해주세요", sandboxie.Detail + " SIDETALK는 서비스를 시작하거나 재시작하지 않습니다. 설치 직후라면 Windows를 다시 시작한 뒤 다시 확인하세요.");
             if (profile is null)
                 return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정 · 진단에서 변경 내용을 확인하고 복구하고 실행 준비를 누르세요.");
             using var api = runtime.Open(sandboxie);

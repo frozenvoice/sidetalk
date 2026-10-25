@@ -40,6 +40,7 @@ internal static class Program
         allTests = allTests.Concat(QuickLaunchTests.Cases).Concat(UserLaunchIntegrationTests.Cases).Concat(SecondaryAppearanceTests.Cases).ToArray();
         allTests = allTests.Concat(AdminRightsRecoveryTests.Cases).Concat(AdminRightsDiagnosticTests.Cases).ToArray();
         allTests = allTests.Concat(ResidualCleanupJournalTests.Cases).Concat(ResidualDiagnosticsTests.Cases).Concat(ResidualRecoveryTests.Cases).ToArray();
+        allTests = allTests.Concat(SandboxieInstallerTests.Cases).ToArray();
         foreach (var test in allTests)
         {
             try
