@@ -119,8 +119,9 @@ internal static class WindowsKakaoImageDiagnostics
                     throw new InvalidOperationException("실행 이미지 조회 중 프로세스 신원이 바뀌었습니다.");
                 identityVerified = true;
 
-                // A logical host path cannot prove which virtualized physical copy is used.
-                // Never construct a Sandboxie drive mapping or search the account storage.
+                // A logical host path cannot prove which virtualized physical copy a running
+                // process uses, and account storage is never searched. The separate, empty-box
+                // program-copy check (StaleProgramCopy) looks only at the one documented folder.
                 var physical = IsExactBoxExecutable(path, profile.StoragePath) ? ReadFile(path) : null;
                 result.Add(new(process.Id, process.ImageName, path, creation,
                     physical?.PhysicalPathVerified == true ? ProgramPhysicalResolution.VerifiedBoxCopy : ProgramPhysicalResolution.Unknown,
@@ -149,6 +150,13 @@ internal static class WindowsKakaoImageDiagnostics
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
         ProfileStore.RejectReparseAncestors(full);
         return true;
+    }
+
+    /// <summary>Version and Kakao publisher of one exact physical file; nothing else is read.</summary>
+    internal static ProgramFileIdentity ReadIdentity(string path)
+    {
+        var evidence = ReadFile(path);
+        return new(evidence.Version, evidence.PublisherVerified && evidence.PhysicalPathVerified);
     }
 
     private static ProgramFileEvidence ReadFile(string path)

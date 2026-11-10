@@ -74,6 +74,7 @@ internal static class Program
         RenderRecoveryFixtures(app, output, baseSnapshot);
         AdminRightsUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         ResidualRecoveryUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
+        ProgramCopyUiChecks.Run(baseSnapshot, CreateHealthyPlan(), output);
         RecoveryApprovalUiChecks.Run(baseSnapshot, CreateHealthyPlan(), CreateApprovalPlan(), output);
         AssertInterruptedChoiceReset(baseSnapshot);
         RunRefreshFailureFixtures(baseSnapshot);

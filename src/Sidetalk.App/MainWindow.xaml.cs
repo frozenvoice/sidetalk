@@ -402,6 +402,7 @@ public partial class MainWindow : Window
         KakaoSummaryText.Text = DependencySummary(snapshot.Kakao);
         SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
         UpdateSandboxieSetupCard();
+        UpdateProgramCopyCard();
 
         BoxNameText.Text = DisplayValue(snapshot.BoxName);
         StoragePathText.Text = DisplayValue(snapshot.StoragePath);
@@ -1359,6 +1360,7 @@ public partial class MainWindow : Window
         // reserve the request and drain the current inspection before doing work.
         ApplyQuickSettingsAvailability(commandBusy || _restoreInspectionRequired);
         ApplySandboxieSetupAvailability();
+        ApplyProgramCopyAvailability();
         if (_restoreInspectionRequired && !_closed && !_isRenderMode && !_windowMinimized &&
             !_inspectionInFlight && !_operationInFlight && !_actionInFlight && !_restoreRefreshQueued)
         {

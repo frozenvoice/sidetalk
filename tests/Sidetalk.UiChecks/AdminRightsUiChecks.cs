@@ -61,7 +61,7 @@ internal static class AdminRightsUiChecks
             "version-difference", output, window =>
         {
             Check(Text(window, "KakaoUpdateEvidenceText").Contains("버전 차이를 확인", StringComparison.Ordinal), "Verified file difference is hidden");
-            Check(Text(window, "KakaoUpdateEvidenceText").Contains("사본 교체는 아직 지원하지 않습니다", StringComparison.Ordinal), "Unsupported copy replacement is claimed complete");
+            Check(Text(window, "KakaoUpdateEvidenceText").Contains("보존 폴더로 옮길 수 있습니다", StringComparison.Ordinal), "The verified difference does not point to the supported fix");
         });
         Verify(disabled with { AdminRights = new(["y", "n"], ["y", "n"], AdminRightsCondition.Unrecognized, true, [], null, []) },
             healthy, "unrecognized", output, window =>

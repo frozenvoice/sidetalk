@@ -20,6 +20,8 @@ public sealed record AppSnapshot(
     public InspectionFailure? InspectionFailure { get; init; }
     public AdminRightsObservation? AdminRights { get; init; }
     public string? RecoveryResultDetail { get; init; }
+    /// <summary>Present only while a verified older KakaoTalk program copy sits in the owned box.</summary>
+    public StaleProgramCopyObservation? StaleProgramCopy { get; init; }
     /// <summary>Null when policy or journal state could not be verified; false only after validated reconciliation.</summary>
     public bool? CommandPending { get; init; }
 }
@@ -74,5 +76,7 @@ public interface ISidetalkController : IDisposable
     Task RevokeAutomaticRecoveryAsync();
     Task<AppSnapshot> CleanResidualBoxAndPrepareAsync(ResidualBoxRecoveryApproval approval, IProgress<string>? progress = null) =>
         throw new InvalidOperationException("이 실행 환경에서는 잔여 프로세스 복구를 지원하지 않습니다.");
+    Task<AppSnapshot> SetAsideStaleProgramCopyAsync(StaleProgramCopyObservation approved, IProgress<string>? progress = null) =>
+        throw new InvalidOperationException("이 실행 환경에서는 프로그램 사본 정리를 지원하지 않습니다.");
     string RecoveryHistoryPath { get; }
 }

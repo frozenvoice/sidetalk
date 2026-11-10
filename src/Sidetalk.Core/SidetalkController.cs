@@ -55,6 +55,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
         InspectionFailure? inspectionFailure = null;
         ConfigurationLayers? verifiedConfiguration = null;
         AdminRightsObservation? adminRights = null;
+        StaleProgramCopyScan? programCopy = null;
         bool? commandPending = pendingRecord is not null || commandLifecycle.IsPending ? true : null;
         try
         {
@@ -148,6 +149,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             RecoverPending(profile, startExe);
             var (lifecycle, processes) = commandLifecycle.InspectProcesses(() => api.Processes(profile));
             adminRights = ObserveImages(api, adminRights, processes);
+            programCopy = TryScanProgramCopy(profile, kakao);
             commandPending = lifecycle.IsPending || pendingRecord is not null;
             var checks = new[] {
                 "현재 전용 환경 소유 정보와 저장 경로 일치",
@@ -217,7 +219,13 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             var snapshot = new AppSnapshot(state, title, detail, profile?.BoxName ?? "아직 생성하지 않음", profile?.StoragePath ?? Path.Combine(store.Root, "Boxes"), kakao, sandboxie,
                 processes?.Select(p => p.Id).ToArray() ?? [], checks ?? [], canLaunch, canStop,
                 DateTimeOffset.Now, serviceIdentity, currentConfigurationVerified, processPolicy, !readOnly && !disposed)
-            { InspectionFailure = inspectionFailure, CommandPending = commandPending, AdminRights = adminRights };
+            {
+                InspectionFailure = inspectionFailure, CommandPending = commandPending, AdminRights = adminRights,
+                // Offered only from the verified, empty, settled state that could also launch.
+                StaleProgramCopy = programCopy is null ? null : ObserveProgramCopy(programCopy,
+                    canSetAside: state == Readiness.Ready && canLaunch && commandPending == false && !readOnly && !disposed,
+                    running: processes is { Count: > 0 })
+            };
             if (captureValidatedScope is not null && profile is not null && verifiedConfiguration is not null &&
                 currentConfigurationVerified && inspectionFailure is null && commandPending == false &&
                 (canLaunch || canStop))
