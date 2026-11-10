@@ -16,6 +16,20 @@ public partial class MainWindow
 
     private StaleProgramCopyObservation? ObservedProgramCopy => _lastObservedSnapshot?.StaleProgramCopy;
 
+    // KakaoTalk's own updater needs administrator rights the box withholds. SIDETALK cannot see
+    // KakaoTalk's dialog, so the hint appears only on evidence: the updater observed among the
+    // verified box processes, or right after an older copy was set aside. It then stays for
+    // this window, because the dialog outlives the updater process.
+    private bool _updateAttemptHint;
+
+    private void UpdateUpdateAttemptHint(AppSnapshot snapshot)
+    {
+        if (snapshot.AdminRights?.BoxProcesses.Any(process => process.IdentityVerified &&
+                process.ImageName.Equals("KakaoUpdate.exe", StringComparison.OrdinalIgnoreCase)) == true)
+            _updateAttemptHint = true;
+        UpdateAttemptHintText.Visibility = _updateAttemptHint ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateProgramCopyCard()
     {
         if (_closed) return;
@@ -105,6 +119,7 @@ public partial class MainWindow
             _programCopyResult = string.IsNullOrWhiteSpace(snapshot.RecoveryResultDetail)
                 ? "프로그램 사본을 옮겼습니다." : ReadableFailure(snapshot.RecoveryResultDetail);
             _programCopyResultIsError = snapshot.StaleProgramCopy is not null;
+            if (!_programCopyResultIsError) _updateAttemptHint = true;
             ApplySnapshot(snapshot);
         }
         catch (Exception exception)

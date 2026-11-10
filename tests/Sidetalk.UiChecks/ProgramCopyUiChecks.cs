@@ -93,6 +93,7 @@ internal static class ProgramCopyUiChecks
             Check(Text(window, "ProgramCopyStatusText").Contains("보존 위치", StringComparison.Ordinal), "The preserved location is not shown");
             Check(Find<Button>(window, "ProgramCopyButton").Visibility == Visibility.Collapsed && Find<Border>(window, "ProgramCopyCard").Visibility == Visibility.Visible,
                 "The result is not kept visible after the action disappears");
+            Check(Find<TextBlock>(window, "UpdateAttemptHintText").Visibility == Visibility.Visible, "The likely update prompt is not explained after the move");
             Check(controller.OtherWrites == 0, "The move invoked launch, stop or recovery");
             window.Close();
             cases++;
@@ -109,7 +110,37 @@ internal static class ProgramCopyUiChecks
             window.Close();
             cases++;
         }
-        Console.WriteLine($"Program-copy WPF checks passed: {cases} cases (render, absent, running, declined, approved, refused); synthetic controller only.");
+        // KakaoTalk's updater observed in the box: the hint appears and stays; plain running shows nothing.
+        {
+            var running = ready with { State = Readiness.RunningUnverified, CanLaunch = false, CanStop = true, BoxProcessIds = [7001],
+                AdminRights = new(["y"], ["y"], AdminRightsCondition.Expected, true, [7001], null, [])
+                    { BoxProcesses = [new BoxProcessObservation(7001, "KakaoTalk.exe", 1, true)] } };
+            var updating = running with { BoxProcessIds = [7001, 7002],
+                AdminRights = running.AdminRights! with { ProcessIds = [7001, 7002], BoxProcesses =
+                    [new BoxProcessObservation(7001, "KakaoTalk.exe", 1, true), new BoxProcessObservation(7002, "KakaoUpdate.exe", 1, true)] } };
+            var unverified = running with { BoxProcessIds = [7001, 7003],
+                AdminRights = running.AdminRights! with { ProcessIds = [7001, 7003], BoxProcesses =
+                    [new BoxProcessObservation(7001, "KakaoTalk.exe", 1, true), new BoxProcessObservation(7003, "KakaoUpdate.exe", 1, false)] } };
+            using var controller = new CopyController(running, healthy);
+            var window = Create(controller, confirm: true, out _);
+            var hint = Find<TextBlock>(window, "UpdateAttemptHintText");
+            window.ApplySnapshot(running);
+            Check(hint.Visibility == Visibility.Collapsed, "The update hint is shown without evidence");
+            window.ApplySnapshot(unverified);
+            Check(hint.Visibility == Visibility.Collapsed, "An unverified process identity produced the update hint");
+            window.ApplySnapshot(updating);
+            Check(hint.Visibility == Visibility.Visible && hint.Text.Contains("SBIE2220", StringComparison.Ordinal) &&
+                  hint.Text.Contains("본계정 카카오톡을 업데이트", StringComparison.Ordinal), "The observed updater is not explained");
+            window.ApplySnapshot(running);
+            Check(hint.Visibility == Visibility.Visible, "The hint disappeared while KakaoTalk's dialog may still be open");
+            Check(Find<Button>(window, "StopButton").IsEnabled, "The hint changed the available actions");
+            window.Show();
+            window.Dispatcher.Invoke(window.UpdateLayout, DispatcherPriority.Render);
+            window.RenderToPng(Path.Combine(output, "ui-update-attempt-hint-fixture.png"));
+            window.Close();
+            cases++;
+        }
+        Console.WriteLine($"Program-copy WPF checks passed: {cases} cases (render, absent, running, declined, approved, refused, update hint); synthetic controller only.");
     }
 
     private static StaleProgramCopyObservation Copy(bool canSetAside) => new(

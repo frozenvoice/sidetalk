@@ -403,6 +403,7 @@ public partial class MainWindow : Window
         SandboxieSummaryText.Text = DependencySummary(snapshot.Sandboxie);
         UpdateSandboxieSetupCard();
         UpdateProgramCopyCard();
+        UpdateUpdateAttemptHint(snapshot);
 
         BoxNameText.Text = DisplayValue(snapshot.BoxName);
         StoragePathText.Text = DisplayValue(snapshot.StoragePath);
