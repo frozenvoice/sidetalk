@@ -104,6 +104,8 @@
                                 <TextBlock x:Name="StatusDetailText" Text="필수 프로그램과 전용 환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" />
                                 <TextBlock x:Name="PolicySummaryText" Text="" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
                                 <TextBlock x:Name="AdminRightsActionText" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock x:Name="UpdateAttemptHintText" Visibility="Collapsed" Style="{StaticResource CaptionText}" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite"
+                                           Text="카카오톡의 ‘업데이트에 문제가 발생했습니다’ 창은 확인을 누르고 계속 쓰면 됩니다. 없애려면 본계정 카카오톡을 업데이트하세요. Sandboxie 메시지의 SBIE2220 줄은 두 번 클릭하지 마세요. 관리자 권한 제한이 풀려 실행이 차단됩니다." />
                                 <!-- One primary action. Operation feedback sits beside it so the card keeps its height; the rare force-stop is a quiet footer control. -->
                                 <StackPanel x:Name="MainActionsPanel" Margin="0,24,0,0">
                                     <Grid MinHeight="54">
@@ -236,6 +238,7 @@
                                 <TextBlock x:Name="ResidualProcessesText" Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <TextBlock x:Name="KakaoUpdateEvidenceText" Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <TextBlock Text="호스트 카카오톡 업데이트가 필요하면 공식 카카오톡의 업데이트 안내 또는 공식 다운로드 경로를 이용하세요. 본계정 앱의 종료가 필요한지는 공식 안내에서 확인하고 진행하세요. 완료 후 ‘상태 새로 확인’으로 공식 파일과 전용 환경을 다시 검사하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
+                                <TextBlock Text="보조 카카오톡이 스스로 업데이트를 시도하면 전용 환경이 관리자 권한을 막아 ‘업데이트에 문제가 발생했습니다’ 창과 Sandboxie 메시지(SBIE2217·2219·2220)가 뜰 수 있습니다. 보조 카카오톡은 그대로 쓸 수 있습니다. SBIE2220 줄을 두 번 클릭하면 관리자 권한 제한이 풀려 SIDETALK가 실행을 차단하므로 누르지 말고 닫으세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <TextBlock Text="박스 안에 별도 프로그램 사본이 있으면 호스트 업데이트만으로 함께 갱신됐다고 판단하지 않습니다. 공식 설치보다 오래된 사본이 확인되면 ‘보조 카카오톡’ 탭에서 삭제 없이 보존 폴더로 옮길 수 있습니다. SIDETALK는 업데이트를 위해 관리자 권한 제한을 해제하지 않습니다. 로그인과 과거 오류창 종료는 업데이트 완료의 증거가 아닙니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <Button x:Name="ResidualCleanupButton" Content="잔여 프로세스 정리 후 복구" Style="{StaticResource ActionButton}" Click="ResidualCleanupButton_Click" HorizontalAlignment="Left" Visibility="Collapsed" ToolTipService.ShowOnDisabled="True" />
                                 <Button x:Name="KakaoUpdateGuideButton" Content="카카오톡 공식 안내 열기" Style="{StaticResource ActionButton}" Click="KakaoOfficialButton_Click" HorizontalAlignment="Left" />
