@@ -206,7 +206,7 @@ public partial class App : Application
             if (executable is null) return null;
             var status = new UserLaunchIntegration(UserLaunchLocations.ForCurrentUser(), executable).Inspect();
             return status.PreviousTargets is { Count: > 0 }
-                ? "SIDETALK가 만든 '보조 카카오톡 실행' 바로가기가 이전 설치 위치를 실행합니다. '실행 · 식별' 탭에서 '바로가기 선택 저장'을 누르면 소유가 확인된 바로가기만 이 설치 위치로 갱신합니다."
+                ? "SIDETALK가 만든 '보조 카카오톡 실행' 바로가기가 이전 설치 위치를 실행합니다. '바로가기 · 표시' 탭에서 '바로가기 선택 저장'을 누르면 소유가 확인된 바로가기만 이 설치 위치로 갱신합니다."
                 : null;
         }
         catch (Exception)

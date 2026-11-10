@@ -70,7 +70,7 @@ public partial class MainWindow
         var action = changed ? processState switch
         {
             BoxProcessState.KakaoRunning => "보조 카카오톡이 아직 실행 중입니다. 카카오톡 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃할 필요는 없습니다. 실행 중 권한은 설정 복구로 소급 변경되지 않습니다.",
-            BoxProcessState.ResidualOnly => $"보조 카카오톡은 종료됐습니다. 전용 환경에 잔여 프로세스 {observation!.ResidualProcessCount}개가 남아 있습니다. ‘초기 설정 · 진단’에서 이름과 PID를 확인하고 ‘잔여 프로세스 정리 후 복구’를 승인하세요.",
+            BoxProcessState.ResidualOnly => $"보조 카카오톡은 종료됐습니다. 전용 환경에 잔여 프로세스 {observation!.ResidualProcessCount}개가 남아 있습니다. ‘준비 · 진단’에서 이름과 PID를 확인하고 ‘잔여 프로세스 정리 후 복구’를 승인하세요.",
             BoxProcessState.Empty => "전용 환경이 비어 있는 것을 확인했습니다. 관리자 권한 제한 복구를 새로 승인할 수 있습니다.",
             _ => "전용 프로세스 상태가 미확인입니다. 빈 환경 확인 전에는 설정 복구나 잔여 프로세스 정리를 진행할 수 없습니다."
         } : string.Empty;

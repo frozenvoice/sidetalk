@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using Sidetalk.Core;
 
 namespace Sidetalk.App;
@@ -21,6 +22,7 @@ public partial class MainWindow
     private CancellationTokenSource? _sandboxieWaitCancellation;
     private string? _sandboxieStatus;
     private string? _sandboxieResultTitle;
+    private int _sandboxieStepIndex = -1;
 
     private bool SandboxieSetupBusy => _sandboxieStage is SandboxieSetupStage.Confirming or SandboxieSetupStage.Downloading
         or SandboxieSetupStage.Verifying or SandboxieSetupStage.Installing or SandboxieSetupStage.Checking;
@@ -39,9 +41,51 @@ public partial class MainWindow
 
     private DependencyCondition ObservedSandboxieCondition => _lastObservedSnapshot?.Sandboxie.Condition ?? DependencyCondition.Unknown;
 
-    private static string SandboxieStep(int index) => index + 1 < SandboxieSteps.Length
-        ? $"단계 {index + 1}/{SandboxieSteps.Length} · {SandboxieSteps[index]} — 다음: {SandboxieSteps[index + 1]}"
-        : $"단계 {index + 1}/{SandboxieSteps.Length} · {SandboxieSteps[index]}";
+    private string SandboxieStep(int index)
+    {
+        _sandboxieStepIndex = index;
+        return index + 1 < SandboxieSteps.Length
+            ? $"단계 {index + 1}/{SandboxieSteps.Length} · {SandboxieSteps[index]} — 다음: {SandboxieSteps[index + 1]}"
+            : $"단계 {index + 1}/{SandboxieSteps.Length} · {SandboxieSteps[index]}";
+    }
+
+    /// <summary>Draws the step line's position; the text beside it stays the accessible source.</summary>
+    private void UpdateSandboxieStepTrack()
+    {
+        SandboxieStepTrack.Visibility = _sandboxieStepIndex < 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (_sandboxieStepIndex < 0) return;
+        if (SandboxieStepTrack.Children.Count != SandboxieSteps.Length)
+        {
+            SandboxieStepTrack.Children.Clear();
+            for (var index = 0; index < SandboxieSteps.Length; index++)
+                SandboxieStepTrack.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(2),
+                    BorderThickness = new Thickness(1),
+                    Margin = new Thickness(0, 0, index + 1 < SandboxieSteps.Length ? 4 : 0, 0)
+                });
+        }
+        for (var index = 0; index < SandboxieSteps.Length; index++)
+        {
+            // Reached steps are filled; the rest stay hollow, which also reads correctly in High Contrast.
+            var reached = index <= _sandboxieStepIndex;
+            var segment = (Border)SandboxieStepTrack.Children[index];
+            segment.SetResourceReference(Border.BackgroundProperty, reached ? "AccentBrush" : "CanvasBrush");
+            segment.SetResourceReference(Border.BorderBrushProperty, reached ? "AccentBrush" : "DividerBrush");
+        }
+    }
+
+    /// <summary>
+    /// While a Sandboxie problem leaves nothing to launch or stop, the status card keeps its
+    /// title, reason and badge but gives the page to the guidance card above it.
+    /// </summary>
+    private void ApplyMainCardEmphasis(bool guidanceShown)
+    {
+        var nothingToRun = guidanceShown && _lastObservedSnapshot is { CanLaunch: false, CanStop: false } && !_actionInFlight;
+        MainActionsPanel.Visibility = nothingToRun ? Visibility.Collapsed : Visibility.Visible;
+        StatusTitleText.FontSize = nothingToRun ? 18 : 29;
+        StatusBadge.Margin = new Thickness(0, nothingToRun ? 4 : 8, 0, 0);
+    }
 
     private void UpdateSandboxieSetupCard()
     {
@@ -61,7 +105,9 @@ public partial class MainWindow
         var show = _sandboxieStage != SandboxieSetupStage.Idle || problem;
         SandboxieSetupCard.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         ApplySandboxieSetupAvailability();
+        ApplyMainCardEmphasis(show && problem);
         if (!show) return;
+        _sandboxieStepIndex = -1;
 
         var supported = $"지원 버전: Sandboxie Plus {release.Version} (공식 x64)";
         string title, body, step;
@@ -94,7 +140,7 @@ public partial class MainWindow
                 break;
             case SandboxieSetupStage.Succeeded:
                 title = $"Sandboxie Plus {release.Version} 설치를 확인했어요";
-                body = "설치 위치·공식 서명·버전·서비스 실행을 확인했습니다. 이제 ‘초기 설정 · 진단’에서 전용 환경을 준비하세요.";
+                body = "설치 위치·공식 서명·버전·서비스 실행을 확인했습니다. 이제 ‘준비 · 진단’에서 전용 환경을 준비하세요.";
                 step = SandboxieStep(5);
                 break;
             case SandboxieSetupStage.Failed:
@@ -133,6 +179,7 @@ public partial class MainWindow
         SandboxieSetupBodyText.Text = body;
         SandboxieSupportedVersionText.Text = supported;
         SandboxieSetupStepText.Text = step;
+        UpdateSandboxieStepTrack();
         SandboxieSetupStatusText.Text = _sandboxieStatus ?? string.Empty;
         SandboxieSetupStatusText.Visibility = string.IsNullOrWhiteSpace(_sandboxieStatus) ? Visibility.Collapsed : Visibility.Visible;
         var downloading = _sandboxieStage is SandboxieSetupStage.Downloading or SandboxieSetupStage.Verifying;

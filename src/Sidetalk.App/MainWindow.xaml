@@ -10,7 +10,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Grid Margin="0,0,0,18">
+        <Grid Margin="0,0,0,16">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <StackPanel>
                 <StackPanel Orientation="Horizontal">
@@ -23,10 +23,10 @@
                     </Viewbox>
                     <TextBlock Text="SIDETALK" FontSize="29" FontWeight="Bold" VerticalAlignment="Center" />
                 </StackPanel>
-                <TextBlock Text="본계정 옆에, 또 하나의 대화." Style="{StaticResource SecondaryText}" Margin="0,9,0,0" />
+                <TextBlock Text="본계정 옆에, 또 하나의 대화." Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                <Ellipse Width="7" Height="7" Fill="{DynamicResource SecondaryBrush}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                <Ellipse Width="7" Height="7" Fill="{DynamicResource SecondaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBlock x:Name="AutomaticInspectionIndicator" Text="자동 확인 켜짐" Style="{StaticResource HeaderIndicatorText}"
                            VerticalAlignment="Center" AutomationProperties.Name="자동 확인 상태" AutomationProperties.LiveSetting="Off"
                            GotKeyboardFocus="AutomaticInspectionIndicator_GotKeyboardFocus"
@@ -41,84 +41,95 @@
                         <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
                             <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
                         </Border>
-                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent" Margin="0,22,0,0" />
+                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent" Margin="0,24,0,0" />
                     </Grid>
                 </ControlTemplate>
             </TabControl.Template>
             <TabItem Header="보조 카카오톡" Style="{StaticResource TabHeader}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,6,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                     <StackPanel>
                         <TextBlock x:Name="EntryFeedbackText" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,0,0,12" AutomationProperties.LiveSetting="Polite" />
-                        <Border x:Name="SandboxieSetupCard" Style="{StaticResource SurfaceCard}" Padding="22,18,22,12" Margin="0,0,0,16" Visibility="Collapsed"
+                        <Border x:Name="SandboxieSetupCard" Style="{StaticResource SurfaceCard}" Padding="24,24,24,16" Margin="0,0,0,16" Visibility="Collapsed"
                                 AutomationProperties.Name="Sandboxie Plus 설치 안내">
                             <StackPanel>
-                                <TextBlock x:Name="SandboxieSetupTitleText" Text="Sandboxie Plus 설치가 필요해요" Style="{StaticResource SectionHeading}" FontSize="18" Margin="0,0,0,6"
+                                <TextBlock x:Name="SandboxieSetupTitleText" Text="Sandboxie Plus 설치가 필요해요" Style="{StaticResource SectionHeading}" Margin="0,0,0,8"
                                            TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level2" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="SandboxieSetupBodyText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" />
-                                <TextBlock x:Name="SandboxieSupportedVersionText" Style="{StaticResource BodyText}" FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap" />
-                                <TextBlock x:Name="SandboxieSetupStepText" Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,8,0,0" TextWrapping="Wrap" />
-                                <ProgressBar x:Name="SandboxieDownloadProgress" Height="8" Margin="0,10,0,0" Minimum="0" Maximum="100" Visibility="Collapsed"
+                                <TextBlock x:Name="SandboxieSupportedVersionText" Style="{StaticResource CaptionText}" Foreground="{DynamicResource InkBrush}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                <!-- A real ordered flow: one segment per step, filled through the current step. The step line below carries the same information as text. -->
+                                <UniformGrid x:Name="SandboxieStepTrack" Rows="1" Height="6" Margin="0,16,0,0" Visibility="Collapsed" />
+                                <TextBlock x:Name="SandboxieSetupStepText" Style="{StaticResource CaptionText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                <ProgressBar x:Name="SandboxieDownloadProgress" Height="8" Margin="0,12,0,0" Minimum="0" Maximum="100" Visibility="Collapsed"
                                              Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource CanvasBrush}" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1"
                                              AutomationProperties.Name="Sandboxie Plus 설치 파일 다운로드 진행률" />
                                 <TextBlock x:Name="SandboxieSetupStatusText" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"
                                            AutomationProperties.LiveSetting="Polite" />
-                                <WrapPanel Margin="0,14,0,0">
+                                <WrapPanel Margin="0,16,0,0">
                                     <Button x:Name="SandboxieInstallButton" Content="Sandboxie Plus 설치하기" Style="{StaticResource PrimaryButton}" Click="SandboxieInstallButton_Click"
-                                            MinHeight="46" Margin="0,0,8,8" Visibility="Collapsed" ToolTipService.ShowOnDisabled="True" />
+                                            Margin="0,0,8,8" Visibility="Collapsed" ToolTipService.ShowOnDisabled="True" />
                                     <Button x:Name="SandboxieCancelDownloadButton" Content="다운로드 취소" Style="{StaticResource ActionButton}" Click="SandboxieCancelDownloadButton_Click"
-                                            MinHeight="46" Margin="0,0,8,8" Visibility="Collapsed" />
+                                            Margin="0,0,8,8" Visibility="Collapsed" />
                                     <Button x:Name="SandboxieContinueSetupButton" Content="전용 환경 준비로 이동" Style="{StaticResource PrimaryButton}" Click="SandboxieContinueSetupButton_Click"
-                                            MinHeight="46" Margin="0,0,8,8" Visibility="Collapsed" />
+                                            Margin="0,0,8,8" Visibility="Collapsed" />
                                     <Button x:Name="SandboxieReleasePageButton" Content="공식 릴리스 페이지" Style="{StaticResource ActionButton}" Click="SandboxieReleasePageButton_Click"
-                                            MinHeight="46" Margin="0,0,0,8" />
+                                            Margin="0,0,0,8" />
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
-                        <Border Style="{StaticResource SurfaceCard}" Padding="26,24,26,22">
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24">
                             <StackPanel>
-                                <Grid Margin="0,0,0,14">
+                                <Grid Margin="0,0,0,12">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock x:Name="StatusTitleText" Text="환경 확인 중" Style="{StaticResource StatusHeading}" TextWrapping="Wrap" Margin="0,0,12,0" AutomationProperties.LiveSetting="Polite" />
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,9,0,0">
-                                        <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{DynamicResource SecondaryBrush}" Margin="0,0,7,0" />
+                                    <StackPanel x:Name="StatusBadge" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,8,0,0">
+                                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{DynamicResource SecondaryBrush}" Margin="0,0,8,0" />
                                         <TextBlock x:Name="StatusBadgeText" Text="확인 중" FontSize="12" Foreground="{DynamicResource SecondaryBrush}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="StatusDetailText" Text="필수 프로그램과 전용 환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" />
-                                <TextBlock x:Name="PolicySummaryText" Text="" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Margin="0,10,0,0" />
-                                <TextBlock x:Name="AdminRightsActionText" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite" />
-                                <WrapPanel Margin="0,26,0,0">
-                                    <Button x:Name="LaunchButton" Style="{StaticResource PrimaryButton}" Click="LaunchButton_Click" MinWidth="260" MinHeight="54" Margin="0,0,12,8" IsEnabled="False"
-                                            AutomationProperties.Name="보조 카카오톡 실행" ToolTip="전용 Sandboxie Plus 환경에서 공식 카카오톡을 실행합니다." ToolTipService.ShowOnDisabled="True">
-                                        <StackPanel Orientation="Horizontal">
-                                            <Path Data="M 0,0 L 0,14 L 11,7 Z" Width="11" Height="14" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Margin="0,0,12,0" />
-                                            <TextBlock Text="보조 카카오톡 실행" FontSize="15" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button x:Name="StopButton" Content="보조 카카오톡 강제 종료" Style="{StaticResource ActionButton}" Click="StopButton_Click" MinHeight="54" Margin="0,0,0,8" IsEnabled="False"
-                                            ToolTip="카카오톡 트레이의 종료를 먼저 사용하세요. 이 버튼은 전용 환경의 남은 프로세스까지 강제 종료합니다." ToolTipService.ShowOnDisabled="True" />
-                                </WrapPanel>
-                                <TextBlock Text="트레이 종료가 기본입니다. 위 종료 버튼은 전용 환경을 강제 종료합니다." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,6,0,0" />
-                                <Grid Margin="0,18,0,0" MinHeight="52">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="RefreshSummaryText" Text="환경 확인 중" Style="{StaticResource SecondaryText}" FontSize="12"
-                                               VerticalAlignment="Center" MinHeight="36" Margin="0,0,12,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-                                    <Button x:Name="CancelActionButton" Grid.Column="1" Content="요청 취소" Style="{StaticResource ActionButton}" Click="CancelActionButton_Click" Padding="14,8" Width="92" Height="38" Margin="0,0,8,0" Visibility="Collapsed" />
-                                    <Button x:Name="InspectButton" Grid.Column="2" Style="{StaticResource ActionButton}" Click="InspectButton_Click" Padding="14,8" Width="140" Height="38" AutomationProperties.Name="상태 새로 확인" ToolTip="자동 확인과 별도로 현재 상태를 다시 확인합니다." ToolTipService.ShowOnDisabled="True">
+                                <TextBlock x:Name="PolicySummaryText" Text="" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
+                                <TextBlock x:Name="AdminRightsActionText" Visibility="Collapsed" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
+                                <!-- One primary action. Operation feedback sits beside it so the card keeps its height; the rare force-stop is a quiet footer control. -->
+                                <StackPanel x:Name="MainActionsPanel" Margin="0,24,0,0">
+                                    <Grid MinHeight="54">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Button x:Name="LaunchButton" Style="{StaticResource PrimaryButton}" Click="LaunchButton_Click" MinWidth="260" MinHeight="54" IsEnabled="False"
+                                                AutomationProperties.Name="보조 카카오톡 실행" ToolTip="전용 Sandboxie Plus 환경에서 공식 카카오톡을 실행합니다." ToolTipService.ShowOnDisabled="True">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Path Data="M 0,0 L 0,14 L 11,7 Z" Width="11" Height="14" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                                <TextBlock Text="보조 카카오톡 실행" FontSize="16" />
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock x:Name="RefreshSummaryText" Grid.Column="1" Text="환경 확인 중" Style="{StaticResource CaptionText}"
+                                                   VerticalAlignment="Center" Margin="16,0,12,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                        <Button x:Name="CancelActionButton" Grid.Column="2" Content="요청 취소" Style="{StaticResource QuietButton}" Click="CancelActionButton_Click" VerticalAlignment="Center" Visibility="Collapsed" />
+                                    </Grid>
+                                    <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,16,0,0" Padding="0,12,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="평소에는 카카오톡 트레이에서 종료하세요. 강제 종료는 남은 프로세스까지 끝냅니다." Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                            <Button x:Name="StopButton" Grid.Column="1" Content="보조 카카오톡 강제 종료" Style="{StaticResource QuietButton}" Click="StopButton_Click" VerticalAlignment="Center" IsEnabled="False"
+                                                    ToolTip="카카오톡 트레이의 종료를 먼저 사용하세요. 이 버튼은 전용 환경의 남은 프로세스까지 강제 종료합니다." ToolTipService.ShowOnDisabled="True" />
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24,12,24,16" Margin="0,16,0,0">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="구성 요소" Style="{StaticResource CardHeading}" Margin="0" VerticalAlignment="Center" />
+                                    <Button x:Name="InspectButton" Grid.Column="1" Style="{StaticResource QuietButton}" Click="InspectButton_Click" Width="132" AutomationProperties.Name="상태 새로 확인" ToolTip="자동 확인과 별도로 현재 상태를 다시 확인합니다." ToolTipService.ShowOnDisabled="True">
                                         <TextBlock x:Name="ManualRefreshText" Text="상태 새로 확인" TextAlignment="Center" TextWrapping="NoWrap" AutomationProperties.LiveSetting="Polite" />
                                     </Button>
                                 </Grid>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource SurfaceCard}" Padding="18,14" Margin="0,16,0,0">
-                            <StackPanel>
-                                <TextBlock Text="구성 요소" Style="{StaticResource SectionHeading}" FontSize="15" Margin="0,0,0,8" />
                                 <Grid>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="공식 카카오톡" Style="{StaticResource BodyText}" Margin="0,0,12,11" />
-                                    <TextBlock x:Name="KakaoSummaryText" Grid.Column="1" Text="확인 중" Style="{StaticResource SecondaryText}" Margin="0,0,0,11" TextWrapping="Wrap" />
-                                    <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Padding="0,11,0,0">
+                                    <TextBlock Text="공식 카카오톡" Style="{StaticResource BodyText}" Margin="0,0,12,8" />
+                                    <TextBlock x:Name="KakaoSummaryText" Grid.Column="1" Text="확인 중" Style="{StaticResource SecondaryText}" Margin="0,0,0,8" TextWrapping="Wrap" />
+                                    <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Padding="0,8,0,0">
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                             <TextBlock Text="Sandboxie Plus" Style="{StaticResource BodyText}" />
@@ -128,92 +139,97 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
-                        <TextBlock x:Name="InitialSetupPanel" Text="처음 사용하는 PC라면 ‘초기 설정 · 진단’에서 전용 환경을 준비하세요." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,18,0,4" Visibility="Collapsed" />
+                        <TextBlock x:Name="InitialSetupPanel" Text="처음 사용하는 PC라면 ‘준비 · 진단’에서 전용 환경을 준비하세요." Style="{StaticResource CaptionText}" Margin="0,16,0,4" Visibility="Collapsed" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="초기 설정 · 진단" Style="{StaticResource TabHeader}">
+            <TabItem Header="준비 · 진단" Style="{StaticResource TabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                     <StackPanel>
-                        <TextBlock Text="현재 환경" Style="{StaticResource SectionHeading}" />
-                        <Border x:Name="RecoveryPanel" Style="{StaticResource SurfaceCard}" Padding="20,18,20,18" Margin="0,0,0,18" Visibility="Collapsed">
+                        <Border x:Name="RecoveryPanel" Style="{StaticResource SurfaceCard}" Padding="24" Margin="0,0,0,16" Visibility="Collapsed">
                             <StackPanel>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="복구 계획" FontSize="20" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="RecoveryStateText" Grid.Column="1" Text="복구 계획 확인 중" Style="{StaticResource SecondaryText}" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0" AutomationProperties.LiveSetting="Polite" />
+                                    <TextBlock Text="복구 계획" Style="{StaticResource SectionHeading}" Margin="0" />
+                                    <TextBlock x:Name="RecoveryStateText" Grid.Column="1" Text="복구 계획 확인 중" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="12,0,0,0" AutomationProperties.LiveSetting="Polite" />
                                 </Grid>
-                                <TextBlock x:Name="RecoverySummaryText" Text="현재 설정을 확인하고 있습니다." Style="{StaticResource BodyText}" Margin="0,0,0,10" TextWrapping="Wrap" />
-                                <TextBlock Text="변경 예정" Style="{StaticResource SectionHeading}" FontSize="15" Margin="0,0,0,4" />
-                                <TextBlock x:Name="RecoveryChangesSummaryText" Style="{StaticResource SecondaryText}" Margin="0,0,0,6" />
-                                <TextBlock x:Name="RecoveryPreservationSummaryText" Text="보존: 보조 계정·대화 데이터, 프로필·전용 저장 공간, 명령·복구 기록은 삭제하지 않습니다. 메인 카카오톡과 다른 상자는 건드리지 않습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,6" />
+                                <TextBlock x:Name="RecoverySummaryText" Text="현재 설정을 확인하고 있습니다." Style="{StaticResource BodyText}" Margin="0,0,0,12" TextWrapping="Wrap" />
+                                <TextBlock Text="변경 예정" Style="{StaticResource CardHeading}" Margin="0,0,0,4" />
+                                <TextBlock x:Name="RecoveryChangesSummaryText" Style="{StaticResource SecondaryText}" Margin="0,0,0,8" />
+                                <TextBlock x:Name="RecoveryPreservationSummaryText" Text="보존: 보조 계정·대화 데이터, 프로필·전용 저장 공간, 명령·복구 기록은 삭제하지 않습니다. 메인 카카오톡과 다른 Sandboxie 환경은 건드리지 않습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,8" />
                                 <TextBlock x:Name="RecoveryLossWarningText" Text="주의: 확인된 Sandboxie 관리 창을 닫으면 저장하지 않은 관리 설정은 사라질 수 있습니다. 필요한 설정을 먼저 저장하세요." Style="{StaticResource BodyText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,0,0,8" />
-                                <TextBlock x:Name="RecoveryNextStepText" Text="복구 후: ‘실행 준비’가 확인되면 보조 카카오톡을 직접 실행하고 공식 창에서 로그인하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,6" />
+                                <TextBlock x:Name="RecoveryNextStepText" Text="복구 후: ‘실행 준비’가 확인되면 보조 카카오톡을 직접 실행하고 공식 창에서 로그인하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,8" />
                                 <TextBlock x:Name="RecoveryBlockerText" Text="" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,0,0,8" Visibility="Collapsed" TextWrapping="Wrap" />
                                 <TextBlock x:Name="RecoveryProgressText" Text="" Style="{StaticResource SecondaryText}" Margin="0,0,0,8" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
-                                <Expander x:Name="RecoveryTechnicalExpander" Header="변경 항목 · 영향 범위 자세히" Foreground="{DynamicResource InkBrush}" IsExpanded="False" Margin="0,0,0,10" AutomationProperties.Name="복구의 정확한 변경 항목과 영향 범위">
-                                    <StackPanel Margin="0,8,0,0">
+                                <Expander x:Name="RecoveryTechnicalExpander" Header="변경 항목 · 영향 범위 자세히" Foreground="{DynamicResource InkBrush}" IsExpanded="False" Margin="0,0,0,8" AutomationProperties.Name="복구의 정확한 변경 항목과 영향 범위">
+                                    <StackPanel Margin="0,4,0,0">
                                         <ItemsControl x:Name="RecoveryChangesList" AutomationProperties.Name="복구 변경 예정 항목" Margin="0,0,0,8">
                                             <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" /></DataTemplate></ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock Text="영향 범위 · 확인된 관리 창 종료 대상" Style="{StaticResource SectionHeading}" FontSize="15" Margin="0,0,0,4" />
+                                        <TextBlock Text="영향 범위 · 확인된 관리 창 종료 대상" Style="{StaticResource CardHeading}" Margin="0,0,0,4" />
                                         <ItemsControl x:Name="RecoveryAffectedList" AutomationProperties.Name="복구 영향 범위" Margin="0,0,0,8">
                                             <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" /></DataTemplate></ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock x:Name="RecoveryScopeText" Text="자동 복구를 선택하면 같은 검증 범위에서 재발한 문제만 복구합니다. 검토된 전역 Template 선택 제거: WindowsRasMan · OnScreenKeyboard · WindowsLive · Edge_Fix · OfficeLicensing · OfficeClickToRun. 현재 사용자 설정 SbieCtrl_AutoRunSoftCompat=n과 같은 검증 범위에서 확인된 Sandboxie 관리 창 정리만 포함합니다. 관리 창이 정리되면 저장하지 않은 관리 설정은 사라질 수 있습니다." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,0,0,4" />
+                                        <TextBlock x:Name="RecoveryScopeText" Text="자동 복구를 선택하면 같은 검증 범위에서 재발한 문제만 복구합니다. 검토된 전역 Template 선택 제거: WindowsRasMan · OnScreenKeyboard · WindowsLive · Edge_Fix · OfficeLicensing · OfficeClickToRun. 현재 사용자 설정 SbieCtrl_AutoRunSoftCompat=n과 같은 검증 범위에서 확인된 Sandboxie 관리 창 정리만 포함합니다. 관리 창이 정리되면 저장하지 않은 관리 설정은 사라질 수 있습니다." Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
                                     </StackPanel>
                                 </Expander>
-                                <CheckBox x:Name="AutomaticRecoveryCheckBox" Foreground="{DynamicResource ControlInkBrush}" FontSize="14" IsChecked="False" Margin="0,0,0,10" ToolTip="여섯 템플릿, 현재 사용자 자동 검사 옵션, 같은 검증 조건에서 확인된 관리 창 정리만 포함합니다. 저장하지 않은 관리 설정은 사라질 수 있습니다." Checked="AutomaticRecoveryCheckBox_Changed" Unchecked="AutomaticRecoveryCheckBox_Changed">
+                                <CheckBox x:Name="AutomaticRecoveryCheckBox" IsChecked="False" Margin="0,4,0,16" ToolTip="여섯 템플릿, 현재 사용자 자동 검사 옵션, 같은 검증 조건에서 확인된 관리 창 정리만 포함합니다. 저장하지 않은 관리 설정은 사라질 수 있습니다." Checked="AutomaticRecoveryCheckBox_Changed" Unchecked="AutomaticRecoveryCheckBox_Changed">
                                     <TextBlock Text="같은 검증 범위의 자동 복구 허용 (선택)" TextWrapping="Wrap" />
                                 </CheckBox>
                                 <WrapPanel>
-                                    <Button x:Name="PrepareRecoveryButton" Content="복구하고 실행 준비" Style="{StaticResource PrimaryButton}" Click="PrepareRecoveryButton_Click" MinHeight="46" Margin="0,0,8,6" AutomationProperties.Name="복구하고 실행 준비" />
-                                    <Button x:Name="RevokeAutomaticButton" Content="자동 복구 해제" Style="{StaticResource ActionButton}" Click="RevokeAutomaticButton_Click" MinHeight="46" Margin="0,0,8,6" />
-                                    <Button x:Name="OpenRecoveryHistoryButton" Content="복구 내역 열기" Style="{StaticResource ActionButton}" Click="OpenRecoveryHistoryButton_Click" MinHeight="46" Margin="0,0,0,6" />
+                                    <Button x:Name="PrepareRecoveryButton" Content="복구하고 실행 준비" Style="{StaticResource PrimaryButton}" Click="PrepareRecoveryButton_Click" Margin="0,0,8,8" AutomationProperties.Name="복구하고 실행 준비" />
+                                    <Button x:Name="RevokeAutomaticButton" Content="자동 복구 해제" Style="{StaticResource ActionButton}" Click="RevokeAutomaticButton_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="OpenRecoveryHistoryButton" Content="복구 내역 열기" Style="{StaticResource ActionButton}" Click="OpenRecoveryHistoryButton_Click" Margin="0,0,0,8" />
                                 </WrapPanel>
-                                <Expander x:Name="RecoveryPreservedExpander" IsExpanded="False" Margin="0,0,0,7" Foreground="{DynamicResource InkBrush}">
-                                    <Expander.Header>
-                                        <TextBlock Text="보존되는 데이터" Style="{StaticResource SectionHeading}" FontSize="15" />
-                                    </Expander.Header>
-                                    <ItemsControl x:Name="RecoveryPreservedList" AutomationProperties.Name="복구 중 보존되는 데이터" Margin="0,7,0,4">
+                                <Expander x:Name="RecoveryPreservedExpander" Header="보존되는 데이터" IsExpanded="False" Margin="0,0,0,4">
+                                    <ItemsControl x:Name="RecoveryPreservedList" AutomationProperties.Name="복구 중 보존되는 데이터" Margin="0,4,0,4">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,1" TextWrapping="Wrap" /></DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Expander>
-                                <TextBlock x:Name="RecoveryBackupText" Text="" Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap" />
-                                <TextBlock x:Name="RecoveryResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,5,0,0" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RecoveryBackupText" Text="" Style="{StaticResource CaptionText}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RecoveryResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
-                        <Border x:Name="EvidencePanel" Style="{StaticResource SurfaceCard}" Padding="20,18,20,18" Margin="0,0,0,12" Visibility="Collapsed">
+                        <Border x:Name="EvidencePanel" Style="{StaticResource SurfaceCard}" Padding="24" Margin="0,0,0,16" Visibility="Collapsed">
                             <StackPanel>
-                                <TextBlock Text="중단된 준비 확인" Style="{StaticResource SectionHeading}" FontSize="16" />
-                                <TextBlock x:Name="EvidenceSummaryText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,6,0,8" />
+                                <TextBlock Text="중단된 준비 확인" Style="{StaticResource CardHeading}" Margin="0" />
+                                <TextBlock x:Name="EvidenceSummaryText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,8,0,12" />
                                 <WrapPanel>
-                                    <Button x:Name="PreserveEvidenceButton" Content="원본을 보존하고 다시 확인" Style="{StaticResource ActionButton}" Click="PreserveEvidenceButton_Click" MinHeight="46" Margin="0,0,8,6" />
-                                    <Button x:Name="OpenEvidenceHistoryButton" Content="보존 내역 열기" Style="{StaticResource ActionButton}" Click="OpenEvidenceHistoryButton_Click" MinHeight="46" Margin="0,0,0,6" />
+                                    <Button x:Name="PreserveEvidenceButton" Content="원본을 보존하고 다시 확인" Style="{StaticResource ActionButton}" Click="PreserveEvidenceButton_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="OpenEvidenceHistoryButton" Content="보존 내역 열기" Style="{StaticResource ActionButton}" Click="OpenEvidenceHistoryButton_Click" Margin="0,0,0,8" />
                                 </WrapPanel>
-                                <TextBlock x:Name="EvidenceHistoryText" Style="{StaticResource SecondaryText}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" />
+                                <TextBlock x:Name="EvidenceHistoryText" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
-                        <TextBlock x:Name="PolicyDetailText" Text="환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,6" />
-                        <Expander x:Name="KakaoUpdateExpander" Header="카카오톡 업데이트 · 관리자 권한 제한" Foreground="{DynamicResource InkBrush}" IsExpanded="False" Margin="0,8,0,16">
-                            <StackPanel Margin="0,10,0,0">
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24,16" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="현재 환경" Style="{StaticResource CardHeading}" />
+                                <TextBlock x:Name="PolicyDetailText" Text="환경을 확인하고 있습니다." Style="{StaticResource SecondaryText}" />
+                                <TextBlock x:Name="InspectionDetailText" Text="성공한 확인: 아직 없음 · 최근 실패: 없음" Style="{StaticResource CaptionText}"
+                                           MinHeight="18" Margin="0,8,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Off" />
+                            </StackPanel>
+                        </Border>
+                        <!-- Less frequent technical detail: one card, three disclosure rows. -->
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24,8" Margin="0,0,0,16">
+                            <StackPanel>
+                                <Expander x:Name="KakaoUpdateExpander" Header="카카오톡 업데이트 · 관리자 권한 제한" IsExpanded="False">
+                            <StackPanel Margin="0,4,0,12">
                                 <TextBlock x:Name="AdminRightsSummaryText" Text="현재 관리자 권한 제한과 전용 프로세스 상태는 아직 확인하지 않았습니다." Style="{StaticResource BodyText}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="AdminRightsValuesText" Style="{StaticResource SecondaryText}" Margin="0,8,0,8" TextWrapping="Wrap" />
-                                <TextBlock x:Name="ResidualProcessesText" Style="{StaticResource SecondaryText}" Margin="0,0,0,10" TextWrapping="Wrap" Visibility="Collapsed" />
+                                <TextBlock x:Name="ResidualProcessesText" Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <TextBlock x:Name="KakaoUpdateEvidenceText" Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
-                                <TextBlock Text="호스트 카카오톡 업데이트가 필요하면 공식 카카오톡의 업데이트 안내 또는 공식 다운로드 경로를 이용하세요. 본계정 앱의 종료가 필요한지는 공식 안내에서 확인하고 진행하세요. 완료 후 ‘상태 새로 확인’으로 공식 파일과 전용 환경을 다시 검사하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                                <TextBlock Text="호스트 카카오톡 업데이트가 필요하면 공식 카카오톡의 업데이트 안내 또는 공식 다운로드 경로를 이용하세요. 본계정 앱의 종료가 필요한지는 공식 안내에서 확인하고 진행하세요. 완료 후 ‘상태 새로 확인’으로 공식 파일과 전용 환경을 다시 검사하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <TextBlock Text="박스 안에 별도 프로그램 사본이 있으면 호스트 업데이트만으로 함께 갱신됐다고 판단하지 않습니다. 데이터 보존이 입증되지 않은 사본 교체는 지원하지 않습니다. SIDETALK는 업데이트를 위해 관리자 권한 제한을 해제하지 않습니다. 로그인과 과거 오류창 종료는 업데이트 완료의 증거가 아닙니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" TextWrapping="Wrap" />
                                 <Button x:Name="ResidualCleanupButton" Content="잔여 프로세스 정리 후 복구" Style="{StaticResource ActionButton}" Click="ResidualCleanupButton_Click" HorizontalAlignment="Left" Visibility="Collapsed" ToolTipService.ShowOnDisabled="True" />
                                 <Button x:Name="KakaoUpdateGuideButton" Content="카카오톡 공식 안내 열기" Style="{StaticResource ActionButton}" Click="KakaoOfficialButton_Click" HorizontalAlignment="Left" />
                             </StackPanel>
-                        </Expander>
-                        <TextBlock x:Name="InspectionDetailText" Text="성공한 확인: 아직 없음 · 최근 실패: 없음" Style="{StaticResource SecondaryText}" FontSize="12"
-                                   MinHeight="23" Margin="0,0,0,14" TextWrapping="Wrap" AutomationProperties.LiveSetting="Off" />
-                        <Expander Header="환경 상세 · 진단" Foreground="{DynamicResource InkBrush}" IsExpanded="False" Margin="0,0,0,20">
-                        <StackPanel Margin="0,12,0,0">
-                        <Grid Margin="0,0,0,20">
+                                </Expander>
+                                <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,4" />
+                                <Expander Header="환경 상세 · 진단" IsExpanded="False">
+                                    <StackPanel Margin="0,8,0,12">
+                        <Grid Margin="0,0,0,16">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <TextBlock Text="전용 환경" Style="{StaticResource SecondaryText}" Margin="0,4,12,4" />
@@ -225,91 +241,98 @@
                             <TextBlock Grid.Row="3" Text="마지막 확인" Style="{StaticResource SecondaryText}" Margin="0,4,12,4" />
                             <TextBlock x:Name="CheckedAtText" Grid.Row="3" Grid.Column="1" Text="확인 중" Style="{StaticResource BodyText}" Margin="0,4" />
                         </Grid>
-                        <ItemsControl x:Name="ChecksList" AutomationProperties.Name="상태 확인 항목" Margin="0,0,0,18">
+                        <ItemsControl x:Name="ChecksList" AutomationProperties.Name="상태 확인 항목" Margin="0,0,0,16">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,3" /></DataTemplate>
+                                <DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SecondaryText}" Margin="0,4" /></DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <Button x:Name="ExportDiagnosticsButton" Content="진단 JSON 저장" Style="{StaticResource ActionButton}" Click="ExportDiagnosticsButton_Click" HorizontalAlignment="Left" />
-                        <TextBlock Text="계정 인증 정보와 대화 내용은 수집하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" Margin="0,8,0,26" />
-                        </StackPanel>
-                        </Expander>
-                        <Expander Header="설치 · 수동 설정" Foreground="{DynamicResource InkBrush}" IsExpanded="False" Margin="0,0,0,20">
-                        <StackPanel Margin="0,12,0,0">
-                        <TextBlock Text="설치된 프로그램" Style="{StaticResource SectionHeading}" />
+                                        <Button x:Name="ExportDiagnosticsButton" Content="진단 JSON 저장" Style="{StaticResource ActionButton}" Click="ExportDiagnosticsButton_Click" HorizontalAlignment="Left" />
+                                        <TextBlock Text="계정 인증 정보와 대화 내용은 수집하지 않습니다." Style="{StaticResource CaptionText}" Margin="0,8,0,0" />
+                                    </StackPanel>
+                                </Expander>
+                                <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Margin="0,4" />
+                                <Expander Header="설치 · 수동 설정" IsExpanded="False">
+                                    <StackPanel Margin="0,8,0,12">
+                        <TextBlock Text="설치된 프로그램" Style="{StaticResource CardHeading}" />
                         <TextBlock x:Name="KakaoAvailabilityText" Text="확인 중" Style="{StaticResource BodyText}" />
-                        <TextBlock x:Name="KakaoInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,14" />
+                        <TextBlock x:Name="KakaoInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,12" />
                         <TextBlock x:Name="SandboxieAvailabilityText" Text="확인 중" Style="{StaticResource BodyText}" />
-                        <TextBlock x:Name="SandboxieInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,26" />
-                        <Border Style="{StaticResource SurfaceCard}" Padding="18,16" Margin="0,0,0,8">
-                            <StackPanel>
-                                <TextBlock Text="처음 한 번만 준비하세요" Style="{StaticResource SectionHeading}" />
+                        <TextBlock x:Name="SandboxieInfoText" Text="설치 상태를 읽는 중" Style="{StaticResource SecondaryText}" Margin="0,4,0,24" />
+                                <TextBlock Text="처음 한 번만 준비하세요" Style="{StaticResource CardHeading}" />
                                 <TextBlock x:Name="SetupStepsText" Style="{StaticResource SecondaryText}" Margin="0,0,0,16" TextWrapping="Wrap" />
                                 <TextBlock Text="설정 변경은 표시된 범위를 승인한 뒤 진행합니다. 같은 문제의 자동 복구는 위 체크박스로 허용하거나 나중에 해제할 수 있습니다." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
-                                <WrapPanel Margin="0,0,0,14">
+                                <WrapPanel Margin="0,0,0,8">
                                     <Button x:Name="ManualSandboxieReleaseButton" Content="Sandboxie Plus 공식 릴리스" Style="{StaticResource ActionButton}" Click="SandboxieReleasePageButton_Click" Margin="0,0,8,8" />
                                     <Button Content="카카오톡 공식 안내" Style="{StaticResource ActionButton}" Click="KakaoOfficialButton_Click" Margin="0,0,0,8" />
                                 </WrapPanel>
                                 <TextBlock Text="전용 환경의 소유 정보를 저장하고 선택한 폴더에 새 INI를 만듭니다. 기존 Sandboxie 설정을 이 파일로 덮어쓰지 마세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" />
                                 <Button x:Name="ExportSetupButton" Content="전용 INI 내보내기" Style="{StaticResource PrimaryButton}" Click="ExportSetupButton_Click" HorizontalAlignment="Left" />
                                 <TextBlock x:Name="SetupResultText" Text="" Style="{StaticResource SecondaryText}" Margin="0,16,0,0" AutomationProperties.LiveSetting="Polite" />
+                                    </StackPanel>
+                                </Expander>
                             </StackPanel>
                         </Border>
-                        </StackPanel>
-                        </Expander>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="실행 · 식별" Style="{StaticResource TabHeader}">
+            <TabItem Header="바로가기 · 표시" Style="{StaticResource TabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                     <StackPanel>
-                        <TextBlock Text="보조 계정 빠른 실행" Style="{StaticResource SectionHeading}" />
                         <TextBlock Text="바로가기는 SIDETALK를 통해 전용 환경을 확인한 뒤 실행합니다. 계정 로그인은 카카오톡에서 직접 진행하세요." Style="{StaticResource SecondaryText}" Margin="0,0,0,16" />
-                        <Border Style="{StaticResource SurfaceCard}" Padding="20" Margin="0,0,0,16">
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24" Margin="0,0,0,16">
                             <StackPanel>
-                                <CheckBox x:Name="QuickConsentCheckBox" Content="이 전용 프로필의 빠른 실행 허용" Foreground="{DynamicResource ControlInkBrush}" FontSize="14" IsChecked="False" />
-                                <TextBlock Text="기본 꺼짐. 켜면 이 프로필·설치·설정 범위에서 빠른 실행 확인창만 생략합니다. 설정 복구·강제 종료·삭제·권한 상승 동의는 아닙니다." Style="{StaticResource SecondaryText}" Margin="0,10,0,10" FontSize="12" />
-                                <TextBlock x:Name="QuickConsentScopeText" Text="현재 프로필의 승인 범위를 확인하세요." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,12" />
+                                <TextBlock Text="보조 계정 빠른 실행" Style="{StaticResource CardHeading}" Margin="0,0,0,12" />
+                                <CheckBox x:Name="QuickConsentCheckBox" Content="이 전용 프로필의 빠른 실행 허용" IsChecked="False" />
+                                <TextBlock Text="기본 꺼짐. 켜면 이 프로필·설치·설정 범위에서 빠른 실행 확인창만 생략합니다. 설정 복구·강제 종료·삭제·권한 상승 동의는 아닙니다." Style="{StaticResource CaptionText}" Margin="0,8,0,8" />
+                                <TextBlock x:Name="QuickConsentScopeText" Text="현재 프로필의 승인 범위를 확인하세요." Style="{StaticResource CaptionText}" Margin="0,0,0,12" />
                                 <WrapPanel>
-                                    <Button x:Name="SaveQuickConsentButton" Content="빠른 실행 동의 저장" Style="{StaticResource ActionButton}" Click="SaveQuickConsentButton_Click" Margin="0,0,8,6" />
-                                    <Button x:Name="ReloadQuickSettingsButton" Content="설정 다시 확인" Style="{StaticResource ActionButton}" Click="ReloadQuickSettingsButton_Click" Margin="0,0,0,6" />
+                                    <Button x:Name="SaveQuickConsentButton" Content="빠른 실행 동의 저장" Style="{StaticResource ActionButton}" Click="SaveQuickConsentButton_Click" Margin="0,0,8,0" />
+                                    <Button x:Name="ReloadQuickSettingsButton" Content="설정 다시 확인" Style="{StaticResource ActionButton}" Click="ReloadQuickSettingsButton_Click" />
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="바로가기 · Windows 로그인" Style="{StaticResource SectionHeading}" FontSize="17" />
-                        <CheckBox x:Name="DesktopShortcutCheckBox" Content="바탕화면에 ‘보조 카카오톡 실행’" Foreground="{DynamicResource ControlInkBrush}" Margin="0,0,0,10" IsChecked="False" />
-                        <CheckBox x:Name="StartMenuShortcutCheckBox" Content="시작 메뉴에 ‘보조 카카오톡 실행’" Foreground="{DynamicResource ControlInkBrush}" Margin="0,0,0,10" IsChecked="False" />
-                        <CheckBox x:Name="LoginStartupCheckBox" Content="Windows 로그인 시 빠른 실행" Foreground="{DynamicResource ControlInkBrush}" Margin="0,0,0,8" IsChecked="False" />
-                        <TextBlock Text="로그인 시 실행은 별도 선택이며 기본 꺼짐입니다. 빠른 실행 동의가 없으면 확인창을 표시합니다. 관리자 실행·카카오톡 자동 로그인은 사용하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,10" />
-                        <WrapPanel>
-                            <Button x:Name="SaveShortcutsButton" Content="바로가기 선택 저장" Style="{StaticResource ActionButton}" Click="SaveShortcutsButton_Click" Margin="0,0,8,6" />
-                            <Button x:Name="RemoveShortcutsButton" Content="내 바로가기 모두 제거" Style="{StaticResource ActionButton}" Click="RemoveShortcutsButton_Click" Margin="0,0,0,6" />
-                        </WrapPanel>
-                        <TextBlock x:Name="ShortcutStateText" Text="저장된 바로가기 선택을 확인하세요." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,4,0,20" />
-                        <TextBlock Text="보조 창 식별" Style="{StaticResource SectionHeading}" FontSize="17" />
-                        <Border x:Name="AppearancePreview" BorderBrush="#5B6821" BorderThickness="4" Background="{DynamicResource SurfaceBrush}" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24" Margin="0,0,0,16">
                             <StackPanel>
-                                <TextBlock Text="보조 계정" FontWeight="SemiBold" FontSize="17" />
-                                <TextBlock Text="색상 미리보기 · 실제 카카오톡 화면이 아닙니다" Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,6,0,0" />
+                                <TextBlock Text="바로가기 · Windows 로그인" Style="{StaticResource CardHeading}" Margin="0,0,0,12" />
+                                <CheckBox x:Name="DesktopShortcutCheckBox" Content="바탕화면에 ‘보조 카카오톡 실행’" Margin="0,0,0,12" IsChecked="False" />
+                                <CheckBox x:Name="StartMenuShortcutCheckBox" Content="시작 메뉴에 ‘보조 카카오톡 실행’" Margin="0,0,0,12" IsChecked="False" />
+                                <CheckBox x:Name="LoginStartupCheckBox" Content="Windows 로그인 시 빠른 실행" Margin="0,0,0,8" IsChecked="False" />
+                                <TextBlock Text="로그인 시 실행은 별도 선택이며 기본 꺼짐입니다. 빠른 실행 동의가 없으면 확인창을 표시합니다. 관리자 실행·카카오톡 자동 로그인은 사용하지 않습니다." Style="{StaticResource CaptionText}" Margin="0,0,0,12" />
+                                <WrapPanel>
+                                    <Button x:Name="SaveShortcutsButton" Content="바로가기 선택 저장" Style="{StaticResource ActionButton}" Click="SaveShortcutsButton_Click" Margin="0,0,8,0" />
+                                    <Button x:Name="RemoveShortcutsButton" Content="내 바로가기 모두 제거" Style="{StaticResource ActionButton}" Click="RemoveShortcutsButton_Click" />
+                                </WrapPanel>
+                                <TextBlock x:Name="ShortcutStateText" Text="저장된 바로가기 선택을 확인하세요." Style="{StaticResource CaptionText}" Margin="0,8,0,0" />
                             </StackPanel>
                         </Border>
-                        <ComboBox Foreground="{DynamicResource ControlInkBrush}" x:Name="AppearanceColorCombo" MinHeight="34" HorizontalAlignment="Left" MinWidth="230" Margin="0,0,0,10" SelectionChanged="AppearanceColorCombo_SelectionChanged" AutomationProperties.Name="보조 창 테두리 색" />
-                        <CheckBox x:Name="AppearanceLabelCheckBox" Content="Sandboxie 전용 환경 이름에 ‘보조 계정’ 표시" Foreground="{DynamicResource ControlInkBrush}" Margin="0,0,0,10" IsChecked="False" />
-                        <TextBlock Text="선택하지 않으면 기존 이름 표시를 보존합니다. 색상 변경도 기존 표시 방식·두께를 유지합니다. 전용 환경이 비어 있을 때만 저장합니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,10" />
-                        <Button x:Name="SaveAppearanceButton" Content="표시 설정 저장 · 재확인" Style="{StaticResource ActionButton}" Click="SaveAppearanceButton_Click" HorizontalAlignment="Left" />
-                        <TextBlock x:Name="AppearanceStateText" Text="현재 표시 설정을 확인하세요." Style="{StaticResource SecondaryText}" Margin="0,10,0,8" AutomationProperties.LiveSetting="Polite" />
-                        <TextBlock Text="테두리는 Sandboxie 관리 앱이 실행 중일 때 표시됩니다. 사용자 정의 제목줄에는 공식 제목 표시가 적용되지 않을 수 있습니다. 색·문구는 격리 성공이나 로그인 계정을 증명하지 않습니다." Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,0,0,16" />
+                        <Border Style="{StaticResource SurfaceCard}" Padding="24" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="보조 창 식별" Style="{StaticResource CardHeading}" Margin="0,0,0,12" />
+                                <Border x:Name="AppearancePreview" BorderBrush="#5B6821" BorderThickness="4" Background="{DynamicResource CanvasBrush}" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="보조 계정" FontWeight="SemiBold" FontSize="16" />
+                                        <TextBlock Text="색상 미리보기 · 실제 카카오톡 화면이 아닙니다" Style="{StaticResource CaptionText}" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                                <ComboBox x:Name="AppearanceColorCombo" HorizontalAlignment="Left" MinWidth="260" Margin="0,0,0,12" SelectionChanged="AppearanceColorCombo_SelectionChanged" AutomationProperties.Name="보조 창 테두리 색" />
+                                <CheckBox x:Name="AppearanceLabelCheckBox" Content="Sandboxie 전용 환경 이름에 ‘보조 계정’ 표시" Margin="0,0,0,8" IsChecked="False" />
+                                <TextBlock Text="선택하지 않으면 기존 이름 표시를 보존합니다. 색상 변경도 기존 표시 방식·두께를 유지합니다. 전용 환경이 비어 있을 때만 저장합니다." Style="{StaticResource CaptionText}" Margin="0,0,0,12" />
+                                <Button x:Name="SaveAppearanceButton" Content="표시 설정 저장 · 재확인" Style="{StaticResource ActionButton}" Click="SaveAppearanceButton_Click" HorizontalAlignment="Left" />
+                                <TextBlock x:Name="AppearanceStateText" Text="현재 표시 설정을 확인하세요." Style="{StaticResource SecondaryText}" Margin="0,12,0,8" AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock Text="테두리는 Sandboxie 관리 앱이 실행 중일 때 표시됩니다. 사용자 정의 제목줄에는 공식 제목 표시가 적용되지 않을 수 있습니다. 색·문구는 격리 성공이나 로그인 계정을 증명하지 않습니다." Style="{StaticResource CaptionText}" />
+                            </StackPanel>
+                        </Border>
                         <TextBlock x:Name="QuickSettingsResultText" Style="{StaticResource SecondaryText}" Foreground="{DynamicResource WarningInkBrush}" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
         </TabControl>
-        <Grid Grid.Row="2" Margin="0,18,0,0">
+        <Grid Grid.Row="2" Margin="0,16,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock Text="로그인·송수신은 카카오톡에서 확인하세요. SIDETALK를 닫아도 카카오톡은 유지됩니다."
-                       Style="{StaticResource SecondaryText}" FontSize="12" LineHeight="18" />
-            <TextBlock x:Name="AppVersionText" Grid.Column="1" Text="버전 확인 중" Style="{StaticResource SecondaryText}" FontSize="12"
-                       VerticalAlignment="Top" HorizontalAlignment="Right" Margin="14,0,0,0" />
+                       Style="{StaticResource CaptionText}" />
+            <TextBlock x:Name="AppVersionText" Grid.Column="1" Text="버전 확인 중" Style="{StaticResource CaptionText}"
+                       VerticalAlignment="Top" HorizontalAlignment="Right" Margin="16,0,0,0" />
         </Grid>
     </Grid>
 </Window>
