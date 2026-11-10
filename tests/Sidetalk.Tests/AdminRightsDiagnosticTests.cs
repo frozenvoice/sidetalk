@@ -102,7 +102,7 @@ internal static class AdminRightsDiagnosticTests
         Assert.Equal(ProcessPolicyStatus.NotObserved, snapshot.ProcessPolicy);
         Assert.False(snapshot.AdminRights!.ProcessesQueried);
         Assert.Contains("synthetic process uncertainty", snapshot.AdminRights.ProcessFailure!);
-        Assert.Contains("빈 상자로 간주하지 않습니다", snapshot.Detail);
+        Assert.Contains("비어 있는 환경으로 간주하지 않습니다", snapshot.Detail);
         Assert.False(snapshot.CanLaunch);
     }
 

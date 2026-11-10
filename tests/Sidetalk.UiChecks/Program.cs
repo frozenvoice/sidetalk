@@ -115,7 +115,7 @@ internal static class Program
                     {
                         State = Readiness.Blocked,
                         Title = "격리 설정을 확인해주세요",
-                        Detail = "상속되는 전역 설정에 검토되지 않은 항목이 있습니다. 초기 설정 · 진단에서 차단 항목을 확인하세요.",
+                        Detail = "상속되는 전역 설정에 검토되지 않은 항목이 있습니다. 준비 · 진단에서 차단 항목을 확인하세요.",
                         CurrentConfigurationVerified = false,
                         CanLaunch = false,
                         CanStop = false,
@@ -473,7 +473,7 @@ internal static class Program
         return new AppSnapshot(
             Readiness.Ready,
             "보조 카카오톡 실행 준비",
-            "현재 구성과 빈 상자를 확인했습니다.",
+            "현재 설정을 확인했고 전용 환경이 비어 있습니다.",
             "SideTalk_visual_preview",
             @"C:\Users\preview\AppData\Local\SIDETALK\Boxes\SideTalk_visual_preview",
             kakao,

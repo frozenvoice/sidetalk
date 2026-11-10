@@ -217,7 +217,7 @@ internal static class SandboxieSetupUiChecks
             Check(controller.InspectCount >= 2, "The result was not re-inspected after the installer exited");
             Find<Button>(window, "SandboxieContinueSetupButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Check(Find<TabControl>(window, "MainTabs").SelectedIndex == 1 && Find<Border>(window, "SandboxieSetupCard").Visibility == Visibility.Collapsed,
-                "Continue did not open 초기 설정 · 진단");
+                "Continue did not open 준비 · 진단");
             Check(controller.WritableCallCount == 0, "The install flow invoked launch, stop or recovery");
             window.Close();
             cases++;

@@ -65,7 +65,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             profile = store.Load();
             SecondaryAppearanceStore.RequireResolved(store);
             if (setupRecovery?.HasUnfinishedRecovery == true)
-                return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 초기 설정 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
+                return Blocked("설정 복구 기록을 확인해주세요", "이전 설정 준비가 완료되지 않았습니다. 준비 · 진단에서 보존된 복구 내역과 현재 상태를 확인하세요.");
             try { runtime.RequireHost(); if (runtime is SidetalkRuntime) HostProfileContext.RequireUnredirected(store); }
             catch (Exception ex) { inspectionFailure = InspectionFailure.Capture("실행 환경 조회", ex); return Blocked("지원 실행 환경을 확인해주세요", "일반 사용자 실행 환경을 확인하지 못했습니다. 시작 메뉴의 SIDETALK로 열고 다시 확인해 주세요."); }
             if (!kakao.Available || !sandboxie.Available)
@@ -81,15 +81,15 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             if (sandboxie.Condition == DependencyCondition.ServiceUnavailable)
                 return Blocked("Sandboxie 서비스를 확인해주세요", sandboxie.Detail + " SIDETALK는 서비스를 시작하거나 재시작하지 않습니다. 설치 직후라면 Windows를 다시 시작한 뒤 다시 확인하세요.");
             if (profile is null)
-                return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "초기 설정 · 진단에서 변경 내용을 확인하고 복구하고 실행 준비를 누르세요.");
+                return Snapshot(Readiness.SetupRequired, "전용 환경을 준비하세요", "준비 · 진단에서 변경 내용을 확인하고 복구하고 실행 준비를 누르세요.");
             using var api = runtime.Open(sandboxie);
             serviceIdentity = api.ServiceIdentity;
             var config = api.ReadConfiguration(profile.BoxName);
             if (config.ExplicitBox.Count == 0)
-                return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "초기 설정 · 진단에서 필요한 전용 환경 설정과 복구 가능 여부를 확인하세요.");
+                return Snapshot(Readiness.SetupRequired, "설정 적용을 기다리고 있어요", "준비 · 진단에서 필요한 전용 환경 설정과 복구 가능 여부를 확인하세요.");
             var policy = IsolationPolicy.Validate(profile, config);
             if (!policy.Owned)
-                return Blocked("격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.", policy.Issues);
+                return Blocked("격리 설정을 확인해주세요", "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 준비 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.", policy.Issues);
             if (!SandboxieApi.SameNativePath(api.FileRoot(profile.BoxName), profile.StoragePath))
                 return Blocked("저장 경로가 일치하지 않아요", "Sandboxie가 실제 사용하는 저장 경로와 전용 환경 경로가 다릅니다.");
             adminRights = AdminRightsObservation.FromConfiguration(config);
@@ -129,15 +129,15 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
                 var title = changed ? "보조 환경의 관리자 권한 제한이 변경되었습니다" : "격리 설정을 확인해주세요";
                 var detail = changed
                     ? "현재 전용 박스의 DropAdminRights가 필수 값 y와 다릅니다. 카카오톡 업데이트 중 권한 허용을 선택하면 이 설정이 바뀔 수 있습니다. 사용자가 승인한 창이나 실제 관리자 토큰·업데이트 완료 여부는 확인하지 않았습니다. 새 실행과 강제 종료는 차단합니다."
-                    : "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 초기 설정 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.";
+                    : "안전을 확인할 수 없어 실행과 종료를 차단했습니다. 준비 · 진단에서 확인된 복구 계획과 차단 이유를 확인하세요.";
                 var processDetail = !adminRights.ProcessesQueried
-                    ? " 프로세스 상태를 확인하지 못했습니다. 빈 상자로 간주하지 않습니다."
+                    ? " 프로세스 상태를 확인하지 못했습니다. 비어 있는 환경으로 간주하지 않습니다."
                     : adminRights.ProcessState switch
                     {
                         BoxProcessState.KakaoRunning => " 보조 카카오톡을 트레이 메뉴에서 정상 종료한 뒤 다시 확인하세요. 로그아웃이나 계정 삭제는 필요하지 않습니다. 현재 설정 변경은 기존 프로세스에 소급 적용됐다고 판단하지 않습니다.",
                         BoxProcessState.ResidualOnly => $" 보조 카카오톡은 종료됐지만 전용 환경에 잔여 프로세스 {adminRights.ResidualProcessCount}개가 있습니다. 일반 종료 권한을 부여하지 않고, 이름과 PID를 확인한 뒤 별도 잔여 정리 승인을 요구합니다.",
-                        BoxProcessState.Unknown => " 전용 환경 프로세스의 신원을 확인하지 못했습니다. 빈 상자로 간주하지 않으며 정리를 차단합니다.",
-                        _ => " 최신 조회에서 전용 박스가 빈 것을 확인했습니다. 초기 설정 · 진단에서 필요한 변경 계획을 확인하세요."
+                        BoxProcessState.Unknown => " 전용 환경 프로세스의 신원을 확인하지 못했습니다. 비어 있는 환경으로 간주하지 않으며 정리를 차단합니다.",
+                        _ => " 최신 조회에서 전용 박스가 빈 것을 확인했습니다. 준비 · 진단에서 필요한 변경 계획을 확인하세요."
                     };
                 detail += processDetail;
                 return Snapshot(Readiness.Blocked, title, detail, notes, observedProcesses);
@@ -187,7 +187,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             {
                 processPolicy = ProcessPolicyStatus.EffectiveRulesUnverified;
                 return Snapshot(Readiness.Unknown, "전용 환경 프로세스 신원을 확인할 수 없어요",
-                    "프로세스 신원이 확인되지 않아 빈 상자로 판단하거나 정리하지 않습니다. 상태를 다시 확인하세요.",
+                    "프로세스 신원이 확인되지 않아 비어 있는 환경으로 판단하거나 정리하지 않습니다. 상태를 다시 확인하세요.",
                     checks, processes);
             }
             processPolicy = ProcessPolicyStatus.NoProcesses;
@@ -196,7 +196,7 @@ public sealed partial class SidetalkController : ISidetalkController, IQuickLaun
             // inspected separately; unfinished mutation evidence is checked above.
             return Snapshot(Readiness.Ready,
                 lifecycle.Outcome == CommandLifecycleOutcome.LaunchFailed ? "보조 카카오톡을 실행하지 못했어요" : "보조 카카오톡 실행 준비",
-                lifecycle.Action is not null ? lifecycle.Message : "현재 구성과 빈 상자를 확인했습니다. 새 실행 전 설정을 다시 검사합니다.",
+                lifecycle.Action is not null ? lifecycle.Message : "현재 설정을 확인했고 전용 환경이 비어 있습니다. 새 실행 전 설정을 다시 검사합니다.",
                 checks, [], canLaunch: true);
         }
         catch (Exception ex)
