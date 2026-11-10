@@ -89,6 +89,7 @@ Windows 고대비를 켜면 SIDETALK의 본문·버튼·상태 안내·스크롤
 | 바로가기·로그인 실행 소유 설정과 미완료 변경 근거 | `%LOCALAPPDATA%\SIDETALK\user-launch-integration` |
 | 보조 창 표시 변경 의도·백업·완료/실패 기록 | `%LOCALAPPDATA%\SIDETALK\secondary-appearance` |
 | 설정 복구 내역·백업·동의 | `%LOCALAPPDATA%\SIDETALK\setup-recovery` |
+| 전용 환경에서 옮겨 둔 오래된 카카오톡 프로그램 사본과 기록 | `%LOCALAPPDATA%\SIDETALK\program-copy-preserved` |
 | 중단 파일 원본·보존 메타데이터 | `%LOCALAPPDATA%\SIDETALK\recovery-evidence` |
 | 명령 작업 기록 | `%LOCALAPPDATA%\SIDETALK\command-journal` (완료된 기록도 보존) |
 | SIDETALK 소유 정보 | `%LOCALAPPDATA%\SIDETALK\profile.json` |

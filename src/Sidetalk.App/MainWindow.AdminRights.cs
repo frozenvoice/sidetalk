@@ -96,7 +96,7 @@ public partial class MainWindow
                 {
                     images.Add($"확인된 박스 프로그램 파일: {file.Path}\n버전 {DisplayValue(file.Version)} · {(file.PublisherVerified ? "배포자 서명 확인" : "서명 확인 실패")}");
                     if (image.VersionDiffersFromHost == true)
-                        images.Add("호스트와 박스 프로그램 파일의 버전 차이를 확인했습니다. 계정 데이터와 분리된 안전한 사본 교체는 아직 지원하지 않습니다.");
+                        images.Add("호스트와 박스 프로그램 파일의 버전 차이를 확인했습니다. 보조 카카오톡을 종료하면 ‘보조 카카오톡’ 탭에서 오래된 사본을 보존 폴더로 옮길 수 있습니다.");
                     else if (image.VersionDiffersFromHost == false)
                         images.Add("관찰한 파일 버전은 호스트와 같습니다. 업데이트 완료나 로그인 성공의 증거는 아닙니다.");
                     if (file.Failure is not null) images.Add(ReadableFailure(file.Failure));
@@ -105,7 +105,9 @@ public partial class MainWindow
                 if (image.Failure is not null) images.Add(ReadableFailure(image.Failure));
             }
         }
-        else images.Add("박스 내부 프로그램 사본과 실제 사용 파일은 미확인입니다. 프로그램 폴더나 계정 데이터를 탐색·삭제하지 않습니다.");
+        else images.Add(snapshot.StaleProgramCopy is { } copy
+            ? $"전용 환경 안의 오래된 프로그램 사본: 버전 {copy.CopyVersion} · 파일 {copy.FileCount}개\n{copy.Directory}\n‘보조 카카오톡’ 탭에서 보존 폴더로 옮길 수 있습니다. 계정 데이터는 탐색하지 않습니다."
+            : "전용 환경 안에서 공식 설치보다 오래된 프로그램 사본은 확인되지 않았습니다. 계정 데이터는 탐색하지 않습니다.");
         SetText(KakaoUpdateEvidenceText, string.Join("\n", images));
     }
 

@@ -10,6 +10,8 @@ public interface ISidetalkRuntime
     void RequireHost();
     ISidetalkRuntimeSession Open(DependencyInfo sandboxie);
     void VerifyCommandFiles(string startExe, string kakaoExe);
+    // Existing fake runtimes never fall through to native file inspection.
+    StaleProgramCopyScan? ReadStaleProgramCopy(BoxProfile profile, DependencyInfo hostKakao) => null;
 }
 
 public interface ISidetalkRuntimeSession : IDisposable
@@ -48,6 +50,18 @@ public sealed class SidetalkRuntime : ISidetalkRuntime
         RuntimeVerifier.RequireComponent(startExe);
         Authenticode.RequirePublisher(kakaoExe, "Kakao Corp.");
     }
+    // Signature verification reads the whole executable; inspection runs every few seconds.
+    private (string Key, ProgramFileIdentity Identity)? programFileCache;
+    public StaleProgramCopyScan? ReadStaleProgramCopy(BoxProfile profile, DependencyInfo hostKakao) =>
+        StaleProgramCopy.Scan(profile, hostKakao, path =>
+        {
+            var file = new FileInfo(path);
+            var key = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+            if (programFileCache is { } cached && cached.Key == key) return cached.Identity;
+            var identity = WindowsKakaoImageDiagnostics.ReadIdentity(path);
+            programFileCache = (key, identity);
+            return identity;
+        });
     private sealed class Session(SandboxieApi api, RuntimeVerifier.ServiceVerification service) : ISidetalkRuntimeSession
     {
         public RuntimeVerifier.ServiceVerification ServiceIdentity => service;
